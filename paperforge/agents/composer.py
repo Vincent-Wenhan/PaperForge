@@ -1,0 +1,72 @@
+"""Composer: combine multiple capability cards into novel product concepts."""
+
+from __future__ import annotations
+
+import json
+import logging
+import uuid
+from pathlib import Path
+from typing import Any
+
+from paperforge.llm.base import LLMClient, Message
+from paperforge.prompts import load_prompt
+from paperforge.storage.db import Storage
+
+logger = logging.getLogger(__name__)
+
+
+async def compose(
+    card_ids: list[str],
+    llm: LLMClient,
+    storage: Storage,
+) -> dict[str, Any]:
+    """Compose multiple capability cards into a single composition artifact."""
+    if not card_ids:
+        raise ValueError("card_ids must be non-empty")
+
+    # Load each capability card from the paper's card_path
+    cards: list[dict[str, Any]] = []
+    for paper_id in card_ids:
+        paper = storage.get_paper(paper_id)
+        if not paper:
+            raise ValueError(f"Paper not found: {paper_id}")
+        card_path = paper.get("card_path")
+        if not card_path or not Path(card_path).exists():
+            raise ValueError(f"Capability card not found for paper: {paper_id}")
+        card = json.loads(Path(card_path).read_text(encoding="utf-8"))
+        cards.append(card)
+
+    prompt = load_prompt("composer")
+    composition_id = f"comp_{uuid.uuid4().hex[:8]}"
+
+    user_content = (
+        f"Composition ID: {composition_id}\n\n"
+        f"Source cards ({len(cards)}):\n\n"
+        + "\n\n---\n\n".join(json.dumps(c, ensure_ascii=False, indent=2) for c in cards)
+    )
+
+    messages = [
+        Message(role="system", content=prompt),
+        Message(role="user", content=user_content),
+    ]
+
+    from paperforge.config import get_config
+    cfg = get_config()
+
+    response = await llm.chat(
+        model=cfg.COMPOSER_MODEL,
+        messages=messages,
+        response_format={"type": "json_object"},
+    )
+
+    content = response.content or "{}"
+    try:
+        composition = json.loads(content)
+    except json.JSONDecodeError as e:
+        logger.error(f"Composer returned invalid JSON: {e}\nContent: {content[:500]}")
+        raise ValueError(f"Composer returned invalid JSON: {e}")
+
+    composition["composition_id"] = composition_id
+    composition["source_cards"] = list(card_ids)
+
+    return composition

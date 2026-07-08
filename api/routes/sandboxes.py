@@ -1,0 +1,60 @@
+"""Sandboxes API routes."""
+
+from __future__ import annotations
+
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+
+from paperforge.sandbox.docker_runner import DockerSandboxManager
+from paperforge.storage.db import get_storage
+
+router = APIRouter()
+
+
+class SandboxStart(BaseModel):
+    app_path: str
+    run_id: str | None = None
+
+
+@router.post("")
+async def start_sandbox(req: SandboxStart) -> dict:
+    """Start a new sandbox container."""
+    storage = get_storage()
+    manager = DockerSandboxManager(storage=storage)
+    sandbox = await manager.start(run_id=req.run_id or "", app_path=req.app_path)
+    return sandbox
+
+
+@router.get("")
+async def list_sandboxes(status: str | None = None) -> list[dict]:
+    """List all sandboxes."""
+    storage = get_storage()
+    return storage.list_sandboxes(status=status)
+
+
+@router.get("/{sandbox_id}")
+async def get_sandbox(sandbox_id: str) -> dict:
+    """Get a sandbox by ID."""
+    storage = get_storage()
+    sandbox = storage.get_sandbox(sandbox_id)
+    if not sandbox:
+        raise HTTPException(status_code=404, detail="Sandbox not found")
+    return sandbox
+
+
+@router.post("/{sandbox_id}/stop")
+async def stop_sandbox(sandbox_id: str) -> dict:
+    """Stop a running sandbox."""
+    storage = get_storage()
+    manager = DockerSandboxManager(storage=storage)
+    await manager.stop(sandbox_id)
+    return {"sandbox_id": sandbox_id, "status": "stopped"}
+
+
+@router.post("/{sandbox_id}/restart")
+async def restart_sandbox(sandbox_id: str) -> dict:
+    """Restart a sandbox."""
+    storage = get_storage()
+    manager = DockerSandboxManager(storage=storage)
+    sandbox = await manager.restart(sandbox_id)
+    return sandbox
