@@ -235,6 +235,7 @@ async def handle_compose(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         artifact_type="composition",
         data=composition,
     )
+    await ctx.emit.artifact_created("composition", str(ctx.storage.compositions_dir), artifact_id)
 
     return ToolResult(
         ok=True,
@@ -286,6 +287,7 @@ async def handle_plan_product(args: dict[str, Any], ctx: ToolContext) -> ToolRes
         artifact_type="prd",
         data=prd,
     )
+    await ctx.emit.artifact_created("prd", str(ctx.storage.prds_dir), artifact_id)
 
     return ToolResult(
         ok=True,
@@ -316,6 +318,7 @@ async def handle_generate(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         data=manifest,
         metadata={"app_path": output_dir},
     )
+    await ctx.emit.artifact_created("nextjs_app", output_dir, artifact_id)
 
     return ToolResult(
         ok=True,
@@ -349,6 +352,7 @@ async def handle_verify(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         artifact_type="verification_report",
         data=report,
     )
+    await ctx.emit.artifact_created("verification_report", str(ctx.storage.reports_dir), artifact_id)
 
     return ToolResult(
         ok=True,
