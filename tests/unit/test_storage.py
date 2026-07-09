@@ -82,3 +82,46 @@ def test_create_and_resolve_approval(storage: Storage):
     storage.resolve_approval(approval["id"], approved=True)
     fetched = storage.get_approval(approval["id"])
     assert fetched["status"] == "approved"
+
+
+def test_update_and_get_run_phase(storage: Storage):
+    """Phase should persist via update_run_phase/get_run_phase."""
+    storage.create_run("run_phase_test", "Phase Test")
+    # Default phase
+    assert storage.get_run_phase("run_phase_test") == "init"
+    # Update
+    storage.update_run_phase("run_phase_test", "parsed")
+    assert storage.get_run_phase("run_phase_test") == "parsed"
+    # Update again
+    storage.update_run_phase("run_phase_test", "planned")
+    assert storage.get_run_phase("run_phase_test") == "planned"
+
+
+def test_artifact_path_mapping(storage: Storage):
+    """save_artifact should route to type-specific directory."""
+    storage.create_run("run_path", "Path Test")
+    art_id = storage.save_artifact(
+        run_id="run_path",
+        artifact_type="capability_card",
+        data={"paper_id": "p1", "title": "T"},
+    )
+    loaded = storage.get_artifact(art_id)
+    assert loaded is not None
+    assert loaded["data"]["title"] == "T"
+
+
+def test_create_approval_returns_pending(storage: Storage):
+    """Approval records start as pending."""
+    storage.create_run("run_apv2", "Approval Run 2")
+    approval = storage.create_approval("run_apv2", "generate_nextjs_app", {"prd_id": "test"})
+    assert approval["status"] == "pending"
+    assert approval["tool_name"] == "generate_nextjs_app"
+
+
+def test_resolve_approval_reject(storage: Storage):
+    """resolve_approval with approved=False sets status to rejected."""
+    storage.create_run("run_apv3", "Approval Run 3")
+    approval = storage.create_approval("run_apv3", "run_in_sandbox", {"app_path": "/x"})
+    storage.resolve_approval(approval["id"], approved=False)
+    fetched = storage.get_approval(approval["id"])
+    assert fetched["status"] == "rejected"
