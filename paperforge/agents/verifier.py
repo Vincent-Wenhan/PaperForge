@@ -51,7 +51,7 @@ async def verify_app(
     # 1. Collect files
     files = collect_files(app_path)
 
-    # 2. Build/structure check (we can't run npm, so we check for essential files)
+    # 2. Build/structure check (static)
     has_package_json = any(f[0] == "package.json" for f in files)
     has_app_dir = any(f[0].startswith("app/") for f in files)
     has_page = any(f[0] in ["app/page.tsx", "app/page.jsx", "app/page.js"] for f in files)
@@ -65,6 +65,15 @@ async def verify_app(
         build_errors.append("Missing app/ directory")
     if not has_page:
         build_errors.append("Missing app/page.tsx")
+
+    # 2b. Real build check — actually run `npm run build` if npm is available
+    build_ok, build_errs, build_warns = await run_build(app_path)
+    if build_ok:
+        build_succeeded = True
+    else:
+        build_succeeded = False
+    build_errors.extend(build_errs)
+    build_warnings.extend(build_warns)
 
     # 3. PRD coverage
     prd: dict[str, Any] = {}
@@ -136,7 +145,7 @@ async def verify_app(
     security_penalty = min(len(security_issues) / 10, 0.1)
     score += 0.1 - security_penalty
 
-    ready_for_preview = score >= 0.6 and (build_succeeded or len(missing_features) <= 2)
+    ready_for_preview = build_succeeded and score >= 0.6
 
     recommendations: list[str] = []
     if missing_features:

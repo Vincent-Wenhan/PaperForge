@@ -27,7 +27,9 @@ async def send_message(run_id: str, req: MessageCreate) -> dict:
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
 
-    # Orchestrator saves the user message; API must not duplicate it.
+    # API layer owns user message persistence; orchestrator must not duplicate it.
+    storage.add_message(run_id=run_id, role="user", content=req.content)
+
     task_manager = get_run_task_manager()
     orchestrator = Orchestrator()
     task_manager.start(run_id, orchestrator.run(run_id=run_id, user_message=req.content))

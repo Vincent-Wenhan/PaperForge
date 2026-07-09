@@ -93,8 +93,7 @@ class Orchestrator:
         # Load orchestrator system prompt
         system_prompt = load_prompt("orchestrator")
 
-        # Save user message (orchestrator owns user message persistence).
-        self.storage.add_message(run_id=run_id, role="user", content=user_message)
+        # API layer saves the user message; orchestrator must not duplicate it.
 
         # Load history from storage
         history = self.storage.list_messages(run_id)

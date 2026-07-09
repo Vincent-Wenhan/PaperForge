@@ -19,6 +19,9 @@ async def test_orchestrator_runs_to_completion(storage):
         async def chat(self, *args, **kwargs):
             return ChatResponse(content="Done!", finish_reason="stop")
 
+    # API layer saves the user message; orchestrator must not duplicate it.
+    storage.add_message(run_id="run_orc", role="user", content="Hello")
+
     orc = Orchestrator(llm=StopLLM(), storage=storage)
     await orc.run(run_id="run_orc", user_message="Hello")
 
@@ -31,6 +34,9 @@ async def test_orchestrator_runs_to_completion(storage):
 async def test_orchestrator_handles_tool_calls(storage):
     """Orchestrator should execute tool calls and continue."""
     storage.create_run("run_tool", "Tool Test")
+
+    # API layer saves the user message; orchestrator must not duplicate it.
+    storage.add_message(run_id="run_tool", role="user", content="Finish the task")
 
     class ToolLLM(MockLLMClient):
         def __init__(self):

@@ -17,7 +17,11 @@ MAX_RETRIES = 3
 
 
 def extract_pdf_text(pdf_path: str | Path) -> str:
-    """Extract text from a PDF using PyMuPDF (fitz)."""
+    """Extract text from a PDF using PyMuPDF (fitz), with page markers.
+
+    Returns:
+        Text with [[Page N]] markers before each page's content.
+    """
     try:
         import fitz
     except ImportError as e:
@@ -26,7 +30,10 @@ def extract_pdf_text(pdf_path: str | Path) -> str:
         ) from e
 
     doc = fitz.open(str(pdf_path))
-    pages = [page.get_text() for page in doc]
+    pages: list[str] = []
+    for i, page in enumerate(doc):
+        text = page.get_text()
+        pages.append(f"[[Page {i + 1}]]\n{text}")
     doc.close()
     return "\n\n".join(pages)
 

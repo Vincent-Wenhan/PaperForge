@@ -1,4 +1,4 @@
-"""ProductPlanner: refine composition into a PRD (single-shot)."""
+"""ProductPlanner: refine composition into a PRD, or ask clarifying questions."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from typing import Any
 from paperforge.llm.base import LLMClient, Message
 from paperforge.prompts import load_prompt
 from paperforge.schemas.prd import PRD
+from paperforge.schemas.planner_output import PlannerOutput
 from paperforge.storage.db import Storage
 
 logger = logging.getLogger(__name__)
@@ -23,7 +24,7 @@ async def plan_product(
     llm: LLMClient,
     storage: Storage,
 ) -> dict[str, Any]:
-    """Refine a composition into a PRD.
+    """Refine a composition into a PRD, or return clarifying questions.
 
     Args:
         composition_id: ID of the composition artifact
@@ -32,7 +33,9 @@ async def plan_product(
         storage: storage instance
 
     Returns:
-        PRD dict matching the PRD schema
+        PlannerOutput dict. If `needs_more_input` is True, `questions`
+        contains clarifying questions to ask the user before re-running
+        the planner. If False, `prd` contains the generated PRD.
     """
     # Load composition artifact
     from paperforge.storage.artifacts import ArtifactStore
@@ -84,7 +87,7 @@ async def plan_product(
 
         content = response.content or "{}"
         try:
-            prd = json.loads(content)
+            raw = json.loads(content)
         except json.JSONDecodeError as e:
             last_error = e
             logger.warning(f"Attempt {attempt}/{MAX_RETRIES}: invalid JSON: {e}")
@@ -92,13 +95,36 @@ async def plan_product(
             messages.append(Message(role="user", content=f"Your previous response was not valid JSON: {e}. Please output a valid JSON object only."))
             continue
 
-        prd["prd_id"] = prd_id
-        prd["composition_id"] = composition_id
+        # Handle needs_more_input case
+        if raw.get("needs_more_input"):
+            questions = raw.get("questions") or []
+            if not questions:
+                questions = [
+                    "目标用户是谁？",
+                    "demo 更偏科研工具还是普通用户产品？",
+                    "是否需要真实模型接入？",
+                ]
+            output = PlannerOutput(
+                needs_more_input=True,
+                questions=questions,
+                prd=None,
+            )
+            return output.model_dump()
+
+        # Handle PRD case
+        prd_dict = raw.get("prd") or raw
+        prd_dict["prd_id"] = prd_id
+        prd_dict["composition_id"] = composition_id
 
         try:
-            validated = PRD.model_validate(prd)
-            prd = validated.model_dump()
-            return prd
+            validated = PRD.model_validate(prd_dict)
+            prd_dict = validated.model_dump()
+            output = PlannerOutput(
+                needs_more_input=False,
+                questions=[],
+                prd=prd_dict,
+            )
+            return output.model_dump()
         except Exception as e:
             last_error = e
             logger.warning(f"Attempt {attempt}/{MAX_RETRIES}: schema validation failed: {e}")

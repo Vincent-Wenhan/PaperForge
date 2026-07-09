@@ -7,6 +7,7 @@ import uuid
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from paperforge.orchestrator.tasks import get_run_task_manager
 from paperforge.storage.db import get_storage
 
 router = APIRouter()
@@ -63,6 +64,20 @@ async def delete_run(run_id: str) -> dict:
     storage = get_storage()
     storage.delete_run(run_id)
     return {"status": "deleted"}
+
+
+@router.post("/{run_id}/cancel")
+async def cancel_run(run_id: str) -> dict:
+    """Cancel a running orchestrator task for this run."""
+    storage = get_storage()
+    run = storage.get_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    task_manager = get_run_task_manager()
+    cancelled = task_manager.cancel(run_id)
+    if not cancelled:
+        raise HTTPException(status_code=409, detail="Run is not active")
+    return {"status": "cancelled", "run_id": run_id}
 
 
 @router.get("/{run_id}/messages")
