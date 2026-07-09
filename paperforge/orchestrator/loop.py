@@ -5,7 +5,7 @@ Implements the agentic loop: LLM → tool → LLM, until LLM stops calling tools
 
 from __future__ import annotations
 
-import json
+import asyncio
 import logging
 from typing import Any
 
@@ -14,11 +14,14 @@ from paperforge.llm.base import LLMClient, Message, ToolCall
 from paperforge.llm.factory import get_llm_client
 from paperforge.orchestrator.events import EventEmitter, get_event_manager
 from paperforge.orchestrator.tools import TOOL_DEFINITIONS, ToolContext, dispatch_tool
+from paperforge.prompts import load_prompt
 from paperforge.storage.db import Storage, get_storage
 
 logger = logging.getLogger(__name__)
 
 MAX_ITERATIONS = 20
+LLM_MAX_RETRIES = 3
+LLM_RETRY_BASE_DELAY = 1.0  # seconds
 
 
 class Orchestrator:
@@ -39,13 +42,16 @@ class Orchestrator:
         emit = EventEmitter(run_id=run_id, manager=event_manager)
 
         await emit.run_started()
-        await emit.text(f"Starting orchestration for run {run_id}")
+
+        # Load orchestrator system prompt
+        system_prompt = load_prompt("orchestrator")
 
         # Load history from storage
         history = self.storage.list_messages(run_id)
 
-        # Build message list
-        messages: list[Message] = []
+        # Build message list with system prompt first
+        messages: list[Message] = [Message(role="system", content=system_prompt)]
+
         for h in history:
             if h["role"] == "user":
                 messages.append(Message(role="user", content=h["content"]))
@@ -88,16 +94,15 @@ class Orchestrator:
                 iterations += 1
                 logger.info(f"Orchestrator iteration {iterations} for run {run_id}")
 
-                try:
-                    response = await self.llm.chat(
-                        model=cfg.ORCHESTRATOR_MODEL,
-                        messages=messages,
-                        tools=TOOL_DEFINITIONS,
-                    )
-                except Exception as e:
-                    logger.error(f"LLM call failed: {e}")
-                    await emit.run_error(f"LLM call failed: {e}")
-                    return
+                # LLM call with retry on transient failures
+                response = await self._call_llm_with_retry(
+                    model=cfg.ORCHESTRATOR_MODEL,
+                    messages=messages,
+                    tools=TOOL_DEFINITIONS,
+                    emit=emit,
+                )
+                if response is None:
+                    return  # error already emitted
 
                 if response.tool_calls:
                     # Save assistant message with tool_calls
@@ -122,7 +127,7 @@ class Orchestrator:
                     for call in response.tool_calls:
                         await emit.tool_call(call)
 
-                        # Save the tool_call placeholder (will be updated with result)
+                        # Dispatch tool
                         result = await dispatch_tool(call.name, call.args, ctx)
 
                         # Save tool result message
@@ -168,3 +173,30 @@ class Orchestrator:
         except Exception as e:
             logger.exception(f"Orchestrator error: {e}")
             await emit.run_error(str(e))
+
+    async def _call_llm_with_retry(
+        self,
+        model: str,
+        messages: list[Message],
+        tools: list[Any],
+        emit: EventEmitter,
+    ) -> Any:
+        """Call LLM with exponential backoff retry. Returns None if all retries failed."""
+        last_error: Exception | None = None
+        for attempt in range(1, LLM_MAX_RETRIES + 1):
+            try:
+                return await self.llm.chat(
+                    model=model,
+                    messages=messages,
+                    tools=tools,
+                )
+            except Exception as e:
+                last_error = e
+                logger.warning(f"LLM call attempt {attempt}/{LLM_MAX_RETRIES} failed: {e}")
+                if attempt < LLM_MAX_RETRIES:
+                    delay = LLM_RETRY_BASE_DELAY * (2 ** (attempt - 1))
+                    await asyncio.sleep(delay)
+                else:
+                    await emit.run_error(f"LLM call failed after {LLM_MAX_RETRIES} retries: {last_error}")
+                    return None
+        return None
