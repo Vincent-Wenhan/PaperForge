@@ -1,16 +1,19 @@
 """NextjsGenerator: PRD → Next.js app files.
 
-Strategy:
-1. Call LLM with generator prompt + PRD JSON
-2. Parse response as AppManifest
-3. Write each file to output_dir
-4. Return manifest
+Strategy (template-based):
+1. Copy a pre-baked Next.js template (paperforge/templates/nextjs_lightweight)
+   to the output directory with shutil.copytree.
+2. Call LLM with generator prompt + PRD JSON. The LLM only generates the
+   business files: app/page.tsx, lib/mock-api.ts, lib/real-api.ts.
+3. Overwrite the template's placeholder business files with the LLM output.
+4. Validate against AppManifest schema.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import shutil
 import uuid
 from pathlib import Path
 from typing import Any
@@ -23,6 +26,12 @@ from paperforge.storage.db import Storage
 logger = logging.getLogger(__name__)
 
 MAX_RETRIES = 3
+
+TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates" / "nextjs_lightweight"
+
+# Files the LLM is responsible for generating. Everything else is provided
+# by the template scaffolding.
+BUSINESS_FILES = ["app/page.tsx", "lib/mock-api.ts", "lib/real-api.ts"]
 
 
 async def generate_nextjs_app(
@@ -52,6 +61,13 @@ async def generate_nextjs_app(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # Step 1: copy template scaffolding
+    if not TEMPLATE_DIR.exists():
+        raise FileNotFoundError(f"Template directory not found: {TEMPLATE_DIR}")
+    shutil.copytree(src=TEMPLATE_DIR, dst=output_dir, dirs_exist_ok=True)
+    logger.info(f"Copied template scaffolding to {output_dir}")
+
+    # Step 2: call LLM to generate only business files
     prompt = load_prompt("nextjs_generator")
     user_content = (
         f"App ID: {app_id}\n"
@@ -68,6 +84,7 @@ async def generate_nextjs_app(
     cfg = get_config()
 
     last_error: Exception | None = None
+    manifest: dict[str, Any] = {}
     for attempt in range(1, MAX_RETRIES + 1):
         response = await llm.chat(
             model=cfg.GENERATOR_MODEL,
@@ -100,26 +117,31 @@ async def generate_nextjs_app(
     else:
         raise ValueError(f"NextjsGenerator failed after {MAX_RETRIES} retries: {last_error}")
 
-    # Write files to output_dir
+    # Step 3: write LLM-generated business files, overwriting template placeholders
     files = manifest.get("files", [])
     for f in files:
         file_path = output_dir / f["path"]
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_text(f["content"], encoding="utf-8")
 
-    # Ensure package.json exists
+    # Step 4: merge template package.json with manifest-declared dependencies
     pkg_path = output_dir / "package.json"
-    if not pkg_path.exists():
-        deps = manifest.get("dependencies", {})
-        scripts = manifest.get("scripts", {"dev": "next dev", "build": "next build", "start": "next start"})
-        pkg = {
-            "name": manifest.get("app_id", "generated-app"),
-            "version": "0.1.0",
-            "private": True,
-            "scripts": scripts,
-            "dependencies": deps,
-        }
-        pkg_path.write_text(json.dumps(pkg, indent=2), encoding="utf-8")
+    template_pkg = json.loads(pkg_path.read_text(encoding="utf-8")) if pkg_path.exists() else {}
+    deps = manifest.get("dependencies", {})
+    scripts = manifest.get("scripts") or template_pkg.get("scripts", {
+        "dev": "next dev",
+        "build": "next build",
+        "start": "next start",
+    })
+    pkg = {
+        "name": manifest.get("app_id", "generated-app"),
+        "version": "0.1.0",
+        "private": True,
+        "scripts": scripts,
+        "dependencies": {**template_pkg.get("dependencies", {}), **deps},
+        "devDependencies": template_pkg.get("devDependencies", {}),
+    }
+    pkg_path.write_text(json.dumps(pkg, indent=2), encoding="utf-8")
 
     manifest["app_id"] = app_id
     manifest["prd_id"] = prd_id
