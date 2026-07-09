@@ -2,11 +2,11 @@
 
 import { useState } from "react";
 import { api } from "@/lib/api";
-import { Paper } from "@/lib/store";
+import type { Paper, Run } from "@/lib/store";
 
 interface SidebarProps {
-  runs: any[];
-  library: any[];
+  runs: Run[];
+  library: Paper[];
   onNewRun: () => void;
   onSelectRun: (runId: string) => void;
 }
@@ -26,6 +26,11 @@ export function Sidebar({ runs, library, onNewRun, onSelectRun }: SidebarProps) 
     } finally {
       setUploading(false);
     }
+  };
+
+  const formatRunMeta = (run: Run) => {
+    const phase = run.phase ? ` · ${run.phase}` : "";
+    return `${run.status}${phase}`;
   };
 
   return (
@@ -51,7 +56,10 @@ export function Sidebar({ runs, library, onNewRun, onSelectRun }: SidebarProps) 
                   onClick={() => onSelectRun(run.id)}
                   className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent truncate"
                 >
-                  {run.title}
+                  <div className="font-medium truncate">{run.title}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {formatRunMeta(run)}
+                  </div>
                 </button>
               </li>
             ))}
@@ -68,7 +76,13 @@ export function Sidebar({ runs, library, onNewRun, onSelectRun }: SidebarProps) 
           <ul className="space-y-1">
             {library.map((p: Paper) => (
               <li key={p.paper_id}>
-                <div className="px-2 py-1.5 text-sm truncate">{p.title}</div>
+                <div className="px-2 py-1.5">
+                  <div className="text-sm font-medium truncate">{p.title}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {p.status}
+                    {p.parsed_at ? " · parsed" : ""}
+                  </div>
+                </div>
               </li>
             ))}
             {library.length === 0 && (

@@ -6,17 +6,32 @@ import { api } from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 import { ConsoleLogs } from "./ConsoleLogs";
 import { VerificationReportView } from "./VerificationReportView";
+import { ArtifactCard } from "./ArtifactCard";
 
 const MonacoEditor = dynamic(() => import("@monaco-editor/react").then((m) => m.default), {
   ssr: false,
   loading: () => <div className="p-4 text-muted-foreground">Loading editor...</div>,
 });
 
-type Tab = "preview" | "code" | "console" | "verification";
+type Tab = "preview" | "artifacts" | "code" | "console" | "verification";
+
+const PHASE_PROGRESS: Record<string, string[]> = {
+  init: ["Paper uploaded"],
+  parsed: ["Paper uploaded", "Capability card"],
+  composed: ["Paper uploaded", "Capability card", "Composed"],
+  planned: ["Paper uploaded", "Capability card", "PRD"],
+  generated: ["Paper uploaded", "Capability card", "PRD", "App generated"],
+  verified: ["Paper uploaded", "Capability card", "PRD", "App generated", "Verified"],
+  preview_ready: ["Paper uploaded", "Capability card", "PRD", "App generated", "Verified", "Sandbox preview"],
+  done: ["Paper uploaded", "Capability card", "PRD", "App generated", "Verified", "Done"],
+};
 
 export function PreviewPanel() {
   const sandbox = useAppStore((s) => s.sandbox);
-  const [tab, setTab] = useState<Tab>("preview");
+  const artifacts = useAppStore((s) => s.artifacts);
+  const currentRun = useAppStore((s) => s.currentRun);
+  const activeTab = useAppStore((s) => s.activeTab);
+  const setActiveTab = useAppStore((s) => s.setActiveTab);
   const [tree, setTree] = useState<any[]>([]);
   const [currentFile, setCurrentFile] = useState("");
   const [fileContent, setFileContent] = useState("");
@@ -27,41 +42,33 @@ export function PreviewPanel() {
     api.getFileTree(sandbox.id).then((resp) => setTree(resp.tree || []));
   }, [sandbox]);
 
-  const openFile = async (path: string) => {
-    if (!sandbox) return;
-    const resp = await api.readFile(sandbox.id, path);
-    setCurrentFile(path);
-    setFileContent(resp.content);
-  };
+  const phase = (currentRun?.phase as string) || "init";
+  const progress = PHASE_PROGRESS[phase] || PHASE_PROGRESS.init
 
-  const saveFile = async () => {
-    if (!sandbox || !currentFile) return;
-    await api.writeFile(sandbox.id, currentFile, fileContent);
-  };
+  const tabs: Tab[] = ["preview", "artifacts", "code", "console", "verification"];
 
   return (
     <div className="flex-1 flex flex-col">
       <div className="flex border-b border-border">
-        {(["preview", "code", "console", "verification"] as Tab[]).map((t) => (
+        {tabs.map((t) => (
           <button
             key={t}
-            onClick={() => setTab(t)}
-            className={`px-4 py-2 text-sm border-b-2 ${
-              tab === t
+            onClick={() => setActiveTab(t)}
+            className={`px-4 py-2 text-sm border-b-2 capitalize ${
+              activeTab === t
                 ? "border-primary font-medium"
                 : "border-transparent text-muted-foreground"
             }`}
           >
-            {t.charAt(0).toUpperCase() + t.slice(1)}
+            {t}
           </button>
         ))}
       </div>
 
       <div className="flex-1 overflow-hidden">
-        {tab === "preview" && (
-          <PreviewFrame sandboxId={sandbox?.id} />
-        )}
-        {tab === "code" && (
+        {activeTab === "preview" && <PreviewFrame sandboxId={sandbox?.id} progress={progress} />}
+        {activeTab === "artifacts" && <ArtifactsList artifacts={artifacts} />}
+        {activeTab === "code" && (
           <CodeEditor
             tree={tree}
             currentFile={currentFile}
@@ -71,20 +78,49 @@ export function PreviewPanel() {
             onContentChange={setFileContent}
           />
         )}
-        {tab === "console" && (
-          <ConsoleLogs sandboxId={sandbox?.id} />
-        )}
-        {tab === "verification" && (
-          <VerificationReportView report={report} />
-        )}
+        {activeTab === "console" && <ConsoleLogs sandboxId={sandbox?.id} />}
+        {activeTab === "verification" && <VerificationReportView report={report} />}
       </div>
     </div>
   );
+
+  async function openFile(path: string) {
+    if (!sandbox) return;
+    const resp = await api.readFile(sandbox.id, path);
+    setCurrentFile(path);
+    setFileContent(resp.content);
+  }
+
+  async function saveFile() {
+    if (!sandbox || !currentFile) return;
+    await api.writeFile(sandbox.id, currentFile, fileContent);
+  }
 }
 
-function PreviewFrame({ sandboxId }: { sandboxId?: string }) {
+function PreviewFrame({
+  sandboxId,
+  progress,
+}: {
+  sandboxId?: string;
+  progress: string[];
+}) {
   if (!sandboxId) {
-    return <EmptyState message="No sandbox running" />;
+    return (
+      <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-8">
+        <div className="text-lg font-medium mb-3">No live preview yet</div>
+        <div className="text-sm">
+          <div className="font-medium mb-1">Current status:</div>
+          <ul className="space-y-1">
+            {progress.map((step, i) => (
+              <li key={i} className="flex items-center gap-2">
+                <span>{i < progress.length - 1 ? "✓" : "○"}</span>
+                <span>{step}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+    );
   }
   return (
     <iframe
@@ -95,15 +131,27 @@ function PreviewFrame({ sandboxId }: { sandboxId?: string }) {
   );
 }
 
-function getLanguage(path: string): string {
-  if (path.endsWith(".tsx")) return "typescript";
-  if (path.endsWith(".ts")) return "typescript";
-  if (path.endsWith(".jsx")) return "javascript";
-  if (path.endsWith(".js")) return "javascript";
-  if (path.endsWith(".json")) return "json";
-  if (path.endsWith(".css")) return "css";
-  if (path.endsWith(".md")) return "markdown";
-  return "plaintext";
+function ArtifactsList({ artifacts }: { artifacts: any[] }) {
+  if (!artifacts || artifacts.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-full text-muted-foreground">
+        No artifacts yet. Run the pipeline to generate artifacts.
+      </div>
+    );
+  }
+  return (
+    <div className="h-full overflow-y-auto p-3 space-y-2">
+      {artifacts.map((artifact) => (
+        <ArtifactCard
+          key={artifact.id}
+          type={artifact.type}
+          path={artifact.path || ""}
+          artifactId={artifact.id}
+          data={artifact.data}
+        />
+      ))}
+    </div>
+  );
 }
 
 function CodeEditor({
@@ -156,6 +204,17 @@ function CodeEditor({
   );
 }
 
+function getLanguage(path: string): string {
+  if (path.endsWith(".tsx")) return "typescript";
+  if (path.endsWith(".ts")) return "typescript";
+  if (path.endsWith(".jsx")) return "javascript";
+  if (path.endsWith(".js")) return "javascript";
+  if (path.endsWith(".json")) return "json";
+  if (path.endsWith(".css")) return "css";
+  if (path.endsWith(".md")) return "markdown";
+  return "plaintext";
+}
+
 function FileTree({ tree, onSelect }: any) {
   const renderNode = (node: any, depth = 0) => {
     const padding = { paddingLeft: `${depth * 12 + 8}px` };
@@ -178,12 +237,4 @@ function FileTree({ tree, onSelect }: any) {
     );
   };
   return <div>{tree.map((node: any) => renderNode(node))}</div>;
-}
-
-function EmptyState({ message }: { message: string }) {
-  return (
-    <div className="flex items-center justify-center h-full text-muted-foreground">
-      {message}
-    </div>
-  );
 }

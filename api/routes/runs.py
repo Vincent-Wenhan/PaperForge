@@ -21,6 +21,7 @@ class Run(BaseModel):
     id: str
     title: str
     status: str
+    phase: str = "init"
     created_at: str
     updated_at: str
 
@@ -36,6 +37,7 @@ async def create_run(req: RunCreate) -> Run:
         id=run["id"],
         title=run["title"],
         status=run["status"],
+        phase=storage.get_run_phase(run_id) or "init",
         created_at=run["created_at"],
         updated_at=run["updated_at"],
     )
@@ -48,14 +50,21 @@ async def list_runs(limit: int = 50, offset: int = 0) -> list[dict]:
     return storage.list_runs(limit=limit, offset=offset)
 
 
-@router.get("/{run_id}")
-async def get_run(run_id: str) -> dict:
+@router.get("/{run_id}", response_model=Run)
+async def get_run(run_id: str) -> Run:
     """Get a run by ID."""
     storage = get_storage()
     run = storage.get_run(run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
-    return run
+    return Run(
+        id=run["id"],
+        title=run["title"],
+        status=run["status"],
+        phase=run.get("phase") or storage.get_run_phase(run_id) or "init",
+        created_at=run["created_at"],
+        updated_at=run["updated_at"],
+    )
 
 
 @router.delete("/{run_id}")

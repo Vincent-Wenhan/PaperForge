@@ -17,6 +17,7 @@ export interface Run {
   id: string;
   title: string;
   status: string;
+  phase?: string;
   created_at: string;
   updated_at: string;
 }
@@ -62,7 +63,8 @@ interface AppState {
   events: Event[];
   sandbox: Sandbox | null;
   pendingApprovals: Approval[];
-  activeTab: "preview" | "code" | "console" | "verification";
+  artifacts: Artifact[];
+  activeTab: "preview" | "artifacts" | "code" | "console" | "verification";
   sidebarCollapsed: boolean;
 
   setCurrentRun: (run: Run | null) => void;
@@ -71,8 +73,20 @@ interface AppState {
   setSandbox: (sb: Sandbox | null) => void;
   addPendingApproval: (approval: Approval) => void;
   resolvePendingApproval: (approvalId: string, approved: boolean) => void;
-  setActiveTab: (tab: "preview" | "code" | "console" | "verification") => void;
+  setArtifacts: (artifacts: Artifact[]) => void;
+  addArtifact: (artifact: Artifact) => void;
+  setActiveTab: (tab: "preview" | "artifacts" | "code" | "console" | "verification") => void;
   toggleSidebar: () => void;
+}
+
+export interface Artifact {
+  id: string;
+  run_id?: string;
+  type: string;
+  path?: string;
+  metadata?: Record<string, any>;
+  data?: any;
+  created_at?: string;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -81,11 +95,12 @@ export const useAppStore = create<AppState>((set) => ({
   events: [],
   sandbox: null,
   pendingApprovals: [],
+  artifacts: [],
   activeTab: "preview",
   sidebarCollapsed: false,
 
   setCurrentRun: (run) =>
-    set({ currentRun: run, messages: [], events: [], pendingApprovals: [] }),
+    set({ currentRun: run, messages: [], events: [], pendingApprovals: [], artifacts: [] }),
   addMessage: (msg) => set((s) => ({ messages: [...s.messages, msg] })),
   addEvent: (event) => set((s) => ({ events: [...s.events, event] })),
   setSandbox: (sb) => set({ sandbox: sb }),
@@ -103,6 +118,13 @@ export const useAppStore = create<AppState>((set) => ({
           : a
       ),
     })),
+  setArtifacts: (artifacts) => set({ artifacts }),
+  addArtifact: (artifact) =>
+    set((s) =>
+      s.artifacts.some((a) => a.id === artifact.id)
+        ? s
+        : { artifacts: [...s.artifacts, artifact] }
+    ),
   setActiveTab: (tab) => set({ activeTab: tab }),
   toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
 }));

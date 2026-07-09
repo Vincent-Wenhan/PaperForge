@@ -25,8 +25,6 @@ You have access to these tools:
 | `verify_app` | Verify the generated app builds and matches PRD |
 | `run_in_sandbox` | Launch the generated app in a Docker sandbox |
 | `stop_sandbox` | Stop a running sandbox |
-| `read_file` | Read a file from the generated app |
-| `write_file` | Write a file into the generated app |
 | `finish` | Signal completion of the orchestration |
 
 ## Behavior

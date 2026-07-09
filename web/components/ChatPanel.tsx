@@ -12,11 +12,13 @@ export function ChatPanel() {
   const messages = useAppStore((s) => s.messages);
   const events = useAppStore((s) => s.events);
   const pendingApprovals = useAppStore((s) => s.pendingApprovals);
+  const artifacts = useAppStore((s) => s.artifacts);
   const addMessage = useAppStore((s) => s.addMessage);
   const addEvent = useAppStore((s) => s.addEvent);
   const setSandbox = useAppStore((s) => s.setSandbox);
   const addPendingApproval = useAppStore((s) => s.addPendingApproval);
   const resolvePendingApproval = useAppStore((s) => s.resolvePendingApproval);
+  const setArtifacts = useAppStore((s) => s.setArtifacts);
 
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -29,6 +31,11 @@ export function ChatPanel() {
     api.listMessages(currentRun.id).then((msgs) => {
       useAppStore.setState({ messages: msgs });
     });
+
+    api
+      .listArtifacts(currentRun.id, true)
+      .then((arts) => setArtifacts(arts))
+      .catch(() => setArtifacts([]));
 
     const sse = new SSEClient();
     sseRef.current = sse;
@@ -98,7 +105,7 @@ export function ChatPanel() {
       sse.disconnect();
       sseRef.current = null;
     };
-  }, [currentRun, addMessage, addEvent, setSandbox, addPendingApproval, resolvePendingApproval]);
+  }, [currentRun, addMessage, addEvent, setSandbox, addPendingApproval, resolvePendingApproval, setArtifacts]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -129,10 +136,13 @@ export function ChatPanel() {
 
   return (
     <div className="flex-1 flex flex-col border-r border-border">
-      <div className="p-3 border-b border-border">
-        <h2 className="font-semibold">{currentRun.title}</h2>
-        <p className="text-xs text-muted-foreground">{currentRun.id}</p>
-      </div>
+      <RunHeader
+        title={currentRun.title}
+        runId={currentRun.id}
+        status={currentRun.status}
+        phase={(currentRun.phase as string) || "init"}
+        artifactCount={artifacts.length}
+      />
 
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
         {messages.map((msg, i) => (
@@ -151,9 +161,7 @@ export function ChatPanel() {
               <ApprovalCard
                 key={approval.approval_id}
                 approval={approval}
-                onResolved={(id, approved) =>
-                  resolvePendingApproval(id, approved)
-                }
+                onResolved={(id, approved) => resolvePendingApproval(id, approved)}
               />
             ))}
           </div>
@@ -203,6 +211,30 @@ export function ChatPanel() {
         >
           Send
         </button>
+      </div>
+    </div>
+  );
+}
+
+interface RunHeaderProps {
+  title: string;
+  runId: string;
+  status: string;
+  phase: string;
+  artifactCount: number;
+}
+
+function RunHeader({ title, runId, status, phase, artifactCount }: RunHeaderProps) {
+  return (
+    <div className="p-3 border-b border-border">
+      <h2 className="font-semibold">{title}</h2>
+      <p className="text-xs text-muted-foreground">{runId}</p>
+      <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
+        <span className="px-1.5 py-0.5 bg-muted rounded">{status}</span>
+        <span className="px-1.5 py-0.5 bg-muted rounded">phase: {phase}</span>
+        <span className="px-1.5 py-0.5 bg-muted rounded">
+          {artifactCount} artifact{artifactCount === 1 ? "" : "s"}
+        </span>
       </div>
     </div>
   );

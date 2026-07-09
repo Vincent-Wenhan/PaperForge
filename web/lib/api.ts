@@ -1,4 +1,4 @@
-import type { Run, Message, Paper, Sandbox, Event, Approval } from "./store";
+import type { Run, Message, Paper, Sandbox, Event, Approval, Artifact } from "./store";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "";
 
@@ -123,6 +123,16 @@ export const api = {
   listApprovals: async (runId?: string): Promise<Approval[]> => {
     const q = runId ? `?run_id=${runId}` : "";
     return getJson(`/api/approvals${q}`);
+  },
+
+  // === Artifacts ===
+  listArtifacts: async (runId: string, includeData = false): Promise<Artifact[]> => {
+    const params = new URLSearchParams({ run_id: runId });
+    if (includeData) params.set("include_data", "true");
+    return getJson(`/api/artifacts?${params.toString()}`);
+  },
+  getArtifact: async (artifactId: string): Promise<Artifact> => {
+    return getJson(`/api/artifacts/${artifactId}`);
   },
 
   // === Settings ===
