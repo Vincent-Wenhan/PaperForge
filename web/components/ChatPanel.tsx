@@ -5,14 +5,18 @@ import { api, SSEClient } from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 import { MessageView } from "./MessageView";
 import { ToolCallCard } from "./ToolCallCard";
+import { ApprovalCard } from "./ApprovalCard";
 
 export function ChatPanel() {
   const currentRun = useAppStore((s) => s.currentRun);
   const messages = useAppStore((s) => s.messages);
   const events = useAppStore((s) => s.events);
+  const pendingApprovals = useAppStore((s) => s.pendingApprovals);
   const addMessage = useAppStore((s) => s.addMessage);
   const addEvent = useAppStore((s) => s.addEvent);
   const setSandbox = useAppStore((s) => s.setSandbox);
+  const addPendingApproval = useAppStore((s) => s.addPendingApproval);
+  const resolvePendingApproval = useAppStore((s) => s.resolvePendingApproval);
 
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -44,6 +48,21 @@ export function ChatPanel() {
 
     sse.on("artifact.created", (data) => {
       addEvent({ id: data.artifact_id || "", type: "artifact.created", data, run_id: currentRun.id });
+    });
+
+    sse.on("approval.requested", (data) => {
+      addEvent({ id: data.approval_id || "", type: "approval.requested", data, run_id: currentRun.id });
+      addPendingApproval({
+        approval_id: data.approval_id,
+        tool: data.tool || data.tool_name || "",
+        args: data.args || {},
+        status: "pending",
+      });
+    });
+
+    sse.on("approval.resolved", (data) => {
+      addEvent({ id: data.approval_id || "", type: "approval.resolved", data, run_id: currentRun.id });
+      resolvePendingApproval(data.approval_id, !!data.approved);
     });
 
     sse.on("sandbox.started", (data) => {
@@ -79,7 +98,7 @@ export function ChatPanel() {
       sse.disconnect();
       sseRef.current = null;
     };
-  }, [currentRun, addMessage, addEvent, setSandbox]);
+  }, [currentRun, addMessage, addEvent, setSandbox, addPendingApproval, resolvePendingApproval]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -125,6 +144,45 @@ export function ChatPanel() {
             toolCallId={msg.tool_call_id}
           />
         ))}
+
+        {pendingApprovals.length > 0 && (
+          <div className="space-y-2">
+            {pendingApprovals.map((approval) => (
+              <ApprovalCard
+                key={approval.approval_id}
+                approval={approval}
+                onResolved={(id, approved) =>
+                  resolvePendingApproval(id, approved)
+                }
+              />
+            ))}
+          </div>
+        )}
+
+        {events.length > 0 && (
+          <div className="space-y-2 mt-2">
+            {events.slice(-20).map((event, i) => {
+              if (event.type === "tool.call") {
+                return (
+                  <ToolCallCard
+                    key={`ev-${i}`}
+                    name={event.data.name || ""}
+                    args={event.data.args || {}}
+                  />
+                );
+              }
+              return (
+                <div
+                  key={`ev-${i}`}
+                  className="text-xs text-muted-foreground border-l-2 border-border pl-2"
+                >
+                  <span className="font-mono">{event.type}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
         <div ref={messagesEndRef} />
       </div>
 

@@ -49,24 +49,28 @@ export interface Event {
   ts?: number;
 }
 
+export interface Approval {
+  approval_id: string;
+  tool: string;
+  args: Record<string, any>;
+  status: "pending" | "approved" | "rejected";
+}
+
 interface AppState {
-  // Current run
   currentRun: Run | null;
   messages: Message[];
   events: Event[];
-
-  // Sandbox
   sandbox: Sandbox | null;
-
-  // UI
+  pendingApprovals: Approval[];
   activeTab: "preview" | "code" | "console" | "verification";
   sidebarCollapsed: boolean;
 
-  // Actions
   setCurrentRun: (run: Run | null) => void;
   addMessage: (msg: Message) => void;
   addEvent: (event: Event) => void;
   setSandbox: (sb: Sandbox | null) => void;
+  addPendingApproval: (approval: Approval) => void;
+  resolvePendingApproval: (approvalId: string, approved: boolean) => void;
   setActiveTab: (tab: "preview" | "code" | "console" | "verification") => void;
   toggleSidebar: () => void;
 }
@@ -76,14 +80,29 @@ export const useAppStore = create<AppState>((set) => ({
   messages: [],
   events: [],
   sandbox: null,
+  pendingApprovals: [],
   activeTab: "preview",
   sidebarCollapsed: false,
 
   setCurrentRun: (run) =>
-    set({ currentRun: run, messages: [], events: [] }),
+    set({ currentRun: run, messages: [], events: [], pendingApprovals: [] }),
   addMessage: (msg) => set((s) => ({ messages: [...s.messages, msg] })),
   addEvent: (event) => set((s) => ({ events: [...s.events, event] })),
   setSandbox: (sb) => set({ sandbox: sb }),
+  addPendingApproval: (approval) =>
+    set((s) =>
+      s.pendingApprovals.some((a) => a.approval_id === approval.approval_id)
+        ? s
+        : { pendingApprovals: [...s.pendingApprovals, approval] }
+    ),
+  resolvePendingApproval: (approvalId, approved) =>
+    set((s) => ({
+      pendingApprovals: s.pendingApprovals.map((a) =>
+        a.approval_id === approvalId
+          ? { ...a, status: approved ? "approved" : "rejected" }
+          : a
+      ),
+    })),
   setActiveTab: (tab) => set({ activeTab: tab }),
   toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
 }));

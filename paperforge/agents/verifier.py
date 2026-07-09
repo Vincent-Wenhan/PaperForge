@@ -11,6 +11,7 @@ from typing import Any
 from paperforge.llm.base import LLMClient, Message
 from paperforge.prompts import load_prompt
 from paperforge.schemas.verification import VerificationReport
+from paperforge.sandbox.build_runner import BuildRunner
 from paperforge.storage.db import Storage
 
 logger = logging.getLogger(__name__)
@@ -66,14 +67,22 @@ async def verify_app(
     if not has_page:
         build_errors.append("Missing app/page.tsx")
 
-    # 2b. Real build check — actually run `npm run build` if npm is available
-    build_ok, build_errs, build_warns = await run_build(app_path)
-    if build_ok:
+    # 2b. Real build check via unified BuildRunner.
+    #     Prefers Docker build when available (matches sandbox env),
+    #     falls back to local subprocess otherwise.
+    try:
+        runner = BuildRunner(mode="docker")
+        result = await runner.run(app_path)
+    except Exception:
+        runner = BuildRunner(mode="local")
+        result = await runner.run(app_path)
+
+    if result.ok:
         build_succeeded = True
     else:
         build_succeeded = False
-    build_errors.extend(build_errs)
-    build_warnings.extend(build_warns)
+    build_errors.extend(result.errors)
+    build_warnings.extend(result.warnings)
 
     # 3. PRD coverage
     prd: dict[str, Any] = {}

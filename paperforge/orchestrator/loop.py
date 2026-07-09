@@ -88,6 +88,16 @@ class Orchestrator:
         event_manager = get_event_manager()
         emit = EventEmitter(run_id=run_id, manager=event_manager)
 
+        # Persist run status as running
+        self.storage.update_run_status(run_id, "running")
+
+        # Restore phase from storage (default to INIT if missing)
+        stored_phase = self.storage.get_run_phase(run_id) or "init"
+        try:
+            self.phase = RunPhase(stored_phase)
+        except ValueError:
+            self.phase = RunPhase.INIT
+
         await emit.run_started()
 
         # Load orchestrator system prompt
@@ -192,6 +202,7 @@ class Orchestrator:
                         # Phase transition on successful tool execution.
                         if call.name in PHASE_TRANSITIONS:
                             self.phase = PHASE_TRANSITIONS[call.name]
+                            self.storage.update_run_phase(run_id, self.phase.value)
 
                     # Loop back to LLM
                     continue
@@ -207,17 +218,23 @@ class Orchestrator:
                 await emit.text(final_content)
                 await emit.run_finished()
                 self.phase = RunPhase.DONE
+                self.storage.update_run_phase(run_id, self.phase.value)
+                self.storage.update_run_status(run_id, "completed")
                 return
 
             # Max iterations reached
             logger.warning(f"Orchestrator reached max iterations ({MAX_ITERATIONS})")
             await emit.run_error(f"Orchestrator reached max iterations ({MAX_ITERATIONS})")
             self.phase = RunPhase.ERROR
+            self.storage.update_run_phase(run_id, self.phase.value)
+            self.storage.update_run_status(run_id, "error")
 
         except Exception as e:
             logger.exception(f"Orchestrator error: {e}")
             await emit.run_error(str(e))
             self.phase = RunPhase.ERROR
+            self.storage.update_run_phase(run_id, self.phase.value)
+            self.storage.update_run_status(run_id, "error")
 
     async def _execute_tool_call(
         self,

@@ -1,4 +1,4 @@
-import type { Run, Message, Paper, Sandbox, Event } from "./store";
+import type { Run, Message, Paper, Sandbox, Event, Approval } from "./store";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "";
 
@@ -116,6 +116,15 @@ export const api = {
   // === Preview ===
   getPreviewUrl: (sandboxId: string) => buildUrl(`/api/preview/${sandboxId}/`),
 
+  // === Approvals ===
+  resolveApproval: async (approvalId: string, approved: boolean): Promise<{ approval_id: string; approved: boolean }> => {
+    return postJson(`/api/approvals/${approvalId}/resolve`, { approved });
+  },
+  listApprovals: async (runId?: string): Promise<Approval[]> => {
+    const q = runId ? `?run_id=${runId}` : "";
+    return getJson(`/api/approvals${q}`);
+  },
+
   // === Settings ===
   getSettings: async (): Promise<any> => {
     return getJson(`/api/settings`);
@@ -145,29 +154,27 @@ export class SSEClient {
 
     // Listen for typed events
     for (const type of Object.keys(this.handlers)) {
-      this.es.addEventListener(type, (e: any) => {
-        try {
-          const data = JSON.parse(e.data);
-          this.handlers[type](data);
-        } catch (err) {
-          console.error("SSE parse error:", err);
-        }
-      });
+      this._attach(type, this.handlers[type]);
     }
   }
 
   on(eventType: string, handler: (data: any) => void) {
     this.handlers[eventType] = handler;
     if (this.es) {
-      this.es.addEventListener(eventType, (e: any) => {
-        try {
-          const data = JSON.parse(e.data);
-          handler(data);
-        } catch (err) {
-          console.error("SSE parse error:", err);
-        }
-      });
+      this._attach(eventType, handler);
     }
+  }
+
+  private _attach(eventType: string, handler: (data: any) => void) {
+    if (!this.es) return;
+    this.es.addEventListener(eventType, (e: any) => {
+      try {
+        const data = JSON.parse(e.data);
+        handler(data);
+      } catch (err) {
+        console.error("SSE parse error:", err);
+      }
+    });
   }
 
   disconnect() {

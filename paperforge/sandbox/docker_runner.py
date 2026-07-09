@@ -114,25 +114,9 @@ class DockerSandboxManager:
             return sandbox_record
 
         try:
-            # Build phase: install deps and verify the app compiles
-            logger.info(f"Build check for sandbox {sandbox_id}")
-            build_exit, build_logs = self._run_in_container(
-                app_path,
-                command="sh -c 'npm install --no-audit --no-fund && npm run build'",
-                name=f"paperforge-build-{sandbox_id}",
-            )
-            if build_exit != 0:
-                logger.error(f"Build failed for sandbox {sandbox_id}:\n{build_logs}")
-                self.storage.update_sandbox(
-                    sandbox_id,
-                    status="error",
-                )
-                sandbox_record["status"] = "error"
-                sandbox_record["error"] = "build_failed"
-                sandbox_record["build_logs"] = build_logs
-                return sandbox_record
-
-            # Start phase: launch dev server (HMR via polling for Windows)
+            # Sandbox no longer runs install/build itself — that's the
+            # BuildRunner's job (called by the verifier). The sandbox
+            # assumes node_modules and .next/ are already present.
             container = self._client.containers.create(
                 image=image,
                 command="sh -c 'npm run dev -- --port 3000 --hostname 0.0.0.0'",
@@ -173,39 +157,6 @@ class DockerSandboxManager:
             self.storage.update_sandbox(sandbox_id, status="error")
             sandbox_record["status"] = "error"
             return sandbox_record
-
-    def _run_in_container(
-        self,
-        app_path: Path,
-        command: str,
-        name: str,
-    ) -> tuple[int, str]:
-        """Run a one-shot command in a throwaway container.
-
-        Returns:
-            (exit_code, logs) tuple.
-        """
-        if not self._client:
-            return (1, "[Docker not available]")
-        container = self._client.containers.create(
-            image=get_config().SANDBOX_IMAGE,
-            command=command,
-            volumes={str(app_path): {"bind": "/app", "mode": "rw"}},
-            working_dir="/app",
-            detach=True,
-            name=name,
-        )
-        try:
-            container.start()
-            result = container.wait()
-            exit_code = int(result.get("StatusCode", 1))
-            logs = container.logs().decode("utf-8", errors="replace")
-            return (exit_code, logs)
-        finally:
-            try:
-                container.remove(force=True)
-            except Exception:
-                pass
 
     async def stop(self, sandbox_id: str) -> dict[str, Any]:
         """Stop a running sandbox."""

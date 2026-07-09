@@ -50,14 +50,22 @@ TOOL_DEFINITIONS = [
     ),
     ToolDefinition(
         name="plan_product",
-        description="Refine composition into a PRD. Returns PRD JSON.",
+        description="Refine composition (or single capability card) into a PRD. Accepts either composition_id (multi-paper) or card_ids (single-paper). Returns PRD JSON or clarifying questions.",
         input_schema={
             "type": "object",
             "properties": {
-                "composition_id": {"type": "string"},
+                "composition_id": {
+                    "type": "string",
+                    "description": "Composition artifact ID (multi-paper flow). Either this or card_ids is required.",
+                },
+                "card_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Capability card IDs (single-paper flow, bypasses composition). Either this or composition_id is required.",
+                },
                 "user_requirement": {"type": "string"},
             },
-            "required": ["composition_id", "user_requirement"],
+            "required": ["user_requirement"],
         },
     ),
     ToolDefinition(
@@ -106,27 +114,6 @@ TOOL_DEFINITIONS = [
         },
     ),
     ToolDefinition(
-        name="read_file",
-        description="Read a file from the project workspace.",
-        input_schema={
-            "type": "object",
-            "properties": {"path": {"type": "string"}},
-            "required": ["path"],
-        },
-    ),
-    ToolDefinition(
-        name="write_file",
-        description="Write content to a file in the project workspace.",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "path": {"type": "string"},
-                "content": {"type": "string"},
-            },
-            "required": ["path", "content"],
-        },
-    ),
-    ToolDefinition(
         name="finish",
         description="Signal that the orchestration is complete. Provide a final summary.",
         input_schema={
@@ -172,8 +159,6 @@ async def dispatch_tool(
         "verify_app": handle_verify,
         "run_in_sandbox": handle_run_sandbox,
         "stop_sandbox": handle_stop_sandbox,
-        "read_file": handle_read_file,
-        "write_file": handle_write_file,
         "finish": handle_finish,
     }
 
@@ -259,14 +244,23 @@ async def handle_plan_product(args: dict[str, Any], ctx: ToolContext) -> ToolRes
     """
     from paperforge.agents.product_planner import plan_product
 
-    composition_id = args["composition_id"]
+    composition_id = args.get("composition_id")
+    card_ids = args.get("card_ids")
     user_requirement = args["user_requirement"]
 
+    if not composition_id and not card_ids:
+        return ToolResult(
+            ok=False,
+            tool="plan_product",
+            error="Either composition_id or card_ids must be provided.",
+        )
+
     planner_output = await plan_product(
-        composition_id=composition_id,
         user_requirement=user_requirement,
         llm=ctx.llm,
         storage=ctx.storage,
+        composition_id=composition_id,
+        card_ids=card_ids,
     )
 
     if planner_output.get("needs_more_input"):
@@ -418,44 +412,6 @@ async def handle_stop_sandbox(args: dict[str, Any], ctx: ToolContext) -> ToolRes
         tool="stop_sandbox",
         data={"sandbox_id": sandbox_id, "status": "stopped"},
         summary=f"Stopped sandbox {sandbox_id}.",
-    )
-
-
-async def handle_read_file(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
-    """Read a file from the workspace."""
-    path = Path(args["path"])
-    if not path.is_absolute():
-        path = Path(get_config().DATA_DIR) / path
-
-    if not path.exists():
-        return ToolResult(
-            ok=False,
-            tool="read_file",
-            error=f"File not found: {path}",
-        )
-    return ToolResult(
-        ok=True,
-        tool="read_file",
-        data={"path": str(path), "content": path.read_text(encoding="utf-8")},
-        summary=f"Read file: {path}",
-    )
-
-
-async def handle_write_file(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
-    """Write content to a file in the workspace."""
-    path = Path(args["path"])
-    content = args["content"]
-
-    if not path.is_absolute():
-        path = Path(get_config().DATA_DIR) / path
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
-    return ToolResult(
-        ok=True,
-        tool="write_file",
-        data={"path": str(path), "saved": True},
-        summary=f"Wrote file: {path}",
     )
 
 

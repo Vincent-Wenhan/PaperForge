@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import uuid
 from pathlib import Path
@@ -15,6 +16,32 @@ from paperforge.storage.db import get_storage
 router = APIRouter()
 
 
+def _slugify(name: str) -> str:
+    """Convert a filename stem to a filesystem-safe paper_id slug."""
+    slug = re.sub(r"[^a-zA-Z0-9_-]+", "_", name).strip("_").lower()
+    return slug or "paper"
+
+
+def _unique_paper_id(storage: object, stem: str) -> str:
+    """Return a paper_id that does not collide with an existing paper.
+
+    Strategy: slugify the stem, then if that ID already exists in the
+    library, append a numeric suffix (2, 3, 4, ...) until we find a free
+    slot. This keeps human-readable IDs while preventing silent overwrites.
+    """
+    base = _slugify(stem)
+    candidate = base
+    suffix = 2
+    # Keep probing until we find an unused paper_id.
+    # If a paper with `candidate` already exists, treat it as occupied.
+    while True:
+        existing = storage.get_paper(candidate)
+        if not existing:
+            return candidate
+        candidate = f"{base}_{suffix}"
+        suffix += 1
+
+
 @router.get("")
 async def list_papers() -> dict:
     """List all papers in the library."""
@@ -25,12 +52,16 @@ async def list_papers() -> dict:
 
 @router.post("/upload")
 async def upload_paper(file: UploadFile) -> dict:
-    """Upload a PDF to the library."""
+    """Upload a PDF to the library.
+
+    Uses a unique paper_id (with numeric suffix on collision) so re-uploading
+    a same-named PDF does not silently overwrite the previous paper record.
+    """
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
 
     storage = get_storage()
-    paper_id = Path(file.filename).stem
+    paper_id = _unique_paper_id(storage, Path(file.filename).stem)
 
     # Save PDF to library directory
     pdf_path = storage.library_dir / f"{paper_id}.pdf"

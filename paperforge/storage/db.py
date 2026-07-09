@@ -127,6 +127,11 @@ class Storage:
     def _init_db(self) -> None:
         with self._lock, self._conn() as conn:
             conn.executescript(SCHEMA_SQL)
+            # Migration: add phase column if it doesn't exist
+            try:
+                conn.execute("SELECT phase FROM runs LIMIT 1")
+            except sqlite3.OperationalError:
+                conn.execute("ALTER TABLE runs ADD COLUMN phase TEXT DEFAULT 'init'")
 
     # ===== Runs =====
 
@@ -159,6 +164,21 @@ class Storage:
                 "UPDATE runs SET status = ?, updated_at = ? WHERE id = ?",
                 (status, now, run_id),
             )
+
+    def update_run_phase(self, run_id: str, phase: str) -> None:
+        now = datetime.utcnow().isoformat()
+        with self._lock, self._conn() as conn:
+            conn.execute(
+                "UPDATE runs SET phase = ?, updated_at = ? WHERE id = ?",
+                (phase, now, run_id),
+            )
+
+    def get_run_phase(self, run_id: str) -> str:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT phase FROM runs WHERE id = ?", (run_id,)
+            ).fetchone()
+            return row["phase"] if row and row["phase"] else "init"
 
     def touch_run(self, run_id: str) -> None:
         now = datetime.utcnow().isoformat()
