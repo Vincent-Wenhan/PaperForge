@@ -74,10 +74,19 @@ class DockerSandboxManager:
         if not app_path.exists():
             raise FileNotFoundError(f"App path not found: {app_path}")
 
+        cfg = get_config()
+
+        # Enforce MAX_SANDBOXES limit
+        running = self.storage.list_sandboxes(status="running")
+        if len(running) >= cfg.MAX_SANDBOXES:
+            raise RuntimeError(
+                f"Maximum number of sandboxes reached ({cfg.MAX_SANDBOXES}). "
+                "Stop an existing sandbox before starting a new one."
+            )
+
         sandbox_id = f"sandbox_{uuid.uuid4().hex[:8]}"
         preview_port = find_free_port()
 
-        cfg = get_config()
         image = cfg.SANDBOX_IMAGE
         mem_limit = cfg.SANDBOX_MEM_LIMIT
         cpu_quota = cfg.SANDBOX_CPU_QUOTA

@@ -21,7 +21,12 @@ async def start_sandbox(req: SandboxStart) -> dict:
     """Start a new sandbox container."""
     storage = get_storage()
     manager = DockerSandboxManager(storage=storage)
-    sandbox = await manager.start(run_id=req.run_id or "", app_path=req.app_path)
+    try:
+        sandbox = await manager.start(run_id=req.run_id or "", app_path=req.app_path)
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     return sandbox
 
 
@@ -42,6 +47,19 @@ async def get_sandbox(sandbox_id: str) -> dict:
     return sandbox
 
 
+@router.get("/{sandbox_id}/logs")
+async def get_sandbox_logs(sandbox_id: str, tail: int = 200) -> dict:
+    """Get container logs for a sandbox."""
+    storage = get_storage()
+    sandbox = storage.get_sandbox(sandbox_id)
+    if not sandbox:
+        raise HTTPException(status_code=404, detail="Sandbox not found")
+
+    manager = DockerSandboxManager(storage=storage)
+    logs = await manager.get_logs(sandbox_id, tail=tail)
+    return {"sandbox_id": sandbox_id, "logs": logs}
+
+
 @router.post("/{sandbox_id}/stop")
 async def stop_sandbox(sandbox_id: str) -> dict:
     """Stop a running sandbox."""
@@ -58,3 +76,4 @@ async def restart_sandbox(sandbox_id: str) -> dict:
     manager = DockerSandboxManager(storage=storage)
     sandbox = await manager.restart(sandbox_id)
     return sandbox
+

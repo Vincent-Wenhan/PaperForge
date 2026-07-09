@@ -89,6 +89,12 @@ class EventEmitter:
             },
         )
 
+    async def sandbox_error(self, error: str, sandbox_id: str | None = None) -> None:
+        await self.emit(
+            "sandbox.error",
+            {"sandbox_id": sandbox_id, "error": error},
+        )
+
     async def preview_ready(self, sandbox_id: str, preview_url: str) -> None:
         await self.emit(
             "preview.ready",

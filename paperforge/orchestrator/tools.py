@@ -316,18 +316,27 @@ async def handle_run_sandbox(args: dict[str, Any], ctx: ToolContext) -> dict[str
     run_id = args.get("run_id", ctx.run_id)
 
     manager = DockerSandboxManager(storage=ctx.storage)
-    sandbox = await manager.start(run_id=run_id, app_path=app_path)
+    try:
+        sandbox = await manager.start(run_id=run_id, app_path=app_path)
+    except Exception as e:
+        await ctx.emit.sandbox_error(str(e))
+        return {"error": str(e)}
 
     await ctx.emit.sandbox_started(sandbox["id"], sandbox.get("container_id", ""), sandbox.get("preview_port", 0))
 
-    preview_url = f"/api/preview/{sandbox['id']}/"
-    await ctx.emit.preview_ready(sandbox["id"], preview_url)
+    # Wait for the Next.js dev server to be ready before emitting preview.ready
+    ready = await manager.wait_for_ready(sandbox["id"], timeout=60)
+    if ready:
+        preview_url = f"/api/preview/{sandbox['id']}/"
+        await ctx.emit.preview_ready(sandbox["id"], preview_url)
+    else:
+        await ctx.emit.sandbox_error(f"Sandbox {sandbox['id']} failed health check within 60s")
 
     return {
         "sandbox_id": sandbox["id"],
         "container_id": sandbox.get("container_id"),
         "preview_port": sandbox.get("preview_port"),
-        "preview_url": preview_url,
+        "preview_url": preview_url if ready else None,
         "status": sandbox.get("status"),
     }
 
