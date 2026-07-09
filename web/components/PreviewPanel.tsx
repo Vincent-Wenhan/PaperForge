@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { useAppStore } from "@/lib/store";
+import { ConsoleLogs } from "./ConsoleLogs";
+import { VerificationReportView } from "./VerificationReportView";
 
 type Tab = "preview" | "code" | "console" | "verification";
 
@@ -12,7 +14,7 @@ export function PreviewPanel() {
   const [tree, setTree] = useState<any[]>([]);
   const [currentFile, setCurrentFile] = useState("");
   const [fileContent, setFileContent] = useState("");
-  const [logs, setLogs] = useState<string[]>([]);
+  const [report, setReport] = useState<any>(null);
 
   useEffect(() => {
     if (!sandbox) return;
@@ -64,10 +66,10 @@ export function PreviewPanel() {
           />
         )}
         {tab === "console" && (
-          <ConsoleLogs logs={logs} />
+          <ConsoleLogs sandboxId={sandbox?.id} />
         )}
         {tab === "verification" && (
-          <VerificationReportView sandboxId={sandbox?.id} />
+          <VerificationReportView report={report} />
         )}
       </div>
     </div>
@@ -144,33 +146,6 @@ function FileTree({ tree, onSelect }: any) {
     );
   };
   return <div>{tree.map((node: any) => renderNode(node))}</div>;
-}
-
-function ConsoleLogs({ logs }: { logs: string[] }) {
-  return (
-    <div className="h-full overflow-y-auto p-2 font-mono text-xs">
-      {logs.length === 0 ? (
-        <div className="text-muted-foreground">No logs yet</div>
-      ) : (
-        logs.map((line, i) => <div key={i}>{line}</div>)
-      )}
-    </div>
-  );
-}
-
-function VerificationReportView({ sandboxId }: { sandboxId?: string }) {
-  return (
-    <div className="p-4">
-      <h3 className="font-semibold mb-3">Verification Report</h3>
-      {!sandboxId ? (
-        <p className="text-muted-foreground text-sm">
-          Generate and verify an app to see the report.
-        </p>
-      ) : (
-        <p className="text-sm">Sandbox: {sandboxId}</p>
-      )}
-    </div>
-  );
 }
 
 function EmptyState({ message }: { message: string }) {
