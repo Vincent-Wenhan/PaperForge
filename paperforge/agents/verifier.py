@@ -188,7 +188,7 @@ async def verify_app(
     return report
 
 
-async def run_build(app_path: Path, timeout: int = 120) -> tuple[bool, list[str], list[str]]:
+async def run_build(app_path: Path, timeout: int = 180) -> tuple[bool, list[str], list[str]]:
     """Run npm install + npm run build in the app directory.
 
     Returns:
@@ -199,7 +199,7 @@ async def run_build(app_path: Path, timeout: int = 120) -> tuple[bool, list[str]
 
     try:
         proc = await asyncio.create_subprocess_exec(
-            "npm", "run", "build",
+            "npm", "install", "--no-audit", "--no-fund",
             cwd=str(app_path),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -209,20 +209,44 @@ async def run_build(app_path: Path, timeout: int = 120) -> tuple[bool, list[str]
         except asyncio.TimeoutError:
             proc.kill()
             await proc.wait()
-            return False, [f"Build timed out after {timeout}s"], []
+            return False, [f"npm install timed out after {timeout}s"], []
 
-        stdout_text = stdout.decode("utf-8", errors="replace") if stdout else ""
-        stderr_text = stderr.decode("utf-8", errors="replace") if stderr else ""
+        install_stdout = stdout.decode("utf-8", errors="replace") if stdout else ""
+        install_stderr = stderr.decode("utf-8", errors="replace") if stderr else ""
 
-        if proc.returncode == 0:
+        if proc.returncode != 0:
+            errors = []
+            combined = install_stdout + "\n" + install_stderr
+            for line in combined.split("\n"):
+                if "error" in line.lower() or "failed" in line.lower():
+                    errors.append(line.strip())
+            return False, ["npm install failed"] + errors[:20], []
+
+        build_proc = await asyncio.create_subprocess_exec(
+            "npm", "run", "build",
+            cwd=str(app_path),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            build_stdout, build_stderr = await asyncio.wait_for(build_proc.communicate(), timeout=timeout)
+        except asyncio.TimeoutError:
+            build_proc.kill()
+            await build_proc.wait()
+            return False, [f"npm run build timed out after {timeout}s"], []
+
+        build_stdout_text = build_stdout.decode("utf-8", errors="replace") if build_stdout else ""
+        build_stderr_text = build_stderr.decode("utf-8", errors="replace") if build_stderr else ""
+
+        if build_proc.returncode == 0:
             warnings = []
-            for line in stderr_text.split("\n"):
+            for line in build_stderr_text.split("\n"):
                 if "warning" in line.lower():
                     warnings.append(line.strip())
             return True, [], warnings
 
         errors = []
-        combined = stdout_text + "\n" + stderr_text
+        combined = build_stdout_text + "\n" + build_stderr_text
         for line in combined.split("\n"):
             if "error" in line.lower() or "failed" in line.lower():
                 errors.append(line.strip())

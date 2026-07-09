@@ -249,19 +249,38 @@ async def handle_compose(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
 
 
 async def handle_plan_product(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
-    """Refine composition into a PRD."""
+    """Refine composition into a PRD, or surface clarifying questions.
+
+    The planner returns a PlannerOutput wrapper:
+      - needs_more_input=True: questions are surfaced back to the LLM/user
+        and no PRD artifact is saved.
+      - needs_more_input=False: a PRD is saved as an artifact.
+    """
     from paperforge.agents.product_planner import plan_product
 
     composition_id = args["composition_id"]
     user_requirement = args["user_requirement"]
 
-    prd = await plan_product(
+    planner_output = await plan_product(
         composition_id=composition_id,
         user_requirement=user_requirement,
         llm=ctx.llm,
         storage=ctx.storage,
     )
 
+    if planner_output.get("needs_more_input"):
+        questions = planner_output.get("questions") or []
+        return ToolResult(
+            ok=True,
+            tool="plan_product",
+            data={
+                "needs_more_input": True,
+                "questions": questions,
+            },
+            summary="Need more input from user before generating PRD.",
+        )
+
+    prd = planner_output.get("prd") or {}
     artifact_id = ctx.storage.save_artifact(
         run_id=ctx.run_id,
         artifact_type="prd",
