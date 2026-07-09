@@ -15,6 +15,8 @@ from paperforge.storage.db import Storage
 
 logger = logging.getLogger(__name__)
 
+MAX_RETRIES = 3
+
 
 async def compose(
     card_ids: list[str],
@@ -54,27 +56,35 @@ async def compose(
     from paperforge.config import get_config
     cfg = get_config()
 
-    response = await llm.chat(
-        model=cfg.COMPOSER_MODEL,
-        messages=messages,
-        response_format={"type": "json_object"},
-    )
+    last_error: Exception | None = None
+    for attempt in range(1, MAX_RETRIES + 1):
+        response = await llm.chat(
+            model=cfg.COMPOSER_MODEL,
+            messages=messages,
+            response_format={"type": "json_object"},
+        )
 
-    content = response.content or "{}"
-    try:
-        composition = json.loads(content)
-    except json.JSONDecodeError as e:
-        logger.error(f"Composer returned invalid JSON: {e}\nContent: {content[:500]}")
-        raise ValueError(f"Composer returned invalid JSON: {e}")
+        content = response.content or "{}"
+        try:
+            composition = json.loads(content)
+        except json.JSONDecodeError as e:
+            last_error = e
+            logger.warning(f"Attempt {attempt}/{MAX_RETRIES}: invalid JSON: {e}")
+            messages.append(Message(role="assistant", content=content))
+            messages.append(Message(role="user", content=f"Your previous response was not valid JSON: {e}. Please output a valid JSON object only."))
+            continue
 
-    composition["composition_id"] = composition_id
-    composition["source_cards"] = list(card_ids)
+        composition["composition_id"] = composition_id
+        composition["source_cards"] = list(card_ids)
 
-    # Validate against Composition schema
-    try:
-        validated = Composition.model_validate(composition)
-        composition = validated.model_dump()
-    except Exception as e:
-        logger.warning(f"Schema validation failed: {e}. Using raw composition.")
+        try:
+            validated = Composition.model_validate(composition)
+            composition = validated.model_dump()
+            return composition
+        except Exception as e:
+            last_error = e
+            logger.warning(f"Attempt {attempt}/{MAX_RETRIES}: schema validation failed: {e}")
+            messages.append(Message(role="assistant", content=content))
+            messages.append(Message(role="user", content=f"Your JSON did not match the Composition schema: {e}. Please fix and return a valid Composition."))
 
-    return composition
+    raise ValueError(f"Composer failed after {MAX_RETRIES} retries: {last_error}")

@@ -1,17 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Sidebar } from "@/components/Sidebar";
-import { ChatPanel } from "@/components/ChatPanel";
-import { PreviewPanel } from "@/components/PreviewPanel";
-import { useAppStore } from "@/lib/store";
+import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
+import { Sidebar } from "@/components/Sidebar";
 
 export default function Home() {
+  const router = useRouter();
   const [runs, setRuns] = useState<any[]>([]);
   const [library, setLibrary] = useState<any[]>([]);
-  const currentRun = useAppStore((s) => s.currentRun);
-  const setCurrentRun = useAppStore((s) => s.setCurrentRun);
 
   useEffect(() => {
     Promise.all([api.listRuns(), api.listLibrary()])
@@ -25,12 +22,11 @@ export default function Home() {
   const handleNewRun = async () => {
     const run = await api.createRun("New Run");
     setRuns((prev) => [run, ...prev]);
-    setCurrentRun(run);
+    router.push(`/runs/${run.id}`);
   };
 
-  const handleSelectRun = async (runId: string) => {
-    const run = await api.getRun(runId);
-    setCurrentRun(run);
+  const handleSelectRun = (runId: string) => {
+    router.push(`/runs/${runId}`);
   };
 
   return (
@@ -41,8 +37,9 @@ export default function Home() {
         onNewRun={handleNewRun}
         onSelectRun={handleSelectRun}
       />
-      <ChatPanel />
-      <PreviewPanel />
+      <div className="flex-1 flex items-center justify-center text-muted-foreground">
+        Select a run or create a new one to get started.
+      </div>
     </div>
   );
 }

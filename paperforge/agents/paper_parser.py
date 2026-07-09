@@ -13,6 +13,8 @@ from paperforge.schemas.paper import CapabilityCard
 
 logger = logging.getLogger(__name__)
 
+MAX_RETRIES = 3
+
 
 def extract_pdf_text(pdf_path: str | Path) -> str:
     """Extract text from a PDF using PyMuPDF (fitz)."""
@@ -60,26 +62,33 @@ async def parse_paper(
         Message(role="user", content=f"Paper ID: {paper_id}\n\nPaper text:\n{text}"),
     ]
 
-    response = await llm.chat(
-        model=cfg.PARSER_MODEL,
-        messages=messages,
-        response_format={"type": "json_object"},
-    )
+    last_error: Exception | None = None
+    for attempt in range(1, MAX_RETRIES + 1):
+        response = await llm.chat(
+            model=cfg.PARSER_MODEL,
+            messages=messages,
+            response_format={"type": "json_object"},
+        )
 
-    content = response.content or "{}"
-    try:
-        card = json.loads(content)
-    except json.JSONDecodeError as e:
-        logger.error(f"LLM returned invalid JSON: {e}\nContent: {content[:500]}")
-        raise ValueError(f"LLM returned invalid JSON: {e}")
+        content = response.content or "{}"
+        try:
+            card = json.loads(content)
+        except json.JSONDecodeError as e:
+            last_error = e
+            logger.warning(f"Attempt {attempt}/{MAX_RETRIES}: invalid JSON: {e}")
+            messages.append(Message(role="assistant", content=content))
+            messages.append(Message(role="user", content=f"Your previous response was not valid JSON: {e}. Please output a valid JSON object only."))
+            continue
 
-    # Validate against CapabilityCard schema
-    try:
-        validated = CapabilityCard.model_validate(card)
-        card = validated.model_dump()
-    except Exception as e:
-        logger.warning(f"Schema validation failed: {e}. Using raw card.")
+        try:
+            validated = CapabilityCard.model_validate(card)
+            card = validated.model_dump()
+            card["paper_id"] = paper_id
+            return card
+        except Exception as e:
+            last_error = e
+            logger.warning(f"Attempt {attempt}/{MAX_RETRIES}: schema validation failed: {e}")
+            messages.append(Message(role="assistant", content=content))
+            messages.append(Message(role="user", content=f"Your JSON did not match the CapabilityCard schema: {e}. Please fix and return a valid CapabilityCard."))
 
-    card["paper_id"] = paper_id
-
-    return card
+    raise ValueError(f"PaperParser failed after {MAX_RETRIES} retries: {last_error}")

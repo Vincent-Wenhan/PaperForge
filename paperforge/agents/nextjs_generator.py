@@ -22,6 +22,8 @@ from paperforge.storage.db import Storage
 
 logger = logging.getLogger(__name__)
 
+MAX_RETRIES = 3
+
 
 async def generate_nextjs_app(
     prd_id: str,
@@ -65,27 +67,38 @@ async def generate_nextjs_app(
     from paperforge.config import get_config
     cfg = get_config()
 
-    response = await llm.chat(
-        model=cfg.GENERATOR_MODEL,
-        messages=messages,
-        response_format={"type": "json_object"},
-    )
+    last_error: Exception | None = None
+    for attempt in range(1, MAX_RETRIES + 1):
+        response = await llm.chat(
+            model=cfg.GENERATOR_MODEL,
+            messages=messages,
+            response_format={"type": "json_object"},
+        )
 
-    content = response.content or "{}"
-    try:
-        manifest = json.loads(content)
-    except json.JSONDecodeError as e:
-        logger.error(f"Generator returned invalid JSON: {e}\nContent: {content[:500]}")
-        raise ValueError(f"Generator returned invalid JSON: {e}")
+        content = response.content or "{}"
+        try:
+            manifest = json.loads(content)
+        except json.JSONDecodeError as e:
+            last_error = e
+            logger.warning(f"Attempt {attempt}/{MAX_RETRIES}: invalid JSON: {e}")
+            messages.append(Message(role="assistant", content=content))
+            messages.append(Message(role="user", content=f"Your previous response was not valid JSON: {e}. Please output a valid JSON object only."))
+            continue
 
-    # Validate against AppManifest schema
-    try:
         manifest["app_id"] = app_id
         manifest["prd_id"] = prd_id
-        validated = AppManifest.model_validate(manifest)
-        manifest = validated.model_dump()
-    except Exception as e:
-        logger.warning(f"Schema validation failed: {e}. Using raw manifest.")
+
+        try:
+            validated = AppManifest.model_validate(manifest)
+            manifest = validated.model_dump()
+            break
+        except Exception as e:
+            last_error = e
+            logger.warning(f"Attempt {attempt}/{MAX_RETRIES}: schema validation failed: {e}")
+            messages.append(Message(role="assistant", content=content))
+            messages.append(Message(role="user", content=f"Your JSON did not match the AppManifest schema: {e}. Please fix and return a valid AppManifest."))
+    else:
+        raise ValueError(f"NextjsGenerator failed after {MAX_RETRIES} retries: {last_error}")
 
     # Write files to output_dir
     files = manifest.get("files", [])

@@ -12,6 +12,7 @@ from typing import Any
 from paperforge.config import get_config
 from paperforge.llm.base import LLMClient, Message, ToolCall
 from paperforge.llm.factory import get_llm_client
+from paperforge.orchestrator.approvals import get_approval_registry
 from paperforge.orchestrator.events import EventEmitter, get_event_manager
 from paperforge.orchestrator.tools import TOOL_DEFINITIONS, ToolContext, dispatch_tool
 from paperforge.prompts import load_prompt
@@ -22,6 +23,9 @@ logger = logging.getLogger(__name__)
 MAX_ITERATIONS = 20
 LLM_MAX_RETRIES = 3
 LLM_RETRY_BASE_DELAY = 1.0  # seconds
+
+# Tools that require explicit user approval before execution (HITL).
+DANGEROUS_TOOLS = {"generate_nextjs_app", "run_in_sandbox"}
 
 
 class Orchestrator:
@@ -127,8 +131,42 @@ class Orchestrator:
                     for call in response.tool_calls:
                         await emit.tool_call(call)
 
-                        # Dispatch tool
-                        result = await dispatch_tool(call.name, call.args, ctx)
+                        # HITL: dangerous tools require user approval
+                        if call.name in DANGEROUS_TOOLS:
+                            approval = self.storage.create_approval(
+                                run_id=run_id,
+                                tool_name=call.name,
+                                args=call.args,
+                            )
+                            approval_id = approval["id"]
+
+                            registry = get_approval_registry()
+                            wait_event = registry.register(approval_id)
+
+                            await emit.approval_requested(
+                                approval_id=approval_id,
+                                tool_name=call.name,
+                                args=call.args,
+                            )
+
+                            await wait_event.wait()
+
+                            approved = registry.get_result(approval_id) or False
+                            registry.cleanup(approval_id)
+
+                            await emit.approval_resolved(
+                                approval_id=approval_id,
+                                approved=approved,
+                                tool_name=call.name,
+                            )
+
+                            if not approved:
+                                result = f"Tool {call.name} was rejected by the user."
+                            else:
+                                result = await dispatch_tool(call.name, call.args, ctx)
+                        else:
+                            # Dispatch tool
+                            result = await dispatch_tool(call.name, call.args, ctx)
 
                         # Save tool result message
                         self.storage.add_message(

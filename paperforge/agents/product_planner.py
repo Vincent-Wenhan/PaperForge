@@ -14,6 +14,8 @@ from paperforge.storage.db import Storage
 
 logger = logging.getLogger(__name__)
 
+MAX_RETRIES = 3
+
 
 async def plan_product(
     composition_id: str,
@@ -72,28 +74,35 @@ async def plan_product(
     from paperforge.config import get_config
     cfg = get_config()
 
-    response = await llm.chat(
-        model=cfg.PLANNER_MODEL,
-        messages=messages,
-        response_format={"type": "json_object"},
-    )
+    last_error: Exception | None = None
+    for attempt in range(1, MAX_RETRIES + 1):
+        response = await llm.chat(
+            model=cfg.PLANNER_MODEL,
+            messages=messages,
+            response_format={"type": "json_object"},
+        )
 
-    content = response.content or "{}"
-    try:
-        prd = json.loads(content)
-    except json.JSONDecodeError as e:
-        logger.error(f"Planner returned invalid JSON: {e}\nContent: {content[:500]}")
-        raise ValueError(f"Planner returned invalid JSON: {e}")
+        content = response.content or "{}"
+        try:
+            prd = json.loads(content)
+        except json.JSONDecodeError as e:
+            last_error = e
+            logger.warning(f"Attempt {attempt}/{MAX_RETRIES}: invalid JSON: {e}")
+            messages.append(Message(role="assistant", content=content))
+            messages.append(Message(role="user", content=f"Your previous response was not valid JSON: {e}. Please output a valid JSON object only."))
+            continue
 
-    # Ensure required fields
-    prd["prd_id"] = prd_id
-    prd["composition_id"] = composition_id
+        prd["prd_id"] = prd_id
+        prd["composition_id"] = composition_id
 
-    # Validate against PRD schema
-    try:
-        validated = PRD.model_validate(prd)
-        prd = validated.model_dump()
-    except Exception as e:
-        logger.warning(f"Schema validation failed: {e}. Using raw PRD.")
+        try:
+            validated = PRD.model_validate(prd)
+            prd = validated.model_dump()
+            return prd
+        except Exception as e:
+            last_error = e
+            logger.warning(f"Attempt {attempt}/{MAX_RETRIES}: schema validation failed: {e}")
+            messages.append(Message(role="assistant", content=content))
+            messages.append(Message(role="user", content=f"Your JSON did not match the PRD schema: {e}. Please fix and return a valid PRD."))
 
-    return prd
+    raise ValueError(f"ProductPlanner failed after {MAX_RETRIES} retries: {last_error}")

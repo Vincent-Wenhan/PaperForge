@@ -62,7 +62,7 @@ def create_app() -> FastAPI:
     )
 
     # Register routers
-    from api.routes import runs, messages, events, library, sandboxes, preview, files, settings
+    from api.routes import runs, messages, events, library, sandboxes, preview, files, settings, approvals
 
     app.include_router(runs.router, prefix="/api/runs", tags=["runs"])
     app.include_router(messages.router, prefix="/api/runs", tags=["messages"])
@@ -72,6 +72,7 @@ def create_app() -> FastAPI:
     app.include_router(preview.router, prefix="/api/preview", tags=["preview"])
     app.include_router(files.router, prefix="/api/files", tags=["files"])
     app.include_router(settings.router, prefix="/api/settings", tags=["settings"])
+    app.include_router(approvals.router, prefix="/api/approvals", tags=["approvals"])
 
     @app.get("/api/health")
     async def health():

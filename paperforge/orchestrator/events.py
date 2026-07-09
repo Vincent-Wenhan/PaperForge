@@ -79,6 +79,26 @@ class EventEmitter:
     async def run_error(self, error: str) -> None:
         await self.emit("run.error", {"run_id": self.run_id, "error": error})
 
+    async def approval_requested(self, approval_id: str, tool_name: str, args: dict[str, Any]) -> None:
+        await self.emit(
+            "approval.requested",
+            {
+                "approval_id": approval_id,
+                "tool": tool_name,
+                "args": args,
+            },
+        )
+
+    async def approval_resolved(self, approval_id: str, approved: bool, tool_name: str) -> None:
+        await self.emit(
+            "approval.resolved",
+            {
+                "approval_id": approval_id,
+                "tool": tool_name,
+                "approved": approved,
+            },
+        )
+
     async def sandbox_started(self, sandbox_id: str, container_id: str, preview_port: int) -> None:
         await self.emit(
             "sandbox.started",
