@@ -11,6 +11,15 @@ class Metric(BaseModel):
     context: str = ""
 
 
+class Evidence(BaseModel):
+    """Traceability anchor tying a claim back to the source paper."""
+
+    field: str
+    section: str | None = None
+    page: int | None = None
+    quote: str = ""
+
+
 class CapabilityCard(BaseModel):
     paper_id: str
     title: str
@@ -30,3 +39,5 @@ class CapabilityCard(BaseModel):
 
     constraints: list[str] = Field(default_factory=list)
     dependencies: list[str] = Field(default_factory=list)
+
+    evidence: list[Evidence] = Field(default_factory=list)

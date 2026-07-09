@@ -6,7 +6,9 @@ Implements the agentic loop: LLM → tool → LLM, until LLM stops calling tools
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+from enum import Enum
 from typing import Any
 
 from paperforge.config import get_config
@@ -23,9 +25,49 @@ logger = logging.getLogger(__name__)
 MAX_ITERATIONS = 20
 LLM_MAX_RETRIES = 3
 LLM_RETRY_BASE_DELAY = 1.0  # seconds
+APPROVAL_TIMEOUT = 300  # 5 minutes
 
 # Tools that require explicit user approval before execution (HITL).
 DANGEROUS_TOOLS = {"generate_nextjs_app", "run_in_sandbox"}
+
+
+class RunPhase(str, Enum):
+    """Deterministic phase gate for orchestrator flow."""
+
+    INIT = "init"
+    PARSED = "parsed"
+    COMPOSED = "composed"
+    PLANNED = "planned"
+    GENERATED = "generated"
+    VERIFIED = "verified"
+    PREVIEW_READY = "preview_ready"
+    DONE = "done"
+    ERROR = "error"
+
+
+# Tools allowed per phase. Tools not in the current phase's set are rejected.
+ALLOWED_TOOLS: dict[RunPhase, set[str]] = {
+    RunPhase.INIT: {"parse_paper", "finish"},
+    RunPhase.PARSED: {"compose_capabilities", "plan_product", "finish"},
+    RunPhase.COMPOSED: {"plan_product", "finish"},
+    RunPhase.PLANNED: {"generate_nextjs_app", "finish"},
+    RunPhase.GENERATED: {"verify_app", "finish"},
+    RunPhase.VERIFIED: {"run_in_sandbox", "finish"},
+    RunPhase.PREVIEW_READY: {"finish"},
+    RunPhase.DONE: set(),
+    RunPhase.ERROR: set(),
+}
+
+
+# Mapping tool name → next phase on success.
+PHASE_TRANSITIONS: dict[str, RunPhase] = {
+    "parse_paper": RunPhase.PARSED,
+    "compose_capabilities": RunPhase.COMPOSED,
+    "plan_product": RunPhase.PLANNED,
+    "generate_nextjs_app": RunPhase.GENERATED,
+    "verify_app": RunPhase.VERIFIED,
+    "run_in_sandbox": RunPhase.PREVIEW_READY,
+}
 
 
 class Orchestrator:
@@ -38,6 +80,7 @@ class Orchestrator:
     ) -> None:
         self.llm = llm or get_llm_client()
         self.storage = storage or get_storage()
+        self.phase: RunPhase = RunPhase.INIT
 
     async def run(self, run_id: str, user_message: str) -> None:
         """Run the orchestrator loop for a single user message."""
@@ -49,6 +92,9 @@ class Orchestrator:
 
         # Load orchestrator system prompt
         system_prompt = load_prompt("orchestrator")
+
+        # Save user message (orchestrator owns user message persistence).
+        self.storage.add_message(run_id=run_id, role="user", content=user_message)
 
         # Load history from storage
         history = self.storage.list_messages(run_id)
@@ -73,16 +119,6 @@ class Orchestrator:
                     Message(role="tool", content=h["content"], tool_call_id=h.get("tool_call_id") or "")
                 )
 
-        # Add the new user message
-        messages.append(Message(role="user", content=user_message))
-
-        # Save the user message
-        self.storage.add_message(
-            run_id=run_id,
-            role="user",
-            content=user_message,
-        )
-
         # Build context for tool dispatch
         ctx = ToolContext(
             run_id=run_id,
@@ -96,7 +132,7 @@ class Orchestrator:
         try:
             while iterations < MAX_ITERATIONS:
                 iterations += 1
-                logger.info(f"Orchestrator iteration {iterations} for run {run_id}")
+                logger.info(f"Orchestrator iteration {iterations} for run {run_id} (phase={self.phase.value})")
 
                 # LLM call with retry on transient failures
                 response = await self._call_llm_with_retry(
@@ -131,42 +167,7 @@ class Orchestrator:
                     for call in response.tool_calls:
                         await emit.tool_call(call)
 
-                        # HITL: dangerous tools require user approval
-                        if call.name in DANGEROUS_TOOLS:
-                            approval = self.storage.create_approval(
-                                run_id=run_id,
-                                tool_name=call.name,
-                                args=call.args,
-                            )
-                            approval_id = approval["id"]
-
-                            registry = get_approval_registry()
-                            wait_event = registry.register(approval_id)
-
-                            await emit.approval_requested(
-                                approval_id=approval_id,
-                                tool_name=call.name,
-                                args=call.args,
-                            )
-
-                            await wait_event.wait()
-
-                            approved = registry.get_result(approval_id) or False
-                            registry.cleanup(approval_id)
-
-                            await emit.approval_resolved(
-                                approval_id=approval_id,
-                                approved=approved,
-                                tool_name=call.name,
-                            )
-
-                            if not approved:
-                                result = f"Tool {call.name} was rejected by the user."
-                            else:
-                                result = await dispatch_tool(call.name, call.args, ctx)
-                        else:
-                            # Dispatch tool
-                            result = await dispatch_tool(call.name, call.args, ctx)
+                        result = await self._execute_tool_call(call, ctx, emit, run_id)
 
                         # Save tool result message
                         self.storage.add_message(
@@ -189,6 +190,10 @@ class Orchestrator:
                             )
                         )
 
+                        # Phase transition on successful tool execution.
+                        if call.name in PHASE_TRANSITIONS:
+                            self.phase = PHASE_TRANSITIONS[call.name]
+
                     # Loop back to LLM
                     continue
 
@@ -202,15 +207,83 @@ class Orchestrator:
 
                 await emit.text(final_content)
                 await emit.run_finished()
+                self.phase = RunPhase.DONE
                 return
 
             # Max iterations reached
             logger.warning(f"Orchestrator reached max iterations ({MAX_ITERATIONS})")
             await emit.run_error(f"Orchestrator reached max iterations ({MAX_ITERATIONS})")
+            self.phase = RunPhase.ERROR
 
         except Exception as e:
             logger.exception(f"Orchestrator error: {e}")
             await emit.run_error(str(e))
+            self.phase = RunPhase.ERROR
+
+    async def _execute_tool_call(
+        self,
+        call: ToolCall,
+        ctx: ToolContext,
+        emit: EventEmitter,
+        run_id: str,
+    ) -> str:
+        """Execute a single tool call, applying phase gate and HITL approval."""
+        # Phase gate: reject tools not allowed in the current phase.
+        if call.name not in ALLOWED_TOOLS.get(self.phase, set()):
+            return json.dumps({
+                "ok": False,
+                "tool": call.name,
+                "error": f"Tool '{call.name}' is not allowed in phase '{self.phase.value}'.",
+                "allowed_tools": sorted(ALLOWED_TOOLS.get(self.phase, set())),
+                "current_phase": self.phase.value,
+            }, ensure_ascii=False)
+
+        # HITL: dangerous tools require user approval
+        if call.name in DANGEROUS_TOOLS:
+            approval = self.storage.create_approval(
+                run_id=run_id,
+                tool_name=call.name,
+                args=call.args,
+            )
+            approval_id = approval["id"]
+
+            registry = get_approval_registry()
+            wait_event = registry.register(approval_id)
+
+            await emit.approval_requested(
+                approval_id=approval_id,
+                tool_name=call.name,
+                args=call.args,
+            )
+
+            try:
+                await asyncio.wait_for(wait_event.wait(), timeout=APPROVAL_TIMEOUT)
+            except asyncio.TimeoutError:
+                registry.cleanup(approval_id)
+                return json.dumps({
+                    "ok": False,
+                    "tool": call.name,
+                    "error": f"Approval timed out after {APPROVAL_TIMEOUT}s.",
+                }, ensure_ascii=False)
+
+            approved = registry.get_result(approval_id) or False
+            registry.cleanup(approval_id)
+
+            await emit.approval_resolved(
+                approval_id=approval_id,
+                approved=approved,
+                tool_name=call.name,
+            )
+
+            if not approved:
+                return json.dumps({
+                    "ok": False,
+                    "tool": call.name,
+                    "error": f"Tool {call.name} was rejected by the user.",
+                }, ensure_ascii=False)
+
+        # Dispatch tool
+        return await dispatch_tool(call.name, call.args, ctx)
 
     async def _call_llm_with_retry(
         self,

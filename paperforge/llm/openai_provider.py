@@ -10,9 +10,11 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 try:
+    import httpx
     from openai import AsyncOpenAI
 except ImportError:
     AsyncOpenAI = None  # type: ignore
+    httpx = None  # type: ignore
 
 from paperforge.llm.base import (
     ChatResponse,
@@ -37,7 +39,15 @@ class OpenAIProvider(LLMClient):
             raise ImportError(
                 "openai package is required. Install with: pip install openai"
             )
-        self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+        # ponytail: trust_env=False to bypass broken SSL_CERT_FILE (e.g. Anaconda's cacert.pem)
+        # When trust_env=True (default), httpx uses SSL_CERT_FILE env var which may be outdated.
+        # Bypassing uses httpx's bundled certifi instead.
+        http_client = httpx.AsyncClient(trust_env=False) if httpx else None
+        self.client = AsyncOpenAI(
+            api_key=api_key,
+            base_url=base_url,
+            http_client=http_client,
+        )
         self.default_model = default_model
 
     @staticmethod

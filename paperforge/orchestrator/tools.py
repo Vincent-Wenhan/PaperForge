@@ -14,6 +14,7 @@ from typing import Any
 from paperforge.config import get_config
 from paperforge.llm.base import LLMClient, Message, ToolCall, ToolDefinition
 from paperforge.orchestrator.events import EventEmitter
+from paperforge.schemas.tool_result import ToolResult
 from paperforge.storage.db import Storage
 
 
@@ -178,21 +179,24 @@ async def dispatch_tool(
 
     handler = handlers.get(name)
     if not handler:
-        result = {"error": f"Unknown tool: {name}"}
-        return json.dumps(result, ensure_ascii=False)
+        result = ToolResult(ok=False, tool=name, error=f"Unknown tool: {name}")
+        return result.model_dump_json()
 
     try:
         result = await handler(args, ctx)
+        if isinstance(result, ToolResult):
+            return result.model_dump_json()
         if isinstance(result, (dict, list)):
             return json.dumps(result, ensure_ascii=False, default=str)
         return str(result)
     except Exception as e:
-        return json.dumps({"error": str(e), "tool": name}, ensure_ascii=False)
+        result = ToolResult(ok=False, tool=name, error=str(e))
+        return result.model_dump_json()
 
 
 # ===== Tool Handlers =====
 
-async def handle_parse_paper(args: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
+async def handle_parse_paper(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
     """Parse a PDF and extract a capability card."""
     from paperforge.agents.paper_parser import parse_paper
 
@@ -210,14 +214,16 @@ async def handle_parse_paper(args: dict[str, Any], ctx: ToolContext) -> dict[str
 
     await ctx.emit.artifact_created("capability_card", str(ctx.storage.library_dir), artifact_id)
 
-    return {
-        "card_id": paper_id,
-        "artifact_id": artifact_id,
-        "card": card_data,
-    }
+    return ToolResult(
+        ok=True,
+        tool="parse_paper",
+        artifact_id=artifact_id,
+        data={"card_id": paper_id, "card": card_data},
+        summary=f"Parsed paper '{paper_id}' into capability card.",
+    )
 
 
-async def handle_compose(args: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
+async def handle_compose(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
     """Compose multiple capability cards into novel product concepts."""
     from paperforge.agents.composer import compose
 
@@ -230,10 +236,19 @@ async def handle_compose(args: dict[str, Any], ctx: ToolContext) -> dict[str, An
         data=composition,
     )
 
-    return {"composition_id": composition.get("composition_id"), "composition": composition, "artifact_id": artifact_id}
+    return ToolResult(
+        ok=True,
+        tool="compose_capabilities",
+        artifact_id=artifact_id,
+        data={
+            "composition_id": composition.get("composition_id"),
+            "composition": composition,
+        },
+        summary=f"Composed {len(card_ids)} capability cards into product candidates.",
+    )
 
 
-async def handle_plan_product(args: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
+async def handle_plan_product(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
     """Refine composition into a PRD."""
     from paperforge.agents.product_planner import plan_product
 
@@ -253,10 +268,16 @@ async def handle_plan_product(args: dict[str, Any], ctx: ToolContext) -> dict[st
         data=prd,
     )
 
-    return {"prd_id": prd.get("prd_id"), "prd": prd, "artifact_id": artifact_id}
+    return ToolResult(
+        ok=True,
+        tool="plan_product",
+        artifact_id=artifact_id,
+        data={"prd_id": prd.get("prd_id"), "prd": prd},
+        summary=f"Generated PRD from composition {composition_id}.",
+    )
 
 
-async def handle_generate(args: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
+async def handle_generate(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
     """Generate a Next.js app from a PRD."""
     from paperforge.agents.nextjs_generator import generate_nextjs_app
 
@@ -277,15 +298,20 @@ async def handle_generate(args: dict[str, Any], ctx: ToolContext) -> dict[str, A
         metadata={"app_path": output_dir},
     )
 
-    return {
-        "app_id": manifest.get("app_id"),
-        "app_path": output_dir,
-        "artifact_id": artifact_id,
-        "manifest": manifest,
-    }
+    return ToolResult(
+        ok=True,
+        tool="generate_nextjs_app",
+        artifact_id=artifact_id,
+        data={
+            "app_id": manifest.get("app_id"),
+            "app_path": output_dir,
+            "manifest": manifest,
+        },
+        summary=f"Generated Next.js app at {output_dir}.",
+    )
 
 
-async def handle_verify(args: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
+async def handle_verify(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
     """Verify a generated Next.js app."""
     from paperforge.agents.verifier import verify_app
 
@@ -305,10 +331,17 @@ async def handle_verify(args: dict[str, Any], ctx: ToolContext) -> dict[str, Any
         data=report,
     )
 
-    return {"report": report, "artifact_id": artifact_id}
+    return ToolResult(
+        ok=True,
+        tool="verify_app",
+        artifact_id=artifact_id,
+        data={"report": report},
+        summary=f"Verified app: score={report.get('overall_score', 0):.2f}, "
+                f"ready={report.get('ready_for_preview', False)}.",
+    )
 
 
-async def handle_run_sandbox(args: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
+async def handle_run_sandbox(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
     """Launch a generated app in a Docker sandbox."""
     from paperforge.sandbox.docker_runner import DockerSandboxManager
 
@@ -320,7 +353,11 @@ async def handle_run_sandbox(args: dict[str, Any], ctx: ToolContext) -> dict[str
         sandbox = await manager.start(run_id=run_id, app_path=app_path)
     except Exception as e:
         await ctx.emit.sandbox_error(str(e))
-        return {"error": str(e)}
+        return ToolResult(
+            ok=False,
+            tool="run_in_sandbox",
+            error=str(e),
+        )
 
     await ctx.emit.sandbox_started(sandbox["id"], sandbox.get("container_id", ""), sandbox.get("preview_port", 0))
 
@@ -332,37 +369,56 @@ async def handle_run_sandbox(args: dict[str, Any], ctx: ToolContext) -> dict[str
     else:
         await ctx.emit.sandbox_error(f"Sandbox {sandbox['id']} failed health check within 60s")
 
-    return {
-        "sandbox_id": sandbox["id"],
-        "container_id": sandbox.get("container_id"),
-        "preview_port": sandbox.get("preview_port"),
-        "preview_url": preview_url if ready else None,
-        "status": sandbox.get("status"),
-    }
+    return ToolResult(
+        ok=True,
+        tool="run_in_sandbox",
+        data={
+            "sandbox_id": sandbox["id"],
+            "container_id": sandbox.get("container_id"),
+            "preview_port": sandbox.get("preview_port"),
+            "preview_url": preview_url if ready else None,
+            "status": sandbox.get("status"),
+        },
+        summary=f"Launched sandbox {sandbox['id']} on port {sandbox.get('preview_port')}.",
+    )
 
 
-async def handle_stop_sandbox(args: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
+async def handle_stop_sandbox(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
     """Stop a running sandbox."""
     from paperforge.sandbox.docker_runner import DockerSandboxManager
 
     sandbox_id = args["sandbox_id"]
     manager = DockerSandboxManager(storage=ctx.storage)
     await manager.stop(sandbox_id)
-    return {"sandbox_id": sandbox_id, "status": "stopped"}
+    return ToolResult(
+        ok=True,
+        tool="stop_sandbox",
+        data={"sandbox_id": sandbox_id, "status": "stopped"},
+        summary=f"Stopped sandbox {sandbox_id}.",
+    )
 
 
-async def handle_read_file(args: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
+async def handle_read_file(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
     """Read a file from the workspace."""
     path = Path(args["path"])
     if not path.is_absolute():
         path = Path(get_config().DATA_DIR) / path
 
     if not path.exists():
-        return {"error": f"File not found: {path}"}
-    return {"path": str(path), "content": path.read_text(encoding="utf-8")}
+        return ToolResult(
+            ok=False,
+            tool="read_file",
+            error=f"File not found: {path}",
+        )
+    return ToolResult(
+        ok=True,
+        tool="read_file",
+        data={"path": str(path), "content": path.read_text(encoding="utf-8")},
+        summary=f"Read file: {path}",
+    )
 
 
-async def handle_write_file(args: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
+async def handle_write_file(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
     """Write content to a file in the workspace."""
     path = Path(args["path"])
     content = args["content"]
@@ -372,10 +428,20 @@ async def handle_write_file(args: dict[str, Any], ctx: ToolContext) -> dict[str,
 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
-    return {"path": str(path), "saved": True}
+    return ToolResult(
+        ok=True,
+        tool="write_file",
+        data={"path": str(path), "saved": True},
+        summary=f"Wrote file: {path}",
+    )
 
 
-async def handle_finish(args: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
+async def handle_finish(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
     """Signal that the orchestration is complete."""
     summary = args.get("summary", "Task completed")
-    return {"summary": summary, "status": "done"}
+    return ToolResult(
+        ok=True,
+        tool="finish",
+        data={"summary": summary, "status": "done"},
+        summary=summary,
+    )

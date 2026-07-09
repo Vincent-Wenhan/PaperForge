@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from paperforge.orchestrator.loop import Orchestrator
+from paperforge.orchestrator.tasks import get_run_task_manager
 from paperforge.storage.db import get_storage
 
 logger = logging.getLogger(__name__)
@@ -27,18 +27,10 @@ async def send_message(run_id: str, req: MessageCreate) -> dict:
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
 
-    # Save user message
-    storage.add_message(run_id=run_id, role="user", content=req.content)
-
-    # Start orchestrator in background
-    async def _run_orchestrator() -> None:
-        try:
-            orchestrator = Orchestrator()
-            await orchestrator.run(run_id=run_id, user_message=req.content)
-        except Exception as e:
-            logger.exception(f"Orchestrator error: {e}")
-
-    asyncio.create_task(_run_orchestrator())
+    # Orchestrator saves the user message; API must not duplicate it.
+    task_manager = get_run_task_manager()
+    orchestrator = Orchestrator()
+    task_manager.start(run_id, orchestrator.run(run_id=run_id, user_message=req.content))
 
     return {"status": "queued", "run_id": run_id}
 

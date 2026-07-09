@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -12,9 +11,44 @@ from paperforge.storage.db import get_storage
 
 router = APIRouter()
 
+# ponytail: file interface safety — explicit allow-list keeps the editor
+# out of binaries, lockfiles, and build artifacts.
+ALLOWED_EXTS = {
+    ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
+    ".json", ".css", ".md", ".txt",
+    ".html", ".svg",
+}
+BLOCKED_PARTS = {"node_modules", ".next", ".git", "dist", "build", ".cache"}
+MAX_FILE_SIZE = 1_000_000  # 1 MB
+
 
 class FileWrite(BaseModel):
     content: str
+
+
+def _resolve_safe(sandbox: dict, file_path: str) -> Path:
+    """Resolve a sandbox-relative path, rejecting traversal and blocked dirs."""
+    if not file_path:
+        raise HTTPException(status_code=400, detail="Empty file path")
+
+    base = Path(sandbox["app_path"]).resolve()
+    full_path = (base / file_path).resolve()
+
+    try:
+        full_path.relative_to(base)
+    except (ValueError, RuntimeError):
+        raise HTTPException(status_code=403, detail="Path outside sandbox")
+
+    if any(part in BLOCKED_PARTS for part in full_path.parts):
+        raise HTTPException(status_code=403, detail="Blocked path segment")
+
+    if full_path.suffix.lower() not in ALLOWED_EXTS:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Unsupported file type: {full_path.suffix or '(none)'}",
+        )
+
+    return full_path
 
 
 @router.get("/sandboxes/{sandbox_id}/files/{file_path:path}")
@@ -25,16 +59,13 @@ async def read_file(sandbox_id: str, file_path: str) -> dict:
     if not sandbox:
         raise HTTPException(status_code=404, detail="Sandbox not found")
 
-    full_path = Path(sandbox["app_path"]) / file_path
+    full_path = _resolve_safe(sandbox, file_path)
 
-    # Path traversal check
-    try:
-        full_path.resolve().relative_to(Path(sandbox["app_path"]).resolve())
-    except (ValueError, RuntimeError):
-        raise HTTPException(status_code=403, detail="Path outside sandbox")
-
-    if not full_path.exists():
+    if not full_path.exists() or not full_path.is_file():
         raise HTTPException(status_code=404, detail="File not found")
+
+    if full_path.stat().st_size > MAX_FILE_SIZE:
+        raise HTTPException(status_code=413, detail="File too large")
 
     return {"path": file_path, "content": full_path.read_text(encoding="utf-8")}
 
@@ -47,13 +78,10 @@ async def write_file(sandbox_id: str, file_path: str, req: FileWrite) -> dict:
     if not sandbox:
         raise HTTPException(status_code=404, detail="Sandbox not found")
 
-    full_path = Path(sandbox["app_path"]) / file_path
+    full_path = _resolve_safe(sandbox, file_path)
 
-    # Path traversal check
-    try:
-        full_path.resolve().relative_to(Path(sandbox["app_path"]).resolve())
-    except (ValueError, RuntimeError):
-        raise HTTPException(status_code=403, detail="Path outside sandbox")
+    if full_path.exists() and full_path.stat().st_size > MAX_FILE_SIZE:
+        raise HTTPException(status_code=413, detail="File too large")
 
     full_path.parent.mkdir(parents=True, exist_ok=True)
     full_path.write_text(req.content, encoding="utf-8")
@@ -72,15 +100,17 @@ async def get_file_tree(sandbox_id: str) -> dict:
     if not root.exists():
         return {"tree": []}
 
-    skip_dirs = {"node_modules", ".next", ".git", "dist", "build"}
     tree: list[dict] = []
 
     for path in sorted(root.rglob("*")):
         if not path.exists():
             continue
-        rel_path = str(path.relative_to(root)).replace("\\", "/")
-        if any(part in skip_dirs for part in path.parts):
+        rel_parts = path.relative_to(root).parts
+        if any(part in BLOCKED_PARTS for part in rel_parts):
             continue
+        if path.is_file() and path.suffix.lower() not in ALLOWED_EXTS:
+            continue
+        rel_path = "/".join(rel_parts)
         tree.append(
             {
                 "path": rel_path,

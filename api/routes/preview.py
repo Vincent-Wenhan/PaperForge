@@ -10,8 +10,13 @@ from paperforge.storage.db import get_storage
 
 router = APIRouter()
 
+FORWARDED_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
 
-@router.get("/{sandbox_id}/{path:path}")
+
+@router.api_route(
+    "/{sandbox_id}/{path:path}",
+    methods=FORWARDED_METHODS,
+)
 async def proxy_preview(sandbox_id: str, path: str, request: Request) -> Response:
     """Proxy a request to the sandbox's Next.js dev server."""
     storage = get_storage()
@@ -26,12 +31,11 @@ async def proxy_preview(sandbox_id: str, path: str, request: Request) -> Respons
     if not port:
         raise HTTPException(status_code=503, detail="No preview port assigned")
 
-    # Build target URL
     target_url = f"http://localhost:{port}/{path}"
     if request.url.query:
         target_url += f"?{request.url.query}"
 
-    # Forward headers
+    body = await request.body()
     headers = {
         k: v
         for k, v in request.headers.items()
@@ -40,13 +44,17 @@ async def proxy_preview(sandbox_id: str, path: str, request: Request) -> Respons
 
     try:
         async with httpx.AsyncClient(follow_redirects=False, timeout=30.0) as client:
-            resp = await client.get(target_url, headers=headers)
+            resp = await client.request(
+                request.method,
+                target_url,
+                headers=headers,
+                content=body or None,
+            )
     except httpx.ConnectError:
         raise HTTPException(status_code=502, detail="Sandbox dev server not reachable")
     except httpx.TimeoutException:
         raise HTTPException(status_code=504, detail="Sandbox dev server timed out")
 
-    # Filter response headers
     resp_headers = {
         k: v
         for k, v in resp.headers.items()
