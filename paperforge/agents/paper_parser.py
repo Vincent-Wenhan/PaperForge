@@ -9,6 +9,7 @@ from typing import Any
 
 from paperforge.llm.base import LLMClient, Message
 from paperforge.prompts import load_prompt
+from paperforge.schemas.paper import CapabilityCard
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +72,13 @@ async def parse_paper(
     except json.JSONDecodeError as e:
         logger.error(f"LLM returned invalid JSON: {e}\nContent: {content[:500]}")
         raise ValueError(f"LLM returned invalid JSON: {e}")
+
+    # Validate against CapabilityCard schema
+    try:
+        validated = CapabilityCard.model_validate(card)
+        card = validated.model_dump()
+    except Exception as e:
+        logger.warning(f"Schema validation failed: {e}. Using raw card.")
 
     card["paper_id"] = paper_id
 

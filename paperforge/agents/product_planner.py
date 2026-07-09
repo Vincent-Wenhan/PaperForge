@@ -9,6 +9,7 @@ from typing import Any
 
 from paperforge.llm.base import LLMClient, Message
 from paperforge.prompts import load_prompt
+from paperforge.schemas.prd import PRD
 from paperforge.storage.db import Storage
 
 logger = logging.getLogger(__name__)
@@ -87,5 +88,12 @@ async def plan_product(
     # Ensure required fields
     prd["prd_id"] = prd_id
     prd["composition_id"] = composition_id
+
+    # Validate against PRD schema
+    try:
+        validated = PRD.model_validate(prd)
+        prd = validated.model_dump()
+    except Exception as e:
+        logger.warning(f"Schema validation failed: {e}. Using raw PRD.")
 
     return prd

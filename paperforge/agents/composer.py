@@ -10,6 +10,7 @@ from typing import Any
 
 from paperforge.llm.base import LLMClient, Message
 from paperforge.prompts import load_prompt
+from paperforge.schemas.composition import Composition
 from paperforge.storage.db import Storage
 
 logger = logging.getLogger(__name__)
@@ -68,5 +69,12 @@ async def compose(
 
     composition["composition_id"] = composition_id
     composition["source_cards"] = list(card_ids)
+
+    # Validate against Composition schema
+    try:
+        validated = Composition.model_validate(composition)
+        composition = validated.model_dump()
+    except Exception as e:
+        logger.warning(f"Schema validation failed: {e}. Using raw composition.")
 
     return composition

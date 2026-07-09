@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import asyncio
 import logging
 import re
 from pathlib import Path
@@ -10,6 +10,7 @@ from typing import Any
 
 from paperforge.llm.base import LLMClient, Message
 from paperforge.prompts import load_prompt
+from paperforge.schemas.verification import VerificationReport
 from paperforge.storage.db import Storage
 
 logger = logging.getLogger(__name__)
@@ -168,7 +169,61 @@ async def verify_app(
         "recommendations": recommendations,
     }
 
+    # Validate against VerificationReport schema
+    try:
+        validated = VerificationReport.model_validate(report)
+        report = validated.model_dump()
+    except Exception as e:
+        logger.warning(f"Schema validation failed: {e}. Using raw report.")
+
     return report
+
+
+async def run_build(app_path: Path, timeout: int = 120) -> tuple[bool, list[str], list[str]]:
+    """Run npm install + npm run build in the app directory.
+
+    Returns:
+        Tuple of (success, errors, warnings)
+    """
+    if not (app_path / "package.json").exists():
+        return False, ["package.json not found"], []
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "npm", "run", "build",
+            cwd=str(app_path),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            return False, [f"Build timed out after {timeout}s"], []
+
+        stdout_text = stdout.decode("utf-8", errors="replace") if stdout else ""
+        stderr_text = stderr.decode("utf-8", errors="replace") if stderr else ""
+
+        if proc.returncode == 0:
+            warnings = []
+            for line in stderr_text.split("\n"):
+                if "warning" in line.lower():
+                    warnings.append(line.strip())
+            return True, [], warnings
+
+        errors = []
+        combined = stdout_text + "\n" + stderr_text
+        for line in combined.split("\n"):
+            if "error" in line.lower() or "failed" in line.lower():
+                errors.append(line.strip())
+
+        return False, errors[:50], []
+
+    except FileNotFoundError:
+        return False, ["npm not found in PATH"], []
+    except Exception as e:
+        return False, [f"Build execution error: {e}"], []
 
 
 def collect_files(root: Path) -> list[tuple[str, str]]:

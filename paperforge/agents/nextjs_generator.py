@@ -17,6 +17,7 @@ from typing import Any
 
 from paperforge.llm.base import LLMClient, Message
 from paperforge.prompts import load_prompt
+from paperforge.schemas.app_manifest import AppManifest
 from paperforge.storage.db import Storage
 
 logger = logging.getLogger(__name__)
@@ -77,12 +78,23 @@ async def generate_nextjs_app(
         logger.error(f"Generator returned invalid JSON: {e}\nContent: {content[:500]}")
         raise ValueError(f"Generator returned invalid JSON: {e}")
 
+    # Validate against AppManifest schema
+    try:
+        manifest["app_id"] = app_id
+        manifest["prd_id"] = prd_id
+        validated = AppManifest.model_validate(manifest)
+        manifest = validated.model_dump()
+    except Exception as e:
+        logger.warning(f"Schema validation failed: {e}. Using raw manifest.")
+
+    # Write files to output_dir
     files = manifest.get("files", [])
     for f in files:
         file_path = output_dir / f["path"]
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_text(f["content"], encoding="utf-8")
 
+    # Ensure package.json exists
     pkg_path = output_dir / "package.json"
     if not pkg_path.exists():
         deps = manifest.get("dependencies", {})
