@@ -3,49 +3,87 @@
 import { useEffect, useRef, useState } from "react";
 import { api, SSEClient } from "@/lib/api";
 import { useAppStore } from "@/lib/store";
+import { MessageView } from "./MessageView";
+import { ToolCallCard } from "./ToolCallCard";
 
 export function ChatPanel() {
   const currentRun = useAppStore((s) => s.currentRun);
   const messages = useAppStore((s) => s.messages);
+  const events = useAppStore((s) => s.events);
   const addMessage = useAppStore((s) => s.addMessage);
   const addEvent = useAppStore((s) => s.addEvent);
+  const setSandbox = useAppStore((s) => s.setSandbox);
 
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const sseRef = useRef<SSEClient | null>(null);
 
-  // Load messages when currentRun changes
   useEffect(() => {
     if (!currentRun) return;
+
     api.listMessages(currentRun.id).then((msgs) => {
       useAppStore.setState({ messages: msgs });
     });
 
-    // Connect SSE
     const sse = new SSEClient();
     sseRef.current = sse;
     sse.connect(currentRun.id);
+
     sse.on("message.delta", (data) => {
       addMessage({ role: "assistant", content: data.text || "" });
     });
+
     sse.on("tool.call", (data) => {
-      addEvent({ id: "", type: "tool.call", data, run_id: currentRun.id });
+      addEvent({ id: data.id || "", type: "tool.call", data, run_id: currentRun.id });
     });
+
     sse.on("tool.result", (data) => {
-      addEvent({ id: "", type: "tool.result", data, run_id: currentRun.id });
+      addEvent({ id: data.call_id || "", type: "tool.result", data, run_id: currentRun.id });
+    });
+
+    sse.on("artifact.created", (data) => {
+      addEvent({ id: data.artifact_id || "", type: "artifact.created", data, run_id: currentRun.id });
+    });
+
+    sse.on("sandbox.started", (data) => {
+      setSandbox({
+        id: data.sandbox_id,
+        container_id: data.container_id,
+        preview_port: data.preview_port,
+        status: "running",
+      });
+    });
+
+    sse.on("sandbox.error", (data) => {
+      addEvent({ id: "", type: "sandbox.error", data, run_id: currentRun.id });
+    });
+
+    sse.on("preview.ready", (data) => {
+      addEvent({ id: "", type: "preview.ready", data, run_id: currentRun.id });
+    });
+
+    sse.on("run.started", (data) => {
+      addEvent({ id: "", type: "run.started", data, run_id: currentRun.id });
+    });
+
+    sse.on("run.finished", (data) => {
+      addEvent({ id: "", type: "run.finished", data, run_id: currentRun.id });
+    });
+
+    sse.on("run.error", (data) => {
+      addEvent({ id: "", type: "run.error", data, run_id: currentRun.id });
     });
 
     return () => {
       sse.disconnect();
       sseRef.current = null;
     };
-  }, [currentRun, addMessage, addEvent]);
+  }, [currentRun, addMessage, addEvent, setSandbox]);
 
-  // Auto-scroll
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [messages, events]);
 
   const handleSend = async () => {
     if (!input.trim() || !currentRun) return;
@@ -79,24 +117,13 @@ export function ChatPanel() {
 
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
         {messages.map((msg, i) => (
-          <div
+          <MessageView
             key={i}
-            className={`${
-              msg.role === "user" ? "text-right" : "text-left"
-            }`}
-          >
-            <div
-              className={`inline-block px-3 py-2 rounded-lg max-w-[80%] ${
-                msg.role === "user"
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-muted"
-              }`}
-            >
-              <div className="text-sm whitespace-pre-wrap">
-                {msg.content}
-              </div>
-            </div>
-          </div>
+            role={msg.role}
+            content={msg.content}
+            toolCalls={msg.tool_calls}
+            toolCallId={msg.tool_call_id}
+          />
         ))}
         <div ref={messagesEndRef} />
       </div>

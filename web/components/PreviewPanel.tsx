@@ -1,10 +1,16 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 import { ConsoleLogs } from "./ConsoleLogs";
 import { VerificationReportView } from "./VerificationReportView";
+
+const MonacoEditor = dynamic(() => import("@monaco-editor/react").then((m) => m.default), {
+  ssr: false,
+  loading: () => <div className="p-4 text-muted-foreground">Loading editor...</div>,
+});
 
 type Tab = "preview" | "code" | "console" | "verification";
 
@@ -89,6 +95,17 @@ function PreviewFrame({ sandboxId }: { sandboxId?: string }) {
   );
 }
 
+function getLanguage(path: string): string {
+  if (path.endsWith(".tsx")) return "typescript";
+  if (path.endsWith(".ts")) return "typescript";
+  if (path.endsWith(".jsx")) return "javascript";
+  if (path.endsWith(".js")) return "javascript";
+  if (path.endsWith(".json")) return "json";
+  if (path.endsWith(".css")) return "css";
+  if (path.endsWith(".md")) return "markdown";
+  return "plaintext";
+}
+
 function CodeEditor({
   tree,
   currentFile,
@@ -113,12 +130,27 @@ function CodeEditor({
             Save
           </button>
         </div>
-        <textarea
-          value={fileContent}
-          onChange={(e) => onContentChange(e.target.value)}
-          className="flex-1 w-full p-2 font-mono text-xs resize-none focus:outline-none"
-          placeholder="Select a file from the tree"
-        />
+        {currentFile ? (
+          <MonacoEditor
+            height="100%"
+            language={getLanguage(currentFile)}
+            value={fileContent}
+            onChange={(value) => onContentChange(value || "")}
+            theme="vs-light"
+            options={{
+              minimap: { enabled: false },
+              fontSize: 13,
+              wordWrap: "on",
+              scrollBeyondLastLine: false,
+              automaticLayout: true,
+              tabSize: 2,
+            }}
+          />
+        ) : (
+          <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm">
+            Select a file from the tree
+          </div>
+        )}
       </div>
     </div>
   );

@@ -12,8 +12,28 @@ export function ConsoleLogs({ sandboxId }: ConsoleLogsProps) {
 
   useEffect(() => {
     if (!sandboxId) return;
-    // For now, logs are static; in future, stream via SSE
-    setLogs([`Sandbox: ${sandboxId}`, "Waiting for dev server to start..."]);
+    let active = true;
+
+    const loadLogs = async () => {
+      try {
+        const resp = await fetch(`/api/sandboxes/${sandboxId}/logs`);
+        if (!resp.ok) return;
+        const data = await resp.json();
+        if (active && data.logs) {
+          setLogs(data.logs.split("\n"));
+        }
+      } catch {
+        // ignore
+      }
+    };
+
+    loadLogs();
+    const interval = setInterval(loadLogs, 3000);
+
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
   }, [sandboxId]);
 
   return (
