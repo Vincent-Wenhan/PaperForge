@@ -151,6 +151,10 @@ class Orchestrator:
                     emit=emit,
                 )
                 if response is None:
+                    # LLM failed; mark run as error so it doesn't stay "running".
+                    self.phase = RunPhase.ERROR
+                    self.storage.update_run_phase(run_id, self.phase.value)
+                    self.storage.update_run_status(run_id, "error")
                     return  # error already emitted
 
                 if response.tool_calls:
@@ -199,10 +203,18 @@ class Orchestrator:
                             )
                         )
 
-                        # Phase transition on successful tool execution.
+                        # Phase transition only on successful tool execution.
+                        # Parse the ToolResult envelope to check `ok`.
                         if call.name in PHASE_TRANSITIONS:
-                            self.phase = PHASE_TRANSITIONS[call.name]
-                            self.storage.update_run_phase(run_id, self.phase.value)
+                            try:
+                                parsed = json.loads(result)
+                                ok = parsed.get("ok", False) if isinstance(parsed, dict) else False
+                            except (json.JSONDecodeError, TypeError):
+                                ok = False
+
+                            if ok:
+                                self.phase = PHASE_TRANSITIONS[call.name]
+                                self.storage.update_run_phase(run_id, self.phase.value)
 
                     # Loop back to LLM
                     continue

@@ -234,3 +234,49 @@ def test_phase_transitions_complete():
     assert PHASE_TRANSITIONS["generate_nextjs_app"] == RunPhase.GENERATED
     assert PHASE_TRANSITIONS["verify_app"] == RunPhase.VERIFIED
     assert PHASE_TRANSITIONS["run_in_sandbox"] == RunPhase.PREVIEW_READY
+
+
+@pytest.mark.asyncio
+async def test_parse_paper_updates_card_path(storage):
+    """handle_parse_paper should set papers.card_path after saving the card.
+
+    This is critical: composer.py and product_planner.py both read
+    paper["card_path"] to load the capability card. If parse_paper
+    doesn't update card_path, the downstream compose/plan flow breaks
+    with "Capability card not found".
+    """
+    from pathlib import Path
+    from unittest.mock import patch
+
+    from paperforge.orchestrator.events import EventEmitter, get_event_manager
+    from paperforge.orchestrator.tools import ToolContext, handle_parse_paper
+
+    paper_id = "test_paper_card_path"
+
+    async def mock_parse_paper(pdf_path, paper_id, llm):
+        return {
+            "paper_id": paper_id,
+            "title": "Test Paper",
+            "method": "Mock method",
+        }
+
+    storage.create_run("run_card_path", "Card Path Test")
+    event_manager = get_event_manager()
+    emit = EventEmitter(run_id="run_card_path", manager=event_manager)
+    ctx = ToolContext(run_id="run_card_path", storage=storage, llm=MockLLMClient(), emit=emit)
+
+    with patch(
+        "paperforge.agents.paper_parser.parse_paper",
+        side_effect=mock_parse_paper,
+    ):
+        result = await handle_parse_paper(
+            args={"pdf_path": "/tmp/fake.pdf", "paper_id": paper_id},
+            ctx=ctx,
+        )
+
+    paper = storage.get_paper(paper_id)
+    assert paper is not None, "Paper row should be created"
+    assert paper["card_path"] is not None, "card_path must be set"
+    assert paper["status"] == "parsed"
+    assert Path(paper["card_path"]).exists(), "Card file must exist on disk"
+    assert result.ok is True

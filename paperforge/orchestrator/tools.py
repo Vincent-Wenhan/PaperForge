@@ -196,6 +196,20 @@ async def handle_parse_paper(args: dict[str, Any], ctx: ToolContext) -> ToolResu
         artifact_type="capability_card",
         data=card_data,
     )
+    card_path = str(ctx.storage.library_dir / f"{artifact_id}.json")
+
+    # Persist card_path on the paper row so composer/planner can find it.
+    paper = ctx.storage.get_paper(paper_id)
+    if paper is None:
+        ctx.storage.upsert_paper(
+            paper_id=paper_id,
+            title=paper_id,
+            pdf_path=pdf_path,
+            card_path=card_path,
+            status="parsed",
+        )
+    else:
+        ctx.storage.update_paper_status(paper_id, "parsed", card_path=card_path)
 
     await ctx.emit.artifact_created("capability_card", str(ctx.storage.library_dir), artifact_id)
 
