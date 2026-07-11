@@ -227,14 +227,11 @@ class Orchestrator:
                     content=final_content,
                 )
 
-                # Streaming already emitted message.delta via _stream_llm.
-                # For non-streaming providers, emit.text here for the full payload.
-                if not getattr(self.llm, "stream", None):
-                    await emit.text(final_content)
+                # Plain Q&A reply: keep run active so the user can continue
+                # the conversation or start productization in the same run.
+                # Do NOT advance phase or mark the run as completed.
+                self.storage.update_run_status(run_id, "active")
                 await emit.run_finished()
-                self.phase = RunPhase.DONE
-                self.storage.update_run_phase(run_id, self.phase.value)
-                self.storage.update_run_status(run_id, "completed")
                 return
 
             # Max iterations reached

@@ -97,8 +97,10 @@ async def test_orchestrator_phase_persists_across_runs(storage):
 
     # Verify storage.get_run_phase was called
     assert call_count >= 1
-    # After run completes with text response, phase becomes DONE
-    assert orc.phase == RunPhase.DONE
+    # Phase should remain PARSED — a plain text reply must not advance phase
+    # or mark the run as done. This is the key fix that unblocks
+    # productization after a normal Q&A exchange.
+    assert orc.phase == RunPhase.PARSED
 
 
 
@@ -280,3 +282,33 @@ async def test_parse_paper_updates_card_path(storage):
     assert paper["status"] == "parsed"
     assert Path(paper["card_path"]).exists(), "Card file must exist on disk"
     assert result.ok is True
+
+
+@pytest.mark.asyncio
+async def test_plain_chat_does_not_block_subsequent_productization(storage):
+    """A plain Q&A reply must not advance the run phase or mark the run
+    as done. This is the core fix that unblocks the screenshot scenario:
+
+        1. User asks "who are you"
+        2. Orchestrator returns a plain text reply
+        3. User then asks to productize a paper
+        4. parse_paper must still be callable (phase stays at INIT)
+
+    Before the fix, step 2 would set phase=DONE, which blocks parse_paper
+    in step 4 with "not allowed in phase done".
+    """
+    storage.create_run("run_plain", "Plain Chat Test")
+    storage.add_message(run_id="run_plain", role="user", content="who are you")
+
+    class PlainLLM(MockLLMClient):
+        async def chat(self, *args, **kwargs):
+            return ChatResponse(content="I am PaperForge.", finish_reason="stop")
+
+    orc = Orchestrator(llm=PlainLLM(), storage=storage)
+    await orc.run(run_id="run_plain", user_message="who are you")
+
+    # Phase must NOT advance to DONE on a plain reply.
+    assert orc.phase != RunPhase.DONE
+    # Run status should remain active, not completed.
+    run = storage.get_run("run_plain")
+    assert run["status"] == "active"

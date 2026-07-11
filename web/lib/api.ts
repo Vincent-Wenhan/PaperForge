@@ -152,17 +152,14 @@ export class SSEClient {
     this.es = new EventSource(buildUrl(`/api/runs/${runId}/events`));
 
     this.es.onopen = () => {
-      console.log("SSE connected");
+      console.log("[SSE] connected");
     };
 
     this.es.onerror = (e) => {
-      console.warn("SSE error, attempting reconnect in 1s...");
-      setTimeout(() => {
-        if (this.es) this.connect(runId);
-      }, 1000);
+      console.warn("[SSE] error, will try reconnect");
     };
 
-    // Listen for typed events
+    // Re-attach all previously-registered handlers to the new EventSource.
     for (const type of Object.keys(this.handlers)) {
       this._attach(type, this.handlers[type]);
     }
@@ -179,10 +176,12 @@ export class SSEClient {
     if (!this.es) return;
     this.es.addEventListener(eventType, (e: any) => {
       try {
-        const data = JSON.parse(e.data);
+        const payload = JSON.parse(e.data);
+        const data = payload.data ?? payload;
+        console.log(`[SSE] event:${eventType} data=`, data);
         handler(data);
       } catch (err) {
-        console.error("SSE parse error:", err);
+        console.error("[SSE] parse error:", err);
       }
     });
   }

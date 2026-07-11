@@ -17,11 +17,16 @@ router = APIRouter()
 
 class MessageCreate(BaseModel):
     content: str
+    paper_ids: list[str] = []
 
 
 @router.post("/{run_id}/messages")
 async def send_message(run_id: str, req: MessageCreate) -> dict:
-    """Send a user message to the run. Triggers the orchestrator asynchronously."""
+    """Send a user message to the run. Triggers the orchestrator asynchronously.
+
+    `paper_ids` attach library papers as explicit context so the LLM never
+    has to guess server file paths.
+    """
     storage = get_storage()
     run = storage.get_run(run_id)
     if not run:
@@ -30,7 +35,16 @@ async def send_message(run_id: str, req: MessageCreate) -> dict:
     # API layer owns user message persistence; orchestrator must not duplicate it.
     storage.add_message(run_id=run_id, role="user", content=req.content)
 
+    # Reject if a task is already running for this run; the caller must stop
+    # the existing task before sending a new message. This prevents silent
+    # cancellation of in-flight orchestrator work.
     task_manager = get_run_task_manager()
+    if task_manager.is_running(run_id):
+        raise HTTPException(
+            status_code=409,
+            detail="A task is already running for this run. Cancel it first.",
+        )
+
     orchestrator = Orchestrator()
     task_manager.start(run_id, orchestrator.run(run_id=run_id, user_message=req.content))
 

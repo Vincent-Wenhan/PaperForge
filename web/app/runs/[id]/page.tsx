@@ -17,6 +17,9 @@ export default function RunWorkspacePage() {
   const [error, setError] = useState<string | null>(null);
 
   const setCurrentRun = useAppStore((s) => s.setCurrentRun);
+  const setSandbox = useAppStore((s) => s.setSandbox);
+  const setArtifacts = useAppStore((s) => s.setArtifacts);
+  const setPendingApprovals = useAppStore((s) => s.setPendingApprovals);
 
   useEffect(() => {
     Promise.all([api.listRuns(), api.listLibrary()])
@@ -31,17 +34,41 @@ export default function RunWorkspacePage() {
     if (!params.id) return;
     setLoading(true);
     setError(null);
-    api
-      .getRun(params.id)
-      .then((run: Run) => {
-        setCurrentRun(run);
+    Promise.all([
+      api.getRun(params.id),
+      api.listArtifacts(params.id, true),
+      api.listApprovals(params.id),
+    ])
+      .then(([run, arts, approvals]) => {
+        setCurrentRun(run as Run);
+        setArtifacts(arts);
+        const pending = approvals.filter((a) => a.status === "pending");
+        setPendingApprovals(pending);
         setLoading(false);
       })
       .catch((err) => {
         setError(err.message || "Failed to load run");
         setLoading(false);
       });
-  }, [params.id, setCurrentRun]);
+  }, [params.id, setCurrentRun, setArtifacts, setPendingApprovals]);
+
+  // Restore latest sandbox for the run (if any) so preview works on refresh.
+  useEffect(() => {
+    if (!params.id) return;
+    api.listSandboxes()
+      .then((sandboxes) => {
+        const runSb = sandboxes.filter((s) => s.run_id === params.id);
+        if (runSb.length > 0) {
+          const latest = runSb.sort((a, b) =>
+            String(b.started_at).localeCompare(String(a.started_at))
+          )[0];
+          setSandbox(latest);
+        } else {
+          setSandbox(null);
+        }
+      })
+      .catch(() => setSandbox(null));
+  }, [params.id, setSandbox]);
 
   const handleNewRun = async () => {
     const run = await api.createRun("New Run");

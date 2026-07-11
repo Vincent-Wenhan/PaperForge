@@ -11,6 +11,7 @@ export interface Message {
   tool_call_id?: string;
   name?: string;
   created_at?: string;
+  streaming?: boolean;
 }
 
 export interface Run {
@@ -68,9 +69,12 @@ interface AppState {
   sidebarCollapsed: boolean;
 
   setCurrentRun: (run: Run | null) => void;
-  addMessage: (msg: Message) => void;
-  addEvent: (event: Event) => void;
   setSandbox: (sb: Sandbox | null) => void;
+  setPendingApprovals: (approvals: Approval[]) => void;
+  addMessage: (msg: Message) => void;
+  appendAssistantDelta: (text: string) => void;
+  finalizeStreamingAssistant: () => void;
+  addEvent: (event: Event) => void;
   addPendingApproval: (approval: Approval) => void;
   resolvePendingApproval: (approvalId: string, approved: boolean) => void;
   setArtifacts: (artifacts: Artifact[]) => void;
@@ -101,9 +105,33 @@ export const useAppStore = create<AppState>((set) => ({
 
   setCurrentRun: (run) =>
     set({ currentRun: run, messages: [], events: [], pendingApprovals: [], artifacts: [] }),
-  addMessage: (msg) => set((s) => ({ messages: [...s.messages, msg] })),
-  addEvent: (event) => set((s) => ({ events: [...s.events, event] })),
   setSandbox: (sb) => set({ sandbox: sb }),
+  setPendingApprovals: (approvals) => set({ pendingApprovals: approvals }),
+  addMessage: (msg) => set((s) => ({ messages: [...s.messages, msg] })),
+  appendAssistantDelta: (text) =>
+    set((s) => {
+      const last = s.messages[s.messages.length - 1];
+      if (last && last.role === "assistant" && last.streaming) {
+        const updated = { ...last, content: last.content + text };
+        return { messages: [...s.messages.slice(0, -1), updated] };
+      }
+      return {
+        messages: [
+          ...s.messages,
+          { role: "assistant", content: text, streaming: true } as Message,
+        ],
+      };
+    }),
+  finalizeStreamingAssistant: () =>
+    set((s) => {
+      const last = s.messages[s.messages.length - 1];
+      if (last && last.role === "assistant" && (last as any).streaming) {
+        const updated = { ...last, streaming: false } as Message;
+        return { messages: [...s.messages.slice(0, -1), updated] };
+      }
+      return {};
+    }),
+  addEvent: (event) => set((s) => ({ events: [...s.events, event] })),
   addPendingApproval: (approval) =>
     set((s) =>
       s.pendingApprovals.some((a) => a.approval_id === approval.approval_id)

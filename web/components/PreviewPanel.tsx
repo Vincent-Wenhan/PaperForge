@@ -15,17 +15,6 @@ const MonacoEditor = dynamic(() => import("@monaco-editor/react").then((m) => m.
 
 type Tab = "preview" | "artifacts" | "code" | "console" | "verification";
 
-const PHASE_PROGRESS: Record<string, string[]> = {
-  init: ["Paper uploaded"],
-  parsed: ["Paper uploaded", "Capability card"],
-  composed: ["Paper uploaded", "Capability card", "Composed"],
-  planned: ["Paper uploaded", "Capability card", "PRD"],
-  generated: ["Paper uploaded", "Capability card", "PRD", "App generated"],
-  verified: ["Paper uploaded", "Capability card", "PRD", "App generated", "Verified"],
-  preview_ready: ["Paper uploaded", "Capability card", "PRD", "App generated", "Verified", "Sandbox preview"],
-  done: ["Paper uploaded", "Capability card", "PRD", "App generated", "Verified", "Done"],
-};
-
 export function PreviewPanel() {
   const sandbox = useAppStore((s) => s.sandbox);
   const artifacts = useAppStore((s) => s.artifacts);
@@ -35,15 +24,38 @@ export function PreviewPanel() {
   const [tree, setTree] = useState<any[]>([]);
   const [currentFile, setCurrentFile] = useState("");
   const [fileContent, setFileContent] = useState("");
-  const [report, setReport] = useState<any>(null);
 
   useEffect(() => {
     if (!sandbox) return;
     api.getFileTree(sandbox.id).then((resp) => setTree(resp.tree || []));
   }, [sandbox]);
 
-  const phase = (currentRun?.phase as string) || "init";
-  const progress = PHASE_PROGRESS[phase] || PHASE_PROGRESS.init
+  // Derive progress from real artifacts, sandbox, and verification reports.
+  // Never use run.phase as a source of truth — it lies.
+  const capability = artifacts.find((a) => a.type === "capability_card");
+  const prd = artifacts.find((a) => a.type === "prd");
+  const app = artifacts.find((a) => a.type === "nextjs_app");
+  const verification = artifacts.find((a) => a.type === "verification_report");
+
+  const report = verification?.data?.report ?? verification?.data ?? null;
+
+  const previewReady = Boolean(sandbox?.id) && sandbox?.status === "running";
+
+  const progress = [
+    { id: "capability", label: "Capability card", status: capability ? "complete" : "pending" },
+    { id: "prd", label: "PRD", status: prd ? "complete" : "pending" },
+    { id: "app", label: "App generated", status: app ? "complete" : "pending" },
+    {
+      id: "verified",
+      label: "Build verified",
+      status: report?.build_succeeded
+        ? "complete"
+        : verification
+          ? "error"
+          : "pending",
+    },
+    { id: "preview", label: "Live preview", status: previewReady ? "complete" : "pending" },
+  ];
 
   const tabs: Tab[] = ["preview", "artifacts", "code", "console", "verification"];
 
@@ -66,7 +78,9 @@ export function PreviewPanel() {
       </div>
 
       <div className="flex-1 overflow-hidden">
-        {activeTab === "preview" && <PreviewFrame sandboxId={sandbox?.id} progress={progress} />}
+        {activeTab === "preview" && (
+          <PreviewFrame sandboxId={sandbox?.id} progress={progress} phase={currentRun?.phase} />
+        )}
         {activeTab === "artifacts" && <ArtifactsList artifacts={artifacts} />}
         {activeTab === "code" && (
           <CodeEditor
@@ -97,27 +111,49 @@ export function PreviewPanel() {
   }
 }
 
+interface ProgressItem {
+  id: string;
+  label: string;
+  status: "complete" | "pending" | "error";
+}
+
 function PreviewFrame({
   sandboxId,
   progress,
+  phase,
 }: {
   sandboxId?: string;
-  progress: string[];
+  progress: ProgressItem[];
+  phase?: string;
 }) {
   if (!sandboxId) {
+    const hasAnyArtifact = progress.some((p) => p.status === "complete");
     return (
       <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-8">
         <div className="text-lg font-medium mb-3">No live preview yet</div>
         <div className="text-sm">
-          <div className="font-medium mb-1">Current status:</div>
+          <div className="font-medium mb-1">
+            Current phase: {phase || "init"}
+          </div>
           <ul className="space-y-1">
-            {progress.map((step, i) => (
-              <li key={i} className="flex items-center gap-2">
-                <span>{i < progress.length - 1 ? "✓" : "○"}</span>
-                <span>{step}</span>
+            {progress.map((step) => (
+              <li key={step.id} className="flex items-center gap-2">
+                <span>
+                  {step.status === "complete"
+                    ? "✓"
+                    : step.status === "error"
+                      ? "✗"
+                      : "○"}
+                </span>
+                <span>{step.label}</span>
               </li>
             ))}
           </ul>
+          {!hasAnyArtifact && (
+            <div className="mt-3 text-xs">
+              Attach a paper and ask PaperForge to productize it.
+            </div>
+          )}
         </div>
       </div>
     );

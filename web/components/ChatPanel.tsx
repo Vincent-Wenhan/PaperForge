@@ -14,6 +14,8 @@ export function ChatPanel() {
   const pendingApprovals = useAppStore((s) => s.pendingApprovals);
   const artifacts = useAppStore((s) => s.artifacts);
   const addMessage = useAppStore((s) => s.addMessage);
+  const appendAssistantDelta = useAppStore((s) => s.appendAssistantDelta);
+  const finalizeStreamingAssistant = useAppStore((s) => s.finalizeStreamingAssistant);
   const addEvent = useAppStore((s) => s.addEvent);
   const setSandbox = useAppStore((s) => s.setSandbox);
   const addPendingApproval = useAppStore((s) => s.addPendingApproval);
@@ -39,10 +41,19 @@ export function ChatPanel() {
 
     const sse = new SSEClient();
     sseRef.current = sse;
+    // Connect first so EventSource is ready, then attach handlers.
     sse.connect(currentRun.id);
 
     sse.on("message.delta", (data) => {
-      addMessage({ role: "assistant", content: data.text || "" });
+      appendAssistantDelta(data.text || "");
+    });
+
+    sse.on("run.finished", () => {
+      finalizeStreamingAssistant();
+    });
+
+    sse.on("run.error", () => {
+      finalizeStreamingAssistant();
     });
 
     sse.on("tool.call", (data) => {
@@ -75,6 +86,7 @@ export function ChatPanel() {
     sse.on("sandbox.started", (data) => {
       setSandbox({
         id: data.sandbox_id,
+        run_id: currentRun.id,
         container_id: data.container_id,
         preview_port: data.preview_port,
         status: "running",
@@ -105,7 +117,7 @@ export function ChatPanel() {
       sse.disconnect();
       sseRef.current = null;
     };
-  }, [currentRun, addMessage, addEvent, setSandbox, addPendingApproval, resolvePendingApproval, setArtifacts]);
+  }, [currentRun, addMessage, appendAssistantDelta, finalizeStreamingAssistant, addEvent, setSandbox, addPendingApproval, resolvePendingApproval, setArtifacts]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });

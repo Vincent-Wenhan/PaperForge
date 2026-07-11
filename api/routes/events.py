@@ -28,16 +28,6 @@ async def stream_events(run_id: str, request: Request) -> StreamingResponse:
 
     async def event_stream() -> AsyncIterator[str]:
         try:
-            # Replay history as snapshot
-            history = event_manager.get_history(run_id)
-            for event in history:
-                payload = {
-                    "type": event.type,
-                    "data": event.data,
-                    "run_id": event.run_id,
-                }
-                yield f"event: {event.type}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
-
             while True:
                 if await request.is_disconnected():
                     break
