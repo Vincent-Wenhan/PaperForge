@@ -64,7 +64,10 @@ class MockLLMClient(LLMClient):
             size = max(1, len(text) // 5)
             for i in range(0, len(text), size):
                 yield Chunk(content=text[i : i + size])
-        yield Chunk(finish_reason="stop")
+        if resp.tool_calls:
+            yield Chunk(tool_calls=resp.tool_calls, finish_reason=resp.finish_reason or "stop")
+        else:
+            yield Chunk(finish_reason="stop")
 
     def _generate_response(
         self,

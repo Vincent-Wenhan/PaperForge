@@ -158,10 +158,44 @@ class OpenAIProvider(LLMClient):
         if max_tokens:
             kwargs["max_tokens"] = max_tokens
 
+        # Tool calls arrive as deltas across multiple chunks, keyed by index.
+        # We accumulate them here and emit a final Chunk with parsed tool_calls.
+        tool_acc: dict[int, dict[str, str]] = {}
+
         async for event in await self.client.chat.completions.create(**kwargs):
             if not event.choices:
                 continue
-            delta = event.choices[0].delta
-            content = delta.content if hasattr(delta, "content") else None
-            finish = event.choices[0].finish_reason
-            yield Chunk(content=content, finish_reason=finish)
+            choice = event.choices[0]
+            delta = choice.delta
+            finish = choice.finish_reason
+
+            # ponytail: content delta — emit immediately for streaming UX
+            content = None
+            if hasattr(delta, "content") and delta.content:
+                content = delta.content
+                yield Chunk(content=content)
+
+            # Accumulate tool_call deltas by index
+            if hasattr(delta, "tool_calls") and delta.tool_calls:
+                for tc in delta.tool_calls:
+                    idx = tc.index if tc.index is not None else 0
+                    if idx not in tool_acc:
+                        tool_acc[idx] = {"id": "", "name": "", "arguments": ""}
+                    if tc.id:
+                        tool_acc[idx]["id"] = tc.id
+                    if tc.function and tc.function.name:
+                        tool_acc[idx]["name"] = tc.function.name
+                    if tc.function and tc.function.arguments:
+                        tool_acc[idx]["arguments"] += tc.function.arguments
+
+            # On finish, yield a final chunk with accumulated tool_calls
+            if finish:
+                tool_calls: list[ToolCall] = []
+                for idx in sorted(tool_acc.keys()):
+                    tc = tool_acc[idx]
+                    try:
+                        args = json.loads(tc["arguments"]) if tc["arguments"] else {}
+                    except (json.JSONDecodeError, ValueError):
+                        args = {}
+                    tool_calls.append(ToolCall(id=tc["id"], name=tc["name"], args=args))
+                yield Chunk(tool_calls=tool_calls, finish_reason=finish)

@@ -211,7 +211,7 @@ class DockerSandboxManager:
             return f"[Error getting logs: {e}]"
 
     async def health_check(self, sandbox_id: str) -> bool:
-        """Check if the Next.js dev server is ready."""
+        """Check if the Next.js dev server is responding with HTTP 200."""
         sandbox = self.storage.get_sandbox(sandbox_id)
         if not sandbox or sandbox.get("status") != "running":
             return False
@@ -221,11 +221,22 @@ class DockerSandboxManager:
             return False
 
         try:
-            reader, writer = await asyncio.open_connection("localhost", port)
-            writer.close()
-            await writer.wait_closed()
-            return True
-        except (ConnectionError, OSError):
+            import httpx
+        except ImportError:
+            # Fallback to TCP check if httpx not available
+            try:
+                reader, writer = await asyncio.open_connection("localhost", port)
+                writer.close()
+                await writer.wait_closed()
+                return True
+            except (ConnectionError, OSError):
+                return False
+
+        try:
+            async with httpx.AsyncClient(trust_env=False) as client:
+                resp = await client.get(f"http://localhost:{port}/", timeout=2.0)
+                return resp.status_code == 200
+        except Exception:
             return False
 
     async def wait_for_ready(self, sandbox_id: str, timeout: int = 60) -> bool:

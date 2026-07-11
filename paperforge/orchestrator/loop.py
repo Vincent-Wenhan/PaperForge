@@ -227,7 +227,10 @@ class Orchestrator:
                     content=final_content,
                 )
 
-                await emit.text(final_content)
+                # Streaming already emitted message.delta via _stream_llm.
+                # For non-streaming providers, emit.text here for the full payload.
+                if not getattr(self.llm, "stream", None):
+                    await emit.text(final_content)
                 await emit.run_finished()
                 self.phase = RunPhase.DONE
                 self.storage.update_run_phase(run_id, self.phase.value)
@@ -324,11 +327,7 @@ class Orchestrator:
         last_error: Exception | None = None
         for attempt in range(1, LLM_MAX_RETRIES + 1):
             try:
-                return await self.llm.chat(
-                    model=model,
-                    messages=messages,
-                    tools=tools,
-                )
+                return await self._stream_llm(model, messages, tools, emit)
             except Exception as e:
                 last_error = e
                 logger.warning(f"LLM call attempt {attempt}/{LLM_MAX_RETRIES} failed: {e}")
@@ -339,3 +338,47 @@ class Orchestrator:
                     await emit.run_error(f"LLM call failed after {LLM_MAX_RETRIES} retries: {last_error}")
                     return None
         return None
+
+    async def _stream_llm(
+        self,
+        model: str,
+        messages: list[Message],
+        tools: list[Any],
+        emit: EventEmitter,
+    ) -> Any:
+        """Stream LLM output, emitting message.delta per chunk.
+
+        Falls back to non-streaming chat() if the provider doesn't implement
+        stream(). Returns a ChatResponse-like object with accumulated content
+        and tool_calls.
+        """
+        stream_fn = getattr(self.llm, "stream", None)
+        if stream_fn is None:
+            # Provider doesn't support streaming; use regular chat.
+            return await self.llm.chat(model=model, messages=messages, tools=tools)
+
+        content_parts: list[str] = []
+        tool_calls: list[ToolCall] = []
+        finish_reason: str | None = None
+
+        async for chunk in stream_fn(
+            model=model,
+            messages=messages,
+            tools=tools,
+        ):
+            if chunk.content:
+                content_parts.append(chunk.content)
+                # Emit each text chunk as message.delta for live streaming UX.
+                await emit.text(chunk.content)
+            if chunk.tool_calls:
+                tool_calls.extend(chunk.tool_calls)
+            if chunk.finish_reason:
+                finish_reason = chunk.finish_reason
+
+        # Build a ChatResponse-like return so the main loop can handle uniformly.
+        from paperforge.llm.base import ChatResponse
+        return ChatResponse(
+            content="".join(content_parts) if content_parts else None,
+            tool_calls=tool_calls,
+            finish_reason=finish_reason,
+        )
