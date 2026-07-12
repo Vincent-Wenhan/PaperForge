@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { useAppStore } from "@/lib/store";
+import { useToast } from "@/lib/toast";
 
 const QUICK_ACTIONS: { id: string; label: string; description: string }[] = [
   { id: "productize", label: "Productize", description: "Productize the attached paper end-to-end." },
@@ -22,18 +23,29 @@ export function Composer() {
   const removeAttachment = useAppStore((s) => s.removeAttachment);
   const composerPrefill = useAppStore((s) => s.composerPrefill);
   const setComposerPrefill = useAppStore((s) => s.setComposerPrefill);
+  const { toast } = useToast();
 
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Apply prefill when it changes (e.g., when user clicks "Ask PaperForge to fix")
   useEffect(() => {
     if (composerPrefill) {
       setInput(composerPrefill);
       setComposerPrefill("");
+      textareaRef.current?.focus();
     }
   }, [composerPrefill, setComposerPrefill]);
+
+  // Auto-resize textarea
+  useEffect(() => {
+    if (!textareaRef.current) return;
+    const ta = textareaRef.current;
+    ta.style.height = "auto";
+    ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
+  }, [input]);
 
   if (!currentRun) return null;
 
@@ -53,6 +65,11 @@ export function Composer() {
       setIsRunning(true);
     } catch (err) {
       console.error(err);
+      toast({
+        title: "Failed to send message",
+        description: err instanceof Error ? err.message : undefined,
+        variant: "error",
+      });
     } finally {
       setSending(false);
     }
@@ -62,6 +79,7 @@ export function Composer() {
     try {
       await api.cancelRun(currentRun.id);
       setIsRunning(false);
+      toast({ title: "Run cancelled", variant: "default" });
     } catch (err) {
       console.error(err);
     }
@@ -79,6 +97,7 @@ export function Composer() {
     if (!text) return;
     setInput(text);
     fileInputRef.current?.blur();
+    textareaRef.current?.focus();
   };
 
   const handleAttach = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -118,6 +137,7 @@ export function Composer() {
               <button
                 onClick={() => removeAttachment(att.id)}
                 className="hover:text-destructive"
+                aria-label={`Remove ${att.name}`}
               >
                 ×
               </button>
@@ -142,6 +162,7 @@ export function Composer() {
           onClick={() => fileInputRef.current?.click()}
           className="p-2 hover:bg-accent rounded text-sm"
           title="Attach file"
+          aria-label="Attach file"
         >
           +
         </button>
@@ -152,6 +173,7 @@ export function Composer() {
           onChange={handleAttach}
         />
         <textarea
+          ref={textareaRef}
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}

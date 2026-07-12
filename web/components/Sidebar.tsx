@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { api, buildPaperPdfUrl } from "@/lib/api";
+import { useIsMobile } from "@/lib/useMediaQuery";
 import type { Paper, Run } from "@/lib/store";
 
 interface SidebarProps {
@@ -13,6 +14,9 @@ interface SidebarProps {
   onLibraryChanged?: () => void;
   onOpenPaper?: (paperId: string) => void;
   onAttachPaper?: (paper: Paper) => void;
+  collapsed?: boolean;
+  onToggleCollapse?: () => void;
+  onCloseMobile?: () => void;
 }
 
 type RunGroupKey = "pinned" | "today" | "yesterday" | "week" | "older";
@@ -53,7 +57,11 @@ export function Sidebar({
   onLibraryChanged,
   onOpenPaper,
   onAttachPaper,
+  collapsed = false,
+  onToggleCollapse,
+  onCloseMobile,
 }: SidebarProps) {
+  const isMobile = useIsMobile();
   const [query, setQuery] = useState("");
   const [uploading, setUploading] = useState(false);
   const [menuFor, setMenuFor] = useState<string | null>(null);
@@ -182,8 +190,30 @@ export function Sidebar({
     setPaperMenuFor(null);
   };
 
-  return (
-    <aside className="w-64 border-r border-border flex flex-col bg-muted/30">
+  // Collapsed desktop sidebar
+  if (!isMobile && collapsed) {
+    return (
+      <aside className="w-14 border-r border-border bg-muted/30 flex flex-col items-center py-3 gap-3">
+        <button
+          onClick={onToggleCollapse}
+          className="p-2 hover:bg-accent rounded"
+          aria-label="Expand sidebar"
+        >
+          ▶
+        </button>
+        <button
+          onClick={onNewRun}
+          className="p-2 hover:bg-accent rounded"
+          aria-label="New run"
+        >
+          +
+        </button>
+      </aside>
+    );
+  }
+
+  const sidebarContent = (
+    <>
       <div className="p-3 border-b border-border">
         <button
           onClick={onNewRun}
@@ -291,6 +321,30 @@ export function Sidebar({
           </span>
         </label>
       </div>
+    </>
+  );
+
+  if (isMobile) {
+    return (
+      <>
+        <aside
+          className="mobile-sidebar open w-64 border-r border-border bg-muted/30 flex flex-col"
+          aria-label="Navigation"
+        >
+          {sidebarContent}
+        </aside>
+        <div
+          className="mobile-backdrop"
+          onClick={onCloseMobile}
+          aria-hidden="true"
+        />
+      </>
+    );
+  }
+
+  return (
+    <aside className="w-64 border-r border-border bg-muted/30 flex flex-col">
+      {sidebarContent}
     </aside>
   );
 }

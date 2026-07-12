@@ -97,6 +97,14 @@
     @apply animate-pulse bg-muted rounded;
   }
 
+  .skeleton-text {
+    @apply animate-pulse bg-muted rounded h-3 w-24;
+  }
+
+  .skeleton-block {
+    @apply animate-pulse bg-muted rounded h-12 w-full;
+  }
+
   .btn-ghost {
     @apply px-2 py-1 text-sm rounded hover:bg-accent transition-colors;
   }
@@ -108,4 +116,58 @@
   .tab-inactive {
     @apply border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/50;
   }
+
+  .sidebar-mobile {
+    @apply fixed inset-y-0 left-0 z-40 w-64 transform transition-transform duration-200;
+  }
+
+  .focus-ring {
+    @apply outline-none ring-2 ring-primary ring-offset-2 ring-offset-background;
+  }
+
+  .skeleton-text {
+    @apply animate-pulse bg-muted rounded h-3 w-24;
+  }
+
+  .skeleton-block {
+    @apply animate-pulse bg-muted rounded h-12 w-full;
+  }
+}
+
+/* Responsive: mobile sidebar off-canvas */
+.mobile-sidebar {
+  position: fixed;
+  inset-block: 0;
+  left: 0;
+  z-index: 40;
+  width: 16rem;
+  transform: translateX(-100%);
+  transition: transform 0.2s ease;
+}
+.mobile-sidebar.open {
+  transform: translateX(0);
+}
+.mobile-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  background: rgba(0, 0, 0, 0.4);
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slide-in {
+  from { transform: translateY(-10px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.15s ease-out;
+}
+
+.animate-slide-in {
+  animation: slide-in 0.2s ease-out;
 }

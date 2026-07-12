@@ -3,21 +3,26 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { api } from "@/lib/api";
-import { useAppStore, type Run } from "@/lib/store";
+import { useAppStore, type Paper, type Run } from "@/lib/store";
+import { useIsMobile } from "@/lib/useMediaQuery";
 import { Sidebar } from "@/components/Sidebar";
 import { ChatPanel } from "@/components/ChatPanel";
 import { PreviewPanel } from "@/components/PreviewPanel";
 import { GlobalHeader } from "@/components/shell/GlobalHeader";
 import { CommandPalette } from "@/components/dialogs/CommandPalette";
+import { SkeletonMessage, SidebarSkeleton } from "@/components/Skeleton";
 
 export default function RunWorkspacePage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
+  const isMobile = useIsMobile();
   const [runs, setRuns] = useState<any[]>([]);
   const [library, setLibrary] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   const setCurrentRun = useAppStore((s) => s.setCurrentRun);
   const setSandbox = useAppStore((s) => s.setSandbox);
@@ -99,6 +104,7 @@ export default function RunWorkspacePage() {
 
   const handleSelectRun = (runId: string) => {
     router.push(`/runs/${runId}`);
+    setMobileSidebarOpen(false);
   };
 
   if (loading) {
@@ -107,14 +113,10 @@ export default function RunWorkspacePage() {
         <div className="flex h-screen w-screen flex-col overflow-hidden">
           <GlobalHeader onToggleCommandPalette={() => setPaletteOpen(true)} />
           <div className="flex flex-1 overflow-hidden">
-            <Sidebar
-              runs={runs}
-              library={library}
-              onNewRun={handleNewRun}
-              onSelectRun={handleSelectRun}
-            />
-            <div className="flex-1 flex items-center justify-center text-muted-foreground">
-              Loading run...
+            <SidebarSkeleton />
+            <div className="flex-1 p-4 space-y-4">
+              <SkeletonMessage />
+              <SkeletonMessage />
             </div>
           </div>
         </div>
@@ -154,26 +156,57 @@ export default function RunWorkspacePage() {
   return (
     <>
       <div className="flex h-screen w-screen flex-col overflow-hidden">
-        <GlobalHeader onToggleCommandPalette={() => setPaletteOpen(true)} />
+        <GlobalHeader
+          onToggleCommandPalette={() => setPaletteOpen(true)}
+          onToggleSidebar={
+            isMobile
+              ? () => setMobileSidebarOpen((v) => !v)
+              : () => setSidebarCollapsed((v) => !v)
+          }
+        />
         <div className="flex flex-1 overflow-hidden">
-          <Sidebar
-            runs={runs}
-            library={library}
-            onNewRun={handleNewRun}
-            onSelectRun={handleSelectRun}
-            onRunsChanged={loadRuns}
-            onLibraryChanged={loadLibrary}
-            onOpenPaper={(paperId) => router.push(`/library/${paperId}`)}
-            onAttachPaper={(paper) => {
-              const store = useAppStore.getState();
-              store.addAttachment({
-                id: `paper-${paper.paper_id}`,
-                type: "paper",
-                name: paper.title,
-                paperId: paper.paper_id,
-              });
-            }}
-          />
+          {isMobile && mobileSidebarOpen ? (
+            <Sidebar
+              runs={runs}
+              library={library}
+              onNewRun={handleNewRun}
+              onSelectRun={handleSelectRun}
+              onRunsChanged={loadRuns}
+              onLibraryChanged={loadLibrary}
+              onCloseMobile={() => setMobileSidebarOpen(false)}
+              onOpenPaper={(paperId) => router.push(`/library/${paperId}`)}
+              onAttachPaper={(paper) => {
+                const store = useAppStore.getState();
+                store.addAttachment({
+                  id: `paper-${paper.paper_id}`,
+                  type: "paper",
+                  name: paper.title,
+                  paperId: paper.paper_id,
+                });
+              }}
+            />
+          ) : (
+            <Sidebar
+              runs={runs}
+              library={library}
+              onNewRun={handleNewRun}
+              onSelectRun={handleSelectRun}
+              onRunsChanged={loadRuns}
+              onLibraryChanged={loadLibrary}
+              collapsed={sidebarCollapsed}
+              onToggleCollapse={() => setSidebarCollapsed((v) => !v)}
+              onOpenPaper={(paperId) => router.push(`/library/${paperId}`)}
+              onAttachPaper={(paper) => {
+                const store = useAppStore.getState();
+                store.addAttachment({
+                  id: `paper-${paper.paper_id}`,
+                  type: "paper",
+                  name: paper.title,
+                  paperId: paper.paper_id,
+                });
+              }}
+            />
+          )}
           <ChatPanel />
           <PreviewPanel />
         </div>
