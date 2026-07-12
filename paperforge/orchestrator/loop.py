@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import uuid
 from enum import Enum
 from typing import Any
 
@@ -219,17 +220,16 @@ class Orchestrator:
                     # Loop back to LLM
                     continue
 
-                # LLM returned text (no tool calls)
+                # LLM returned text (no tool calls): message lifecycle is
+                # handled inside _stream_llm (message.started → message.delta
+                # → message.completed). Here we persist the final message and
+                # keep the run active so the user can continue the conversation.
                 final_content = response.content or ""
                 self.storage.add_message(
                     run_id=run_id,
                     role="assistant",
                     content=final_content,
                 )
-
-                # Plain Q&A reply: keep run active so the user can continue
-                # the conversation or start productization in the same run.
-                # Do NOT advance phase or mark the run as completed.
                 self.storage.update_run_status(run_id, "active")
                 await emit.run_finished()
                 return
@@ -343,39 +343,59 @@ class Orchestrator:
         tools: list[Any],
         emit: EventEmitter,
     ) -> Any:
-        """Stream LLM output, emitting message.delta per chunk.
+        """Stream LLM output, emitting message.lifecycle events.
 
         Falls back to non-streaming chat() if the provider doesn't implement
         stream(). Returns a ChatResponse-like object with accumulated content
         and tool_calls.
+
+        Emits in order:
+        - message.started (with message_id)
+        - message.delta (with message_id + delta) per chunk
+        - message.completed (with message_id + content) on success
+        - message.failed (with message_id + error) on failure
         """
         stream_fn = getattr(self.llm, "stream", None)
         if stream_fn is None:
             # Provider doesn't support streaming; use regular chat.
             return await self.llm.chat(model=model, messages=messages, tools=tools)
 
+        message_id = f"msg_{uuid.uuid4().hex[:12]}"
         content_parts: list[str] = []
         tool_calls: list[ToolCall] = []
         finish_reason: str | None = None
 
-        async for chunk in stream_fn(
-            model=model,
-            messages=messages,
-            tools=tools,
-        ):
-            if chunk.content:
-                content_parts.append(chunk.content)
-                # Emit each text chunk as message.delta for live streaming UX.
-                await emit.text(chunk.content)
-            if chunk.tool_calls:
-                tool_calls.extend(chunk.tool_calls)
-            if chunk.finish_reason:
-                finish_reason = chunk.finish_reason
+        # Emit message.started to signal the start of a new assistant message.
+        await emit.message_started(message_id)
+
+        try:
+            async for chunk in stream_fn(
+                model=model,
+                messages=messages,
+                tools=tools,
+            ):
+                if chunk.content:
+                    content_parts.append(chunk.content)
+                    # Emit each text chunk as message.delta with the same message_id.
+                    await emit.message_delta(message_id, chunk.content)
+                if chunk.tool_calls:
+                    tool_calls.extend(chunk.tool_calls)
+                if chunk.finish_reason:
+                    finish_reason = chunk.finish_reason
+        except Exception as e:
+            # Emit message.failed to signal the message was not completed.
+            await emit.message_failed(message_id, str(e))
+            raise
+
+        final_content = "".join(content_parts) if content_parts else ""
+
+        # Emit message.completed to signal the message is done streaming.
+        await emit.message_completed(message_id, final_content)
 
         # Build a ChatResponse-like return so the main loop can handle uniformly.
         from paperforge.llm.base import ChatResponse
         return ChatResponse(
-            content="".join(content_parts) if content_parts else None,
+            content=final_content or None,
             tool_calls=tool_calls,
             finish_reason=finish_reason,
         )
