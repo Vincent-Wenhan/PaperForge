@@ -19,6 +19,11 @@
     --sidebar: 240 5% 96%;
     --surface: 0 0% 100%;
     --surface-subtle: 240 5% 98%;
+    /* Design tokens per doc 12.3 */
+    --border-subtle: 240 6% 90%;
+    --text-primary: 240 10% 10%;
+    --text-secondary: 240 4% 46%;
+    --danger: 0 72% 50%;
   }
 
   .dark {
@@ -37,6 +42,10 @@
     --sidebar: 240 6% 8%;
     --surface: 240 6% 10%;
     --surface-subtle: 240 5% 12%;
+    --border-subtle: 240 6% 18%;
+    --text-primary: 240 5% 96%;
+    --text-secondary: 240 5% 65%;
+    --danger: 0 62% 55%;
   }
 }
 

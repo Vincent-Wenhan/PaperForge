@@ -73,6 +73,10 @@ CREATE TABLE IF NOT EXISTS artifacts (
     type TEXT NOT NULL,
     path TEXT NOT NULL,
     metadata TEXT,
+    display_name TEXT,
+    version INTEGER NOT NULL DEFAULT 1,
+    parent_artifact_id TEXT,
+    updated_at TIMESTAMP,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_artifacts_run ON artifacts(run_id);
@@ -457,14 +461,16 @@ class Storage:
         now = datetime.utcnow().isoformat()
         with self._lock, self._conn() as conn:
             conn.execute(
-                """INSERT INTO artifacts (id, run_id, type, path, metadata, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
+                """INSERT INTO artifacts
+                   (id, run_id, type, path, metadata, version, updated_at, created_at)
+                   VALUES (?, ?, ?, ?, ?, 1, ?, ?)""",
                 (
                     artifact_id,
                     run_id,
                     artifact_type,
                     str(path),
                     json.dumps(metadata or {}, ensure_ascii=False),
+                    now,
                     now,
                 ),
             )
