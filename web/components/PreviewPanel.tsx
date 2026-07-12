@@ -188,7 +188,14 @@ export function PreviewPanel() {
         {activeTab === "console" && <ConsoleLogs sandboxId={sandbox?.id} />}
         {activeTab === "verification" && (
           <VerificationReportView
-            report={artifacts.find((a) => a.type === "verification_report")?.data?.report ?? null}
+            report={
+              artifacts.find((a) => a.type === "verification_report")?.data
+                ?.report ?? null
+            }
+            onJumpToFile={(path) => {
+              setActiveTab("files");
+              openFile(path);
+            }}
           />
         )}
       </div>

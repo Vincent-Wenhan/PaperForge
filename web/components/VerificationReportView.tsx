@@ -4,9 +4,31 @@ import { useAppStore } from "@/lib/store";
 
 interface VerificationReportViewProps {
   report: any;
+  onJumpToFile?: (path: string, line?: number, column?: number) => void;
 }
 
-export function VerificationReportView({ report }: VerificationReportViewProps) {
+interface ErrorLocation {
+  path: string;
+  line?: number;
+  column?: number;
+}
+
+function parseErrorLocation(error: string): ErrorLocation | null {
+  const match = error.match(/([^\s]+?):(\d+)(?::(\d+))?/);
+  if (!match) return null;
+  const path = match[1];
+  if (!/\.[a-zA-Z0-9]+$/.test(path)) return null;
+  return {
+    path,
+    line: match[2] ? parseInt(match[2], 10) : undefined,
+    column: match[3] ? parseInt(match[3], 10) : undefined,
+  };
+}
+
+export function VerificationReportView({
+  report,
+  onJumpToFile,
+}: VerificationReportViewProps) {
   const setComposerPrefill = useAppStore((s) => s.setComposerPrefill);
 
   if (!report) {
@@ -47,6 +69,32 @@ export function VerificationReportView({ report }: VerificationReportViewProps) 
     );
   };
 
+  const renderError = (error: string, idx: number) => {
+    const location = onJumpToFile ? parseErrorLocation(error) : null;
+    if (location) {
+      return (
+        <li key={idx} className="font-mono text-xs break-all">
+          <button
+            onClick={() =>
+              onJumpToFile?.(location.path, location.line, location.column)
+            }
+            className="text-left hover:underline text-primary"
+            title={`Jump to ${location.path}${
+              location.line ? `:${location.line}` : ""
+            }`}
+          >
+            {error}
+          </button>
+        </li>
+      );
+    }
+    return (
+      <li key={idx} className="font-mono text-xs break-all">
+        {error}
+      </li>
+    );
+  };
+
   return (
     <div className="p-4 space-y-4">
       <div>
@@ -80,19 +128,39 @@ export function VerificationReportView({ report }: VerificationReportViewProps) 
       )}
 
       {buildErrors.length > 0 && (
-        <Section title="Build Errors" items={buildErrors} variant="error" />
+        <Section
+          title="Build Errors"
+          items={buildErrors}
+          variant="error"
+          renderItem={renderError}
+        />
       )}
 
       {typeErrors.length > 0 && (
-        <Section title="Type Errors" items={typeErrors} variant="error" />
+        <Section
+          title="Type Errors"
+          items={typeErrors}
+          variant="error"
+          renderItem={renderError}
+        />
       )}
 
       {lintErrors.length > 0 && (
-        <Section title="Lint Errors" items={lintErrors} variant="warning" />
+        <Section
+          title="Lint Errors"
+          items={lintErrors}
+          variant="warning"
+          renderItem={renderError}
+        />
       )}
 
       {securityIssues.length > 0 && (
-        <Section title="Security Issues" items={securityIssues} variant="error" />
+        <Section
+          title="Security Issues"
+          items={securityIssues}
+          variant="error"
+          renderItem={renderError}
+        />
       )}
 
       {Object.keys(prdCoverage).length > 0 && (
@@ -157,10 +225,12 @@ function Section({
   title,
   items,
   variant,
+  renderItem,
 }: {
   title: string;
   items: string[];
   variant: "error" | "warning";
+  renderItem?: (error: string, idx: number) => React.ReactNode;
 }) {
   const colorClass =
     variant === "error"
@@ -172,11 +242,13 @@ function Section({
         {title} ({items.length})
       </h4>
       <ul className="text-sm list-disc list-inside space-y-0.5">
-        {items.map((e, i) => (
-          <li key={i} className="font-mono text-xs break-all">
-            {e}
-          </li>
-        ))}
+        {items.map((e, i) =>
+          renderItem ? renderItem(e, i) : (
+            <li key={i} className="font-mono text-xs break-all">
+              {e}
+            </li>
+          ),
+        )}
       </ul>
     </div>
   );

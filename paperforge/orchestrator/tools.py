@@ -23,14 +23,20 @@ from paperforge.storage.db import Storage
 TOOL_DEFINITIONS = [
     ToolDefinition(
         name="parse_paper",
-        description="Parse a PDF and extract a capability card. Returns card_id and card JSON.",
+        description="Parse a PDF and extract a capability card. Returns card_id and card JSON. Prefer paper_id — the backend resolves the PDF path from the library.",
         input_schema={
             "type": "object",
             "properties": {
-                "pdf_path": {"type": "string", "description": "Path to the PDF file"},
-                "paper_id": {"type": "string", "description": "Optional paper ID"},
+                "paper_id": {
+                    "type": "string",
+                    "description": "Library paper ID (preferred). The backend resolves the PDF path; never construct server paths yourself.",
+                },
+                "pdf_path": {
+                    "type": "string",
+                    "description": "Legacy: direct path to a PDF file. Prefer paper_id.",
+                },
             },
-            "required": ["pdf_path"],
+            "required": [],
         },
     ),
     ToolDefinition(
@@ -182,11 +188,29 @@ async def dispatch_tool(
 # ===== Tool Handlers =====
 
 async def handle_parse_paper(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
-    """Parse a PDF and extract a capability card."""
+    """Parse a PDF and extract a capability card.
+
+    Accepts either `paper_id` (preferred — Storage resolves pdf_path) or
+    `pdf_path` (legacy). The LLM should never construct server paths.
+    """
     from paperforge.agents.paper_parser import parse_paper
 
-    pdf_path = args["pdf_path"]
-    paper_id = args.get("paper_id") or Path(pdf_path).stem
+    paper_id = args.get("paper_id")
+    pdf_path = args.get("pdf_path")
+
+    if paper_id:
+        # Preferred path: look the paper up in the library to resolve pdf_path.
+        paper = ctx.storage.get_paper(paper_id)
+        if paper is not None and not pdf_path:
+            pdf_path = paper.get("pdf_path")
+    elif pdf_path:
+        paper_id = Path(pdf_path).stem
+    else:
+        return ToolResult(
+            ok=False,
+            tool="parse_paper",
+            error="Either paper_id or pdf_path must be provided.",
+        )
 
     card = await parse_paper(pdf_path=pdf_path, paper_id=paper_id, llm=ctx.llm)
 

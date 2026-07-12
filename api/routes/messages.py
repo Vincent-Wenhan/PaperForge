@@ -20,6 +20,20 @@ class MessageCreate(BaseModel):
     paper_ids: list[str] = []
 
 
+def _derive_title(content: str, max_len: int = 50) -> str:
+    """Ponytail: derive a short title from the user's first message.
+
+    Strip whitespace, take the first line, truncate with ellipsis. No
+    need for an LLM call when a heuristic this simple works.
+    """
+    line = content.strip().splitlines()[0] if content.strip() else ""
+    if not line:
+        return "New Run"
+    if len(line) <= max_len:
+        return line
+    return line[: max_len - 1].rstrip() + "…"
+
+
 @router.post("/{run_id}/messages")
 async def send_message(run_id: str, req: MessageCreate) -> dict:
     """Send a user message to the run. Triggers the orchestrator asynchronously.
@@ -44,6 +58,14 @@ async def send_message(run_id: str, req: MessageCreate) -> dict:
 
     # API layer owns user message persistence; orchestrator must not duplicate it.
     storage.add_message(run_id=run_id, role="user", content=req.content)
+
+    # Auto-generate run title from the first user message (doc 6.5).
+    # Only update if the title is still the default placeholder so we
+    # never overwrite a user's manual rename.
+    current_title = run.get("title") or ""
+    if current_title in ("", "Untitled Run", "New Run"):
+        new_title = _derive_title(req.content)
+        storage.update_run(run_id=run_id, title=new_title)
 
     # Attach any new papers to this run as explicit context (doc 4.3/4.4).
     for paper_id in req.paper_ids:

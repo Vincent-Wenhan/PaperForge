@@ -53,7 +53,9 @@ def _to_run(row: dict) -> Run:
 async def create_run(req: RunCreate) -> Run:
     storage = get_storage()
     run_id = f"run_{uuid.uuid4().hex[:8]}"
-    title = req.title or "Untitled Run"
+    # Default title is "New Run" so the auto-title logic in messages.py
+    # can detect first-message and rename. User-supplied titles win.
+    title = req.title or "New Run"
     run = storage.create_run(run_id=run_id, title=title, status="active")
     return _to_run(run)
 

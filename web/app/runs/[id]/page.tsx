@@ -8,9 +8,15 @@ import { useIsMobile, useIsTablet } from "@/lib/useMediaQuery";
 import { Sidebar } from "@/components/Sidebar";
 import { ChatPanel } from "@/components/ChatPanel";
 import { PreviewPanel } from "@/components/PreviewPanel";
+import { ResizableDivider } from "@/components/shell/ResizableDivider";
 import { GlobalHeader } from "@/components/shell/GlobalHeader";
 import { CommandPalette } from "@/components/dialogs/CommandPalette";
 import { SkeletonMessage, SidebarSkeleton } from "@/components/Skeleton";
+
+const SIDEBAR_WIDTH_KEY = "paperforge.sidebarWidth";
+const CHAT_WIDTH_KEY = "paperforge.chatWidth";
+const DEFAULT_SIDEBAR_WIDTH = 260;
+const DEFAULT_CHAT_WIDTH = 480;
 
 export default function RunWorkspacePage() {
   const params = useParams<{ id: string }>();
@@ -25,6 +31,8 @@ export default function RunWorkspacePage() {
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [activePanel, setActivePanel] = useState<"chat" | "preview">("chat");
+  const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
+  const [chatWidth, setChatWidth] = useState(DEFAULT_CHAT_WIDTH);
 
   const setCurrentRun = useAppStore((s) => s.setCurrentRun);
   const setSandbox = useAppStore((s) => s.setSandbox);
@@ -68,6 +76,42 @@ export default function RunWorkspacePage() {
         setLoading(false);
       });
   }, [params.id, setCurrentRun, setArtifacts, setPendingApprovals]);
+
+  // Ponytail: load persisted panel widths from localStorage.
+  useEffect(() => {
+    try {
+      const sw = localStorage.getItem(SIDEBAR_WIDTH_KEY);
+      const cw = localStorage.getItem(CHAT_WIDTH_KEY);
+      if (sw) setSidebarWidth(Math.max(200, Math.min(480, parseInt(sw, 10))));
+      if (cw) setChatWidth(Math.max(360, Math.min(900, parseInt(cw, 10))));
+    } catch {
+      // localStorage may be unavailable (SSR, privacy mode); defaults are fine.
+    }
+  }, []);
+
+  const handleSidebarResize = useCallback((delta: number) => {
+    setSidebarWidth((prev) => {
+      const next = Math.max(200, Math.min(480, prev + delta));
+      try {
+        localStorage.setItem(SIDEBAR_WIDTH_KEY, String(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  }, []);
+
+  const handleChatResize = useCallback((delta: number) => {
+    setChatWidth((prev) => {
+      const next = Math.max(360, Math.min(900, prev + delta));
+      try {
+        localStorage.setItem(CHAT_WIDTH_KEY, String(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     if (!params.id) return;
@@ -191,26 +235,38 @@ export default function RunWorkspacePage() {
               }}
             />
           ) : (
-            <Sidebar
-              runs={runs}
-              library={library}
-              onNewRun={handleNewRun}
-              onSelectRun={handleSelectRun}
-              onRunsChanged={loadRuns}
-              onLibraryChanged={loadLibrary}
-              collapsed={sidebarCollapsed}
-              onToggleCollapse={() => setSidebarCollapsed((v) => !v)}
-              onOpenPaper={(paperId) => router.push(`/library/${paperId}`)}
-              onAttachPaper={(paper) => {
-                const store = useAppStore.getState();
-                store.addAttachment({
-                  id: `paper-${paper.paper_id}`,
-                  type: "paper",
-                  name: paper.title,
-                  paperId: paper.paper_id,
-                });
-              }}
-            />
+            <>
+              <div
+                className="flex flex-col overflow-hidden bg-muted/30"
+                style={{ width: `${sidebarWidth}px`, minWidth: "200px" }}
+              >
+                <Sidebar
+                  runs={runs}
+                  library={library}
+                  onNewRun={handleNewRun}
+                  onSelectRun={handleSelectRun}
+                  onRunsChanged={loadRuns}
+                  onLibraryChanged={loadLibrary}
+                  collapsed={sidebarCollapsed}
+                  onToggleCollapse={() =>
+                    setSidebarCollapsed((v) => !v)
+                  }
+                  onOpenPaper={(paperId) =>
+                    router.push(`/library/${paperId}`)
+                  }
+                  onAttachPaper={(paper) => {
+                    const store = useAppStore.getState();
+                    store.addAttachment({
+                      id: `paper-${paper.paper_id}`,
+                      type: "paper",
+                      name: paper.title,
+                      paperId: paper.paper_id,
+                    });
+                  }}
+                />
+              </div>
+              <ResizableDivider onResize={handleSidebarResize} />
+            </>
           )}
           {showSinglePanel ? (
             <div className="flex-1 flex flex-col overflow-hidden">
@@ -246,7 +302,13 @@ export default function RunWorkspacePage() {
             </div>
           ) : (
             <>
-              <ChatPanel />
+              <div
+                className="flex flex-col overflow-hidden border-r border-border"
+                style={{ width: `${chatWidth}px`, minWidth: "360px" }}
+              >
+                <ChatPanel />
+              </div>
+              <ResizableDivider onResize={handleChatResize} />
               <PreviewPanel />
             </>
           )}
