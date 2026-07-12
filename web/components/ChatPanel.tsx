@@ -34,14 +34,19 @@ export function ChatPanel() {
   useEffect(() => {
     if (!currentRun) return;
 
-    api.listMessages(currentRun.id).then((msgs) => {
-      useAppStore.setState({ messages: msgs });
+    // Single-shot hydration via /state endpoint (doc 1A.16).
+    api.getRunState(currentRun.id).then((state) => {
+      useAppStore.setState({
+        messages: state.messages,
+        artifacts: state.artifacts,
+      });
+      if (state.sandbox) {
+        setSandbox(state.sandbox);
+      }
+      if (state.pending_approvals?.length) {
+        state.pending_approvals.forEach((a) => addPendingApproval(a));
+      }
     });
-
-    api
-      .listArtifacts(currentRun.id, true)
-      .then((arts) => setArtifacts(arts))
-      .catch(() => setArtifacts([]));
 
     const sse = new SSEClient();
 
@@ -71,6 +76,12 @@ export function ChatPanel() {
       }
     });
 
+    sse.on("message.failed", (data: any) => {
+      if (data.message_id) {
+        useAppStore.getState().failMessage(data.message_id, data.error || "Message failed");
+      }
+    });
+
     sse.on("run.finished", () => {
       finalizeStreamingAssistant();
       setIsRunning(false);
@@ -79,6 +90,11 @@ export function ChatPanel() {
     sse.on("run.error", () => {
       finalizeStreamingAssistant();
       setIsRunning(false);
+    });
+
+    sse.on("run.started", (data: any) => {
+      addEvent({ id: "", type: "run.started", data, run_id: currentRun.id });
+      setIsRunning(true);
     });
 
     sse.on("tool.call", (data: any) => {
@@ -127,11 +143,6 @@ export function ChatPanel() {
 
     sse.on("preview.ready", (data: any) => {
       addEvent({ id: "", type: "preview.ready", data, run_id: currentRun.id });
-    });
-
-    sse.on("run.started", (data: any) => {
-      addEvent({ id: "", type: "run.started", data, run_id: currentRun.id });
-      setIsRunning(true);
     });
 
     sse.connect(currentRun.id);

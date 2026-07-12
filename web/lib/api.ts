@@ -62,6 +62,16 @@ export const api = {
   getRun: async (id: string): Promise<Run> => {
     return getJson<Run>(`/api/runs/${id}`);
   },
+  getRunState: async (id: string): Promise<{
+    run: Run;
+    messages: Message[];
+    artifacts: Artifact[];
+    sandbox: Sandbox | null;
+    pending_approvals: Approval[];
+    event_cursor: number;
+  }> => {
+    return getJson(`/api/runs/${id}/state`);
+  },
   updateRun: async (
     id: string,
     patch: { title?: string; pinned?: boolean }

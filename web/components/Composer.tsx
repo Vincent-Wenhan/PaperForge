@@ -35,8 +35,13 @@ export function Composer() {
     setInput("");
     setSending(true);
     addMessage({ role: "user", content });
+
+    const paperIds = attachments
+      .filter((att) => att.type === "paper" && att.paperId)
+      .map((att) => att.paperId as string);
+
     try {
-      await api.sendMessage(currentRun.id, content);
+      await api.sendMessage(currentRun.id, content, paperIds);
       setIsRunning(true);
     } catch (err) {
       console.error(err);
