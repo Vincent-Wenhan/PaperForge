@@ -7,6 +7,10 @@ function buildUrl(path: string): string {
   return path;
 }
 
+export function buildPaperPdfUrl(paperId: string): string {
+  return buildUrl(`/api/library/${paperId}/pdf`);
+}
+
 async function getJson<T>(path: string): Promise<T> {
   const resp = await fetch(buildUrl(path));
   if (!resp.ok) {
@@ -129,6 +133,17 @@ export const api = {
   deletePaper: async (paperId: string): Promise<{ status: string }> => {
     return deleteJson(`/api/library/${paperId}`);
   },
+  attachPaperToRun: async (runId: string, paperId: string): Promise<{ status: string }> => {
+    return postJson(`/api/runs/${runId}/papers/${paperId}`, {});
+  },
+  detachPaperFromRun: async (runId: string, paperId: string): Promise<{ status: string }> => {
+    return deleteJson(`/api/runs/${runId}/papers/${paperId}`);
+  },
+  downloadPaperPdf: async (paperId: string): Promise<Blob> => {
+    const resp = await fetch(buildPaperPdfUrl(paperId));
+    if (!resp.ok) throw new Error("Download failed");
+    return resp.blob();
+  },
 
   // === Sandboxes ===
   listSandboxes: async (): Promise<Sandbox[]> => {
@@ -145,6 +160,9 @@ export const api = {
   },
   getSandbox: async (sandboxId: string): Promise<Sandbox> => {
     return getJson<Sandbox>(`/api/sandboxes/${sandboxId}`);
+  },
+  listRunPapers: async (runId: string): Promise<{ papers: any[] }> => {
+    return getJson(`/api/runs/${runId}/papers`);
   },
   readFile: async (sandboxId: string, path: string): Promise<{ path: string; content: string }> => {
     return getJson(`/api/files/sandboxes/${sandboxId}/files/${path}`);

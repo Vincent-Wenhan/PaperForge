@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { useAppStore, type Run } from "@/lib/store";
@@ -23,6 +23,13 @@ export default function RunWorkspacePage() {
   const setSandbox = useAppStore((s) => s.setSandbox);
   const setArtifacts = useAppStore((s) => s.setArtifacts);
   const setPendingApprovals = useAppStore((s) => s.setPendingApprovals);
+
+  const loadRuns = useCallback(() => {
+    api.listRuns().then(setRuns).catch(console.error);
+  }, []);
+  const loadLibrary = useCallback(() => {
+    api.listLibrary().then((resp) => setLibrary(resp.papers || [])).catch(console.error);
+  }, []);
 
   useEffect(() => {
     Promise.all([api.listRuns(), api.listLibrary()])
@@ -154,6 +161,18 @@ export default function RunWorkspacePage() {
             library={library}
             onNewRun={handleNewRun}
             onSelectRun={handleSelectRun}
+            onRunsChanged={loadRuns}
+            onLibraryChanged={loadLibrary}
+            onOpenPaper={(paperId) => router.push(`/library/${paperId}`)}
+            onAttachPaper={(paper) => {
+              const store = useAppStore.getState();
+              store.addAttachment({
+                id: `paper-${paper.paper_id}`,
+                type: "paper",
+                name: paper.title,
+                paperId: paper.paper_id,
+              });
+            }}
           />
           <ChatPanel />
           <PreviewPanel />

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { api } from "@/lib/api";
+import { api, buildPaperPdfUrl } from "@/lib/api";
 import type { Paper, Run } from "@/lib/store";
 
 interface SidebarProps {
@@ -11,6 +11,8 @@ interface SidebarProps {
   onSelectRun: (runId: string) => void;
   onRunsChanged?: () => void;
   onLibraryChanged?: () => void;
+  onOpenPaper?: (paperId: string) => void;
+  onAttachPaper?: (paper: Paper) => void;
 }
 
 type RunGroupKey = "pinned" | "today" | "yesterday" | "week" | "older";
@@ -49,12 +51,17 @@ export function Sidebar({
   onSelectRun,
   onRunsChanged,
   onLibraryChanged,
+  onOpenPaper,
+  onAttachPaper,
 }: SidebarProps) {
   const [query, setQuery] = useState("");
   const [uploading, setUploading] = useState(false);
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
+  const [paperMenuFor, setPaperMenuFor] = useState<string | null>(null);
+  const [paperRenaming, setPaperRenaming] = useState<string | null>(null);
+  const [paperRenameValue, setPaperRenameValue] = useState("");
 
   const filtered = runs.filter((r) => {
     if (query) {
@@ -131,6 +138,50 @@ export function Sidebar({
     setMenuFor(null);
   };
 
+  const handlePaperRename = async (paperId: string) => {
+    const title = paperRenameValue.trim();
+    if (title) {
+      try {
+        await api.renamePaper(paperId, title);
+        onLibraryChanged?.();
+      } catch (err) {
+        console.error(err);
+      }
+    }
+    setPaperMenuFor(null);
+    setPaperRenaming(null);
+  };
+
+  const handlePaperDelete = async (paperId: string) => {
+    if (!confirm("Delete this paper? This cannot be undone.")) return;
+    try {
+      await api.deletePaper(paperId);
+      onLibraryChanged?.();
+    } catch (err) {
+      console.error(err);
+    }
+    setPaperMenuFor(null);
+  };
+
+  const handlePaperDownload = async (paperId: string) => {
+    try {
+      await api.downloadPaperPdf(paperId);
+    } catch (err) {
+      console.error(err);
+    }
+    setPaperMenuFor(null);
+  };
+
+  const handleAttachPaper = (paper: Paper) => {
+    onAttachPaper?.(paper);
+    setPaperMenuFor(null);
+  };
+
+  const handleOpenPaper = (paperId: string) => {
+    onOpenPaper?.(paperId);
+    setPaperMenuFor(null);
+  };
+
   return (
     <aside className="w-64 border-r border-border flex flex-col bg-muted/30">
       <div className="p-3 border-b border-border">
@@ -200,13 +251,28 @@ export function Sidebar({
         </h3>
         <ul className="space-y-0.5 mb-2">
           {library.map((p: Paper) => (
-            <li key={p.paper_id} className="px-2 py-1.5 hover:bg-accent rounded cursor-default">
-              <div className="text-sm font-medium truncate">{p.title}</div>
-              <div className="text-xs text-muted-foreground">
-                {p.status}
-                {p.parsed_at ? " · parsed" : ""}
-              </div>
-            </li>
+            <PaperRow
+              key={p.paper_id}
+              paper={p}
+              onOpen={() => handleOpenPaper(p.paper_id)}
+              onAttach={() => handleAttachPaper(p)}
+              menuOpen={paperMenuFor === p.paper_id}
+              onToggleMenu={() =>
+                setPaperMenuFor(paperMenuFor === p.paper_id ? null : p.paper_id)
+              }
+              renaming={paperRenaming === p.paper_id}
+              renameValue={paperRenameValue}
+              onStartRename={() => {
+                setPaperRenameValue(p.title);
+                setPaperRenaming(p.paper_id);
+                setPaperMenuFor(null);
+              }}
+              onRenameChange={setPaperRenameValue}
+              onRenameCommit={() => handlePaperRename(p.paper_id)}
+              onRenameCancel={() => setPaperRenaming(null)}
+              onDownload={() => handlePaperDownload(p.paper_id)}
+              onDelete={() => handlePaperDelete(p.paper_id)}
+            />
           ))}
           {library.length === 0 && (
             <li className="text-xs text-muted-foreground px-2">No papers yet</li>
@@ -318,6 +384,112 @@ function RunRow({
             className="block w-full text-left px-3 py-1.5 hover:bg-accent"
           >
             Archive
+          </button>
+          <button
+            onClick={onDelete}
+            className="block w-full text-left px-3 py-1.5 hover:bg-accent text-destructive"
+          >
+            Delete
+          </button>
+        </div>
+      )}
+    </li>
+  );
+}
+
+interface PaperRowProps {
+  paper: Paper;
+  onOpen: () => void;
+  onAttach: () => void;
+  menuOpen: boolean;
+  onToggleMenu: () => void;
+  renaming: boolean;
+  renameValue: string;
+  onStartRename: () => void;
+  onRenameChange: (v: string) => void;
+  onRenameCommit: () => void;
+  onRenameCancel: () => void;
+  onDownload: () => void;
+  onDelete: () => void;
+}
+
+function PaperRow({
+  paper,
+  onOpen,
+  onAttach,
+  menuOpen,
+  onToggleMenu,
+  renaming,
+  renameValue,
+  onStartRename,
+  onRenameChange,
+  onRenameCommit,
+  onRenameCancel,
+  onDownload,
+  onDelete,
+}: PaperRowProps) {
+  if (renaming) {
+    return (
+      <li className="px-2 py-1">
+        <input
+          autoFocus
+          type="text"
+          value={renameValue}
+          onChange={(e) => onRenameChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") onRenameCommit();
+            if (e.key === "Escape") onRenameCancel();
+          }}
+          onBlur={onRenameCommit}
+          className="w-full px-1 py-0.5 text-sm border border-primary rounded focus:outline-none"
+        />
+      </li>
+    );
+  }
+
+  return (
+    <li className="group relative">
+      <button
+        onClick={onOpen}
+        className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent"
+      >
+        <div className="font-medium truncate">{paper.title}</div>
+        <div className="text-xs text-muted-foreground">
+          {paper.status}
+          {paper.parsed_at ? " · parsed" : ""}
+        </div>
+      </button>
+      <button
+        onClick={onToggleMenu}
+        className="absolute right-1 top-1.5 opacity-0 group-hover:opacity-100 hover:bg-accent rounded px-1 text-xs"
+      >
+        ···
+      </button>
+      {menuOpen && (
+        <div className="absolute right-1 top-7 z-10 bg-background border border-border rounded shadow-md py-1 text-xs w-40">
+          <button
+            onClick={onAttach}
+            className="block w-full text-left px-3 py-1.5 hover:bg-accent"
+          >
+            Add to current chat
+          </button>
+          <button
+            onClick={onOpen}
+            className="block w-full text-left px-3 py-1.5 hover:bg-accent"
+          >
+            Open
+          </button>
+          <button
+            onClick={onStartRename}
+            className="block w-full text-left px-3 py-1.5 hover:bg-accent"
+          >
+            Rename
+          </button>
+          <button
+            onClick={onDownload}
+            className="block w-full text-left px-3 py-1.5 hover:bg-accent"
+          >
+            Download PDF
           </button>
           <button
             onClick={onDelete}

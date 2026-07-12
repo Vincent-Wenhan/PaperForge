@@ -4,6 +4,14 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 
+const QUICK_ACTIONS: { id: string; label: string; description: string }[] = [
+  { id: "productize", label: "Productize", description: "Productize the attached paper end-to-end." },
+  { id: "alternatives", label: "Alternatives", description: "Generate alternative product candidates from this paper." },
+  { id: "revise", label: "Revise PRD", description: "Revise the PRD based on the latest verification report." },
+  { id: "fix", label: "Fix build", description: "Fix the failing build based on the latest verification report." },
+  { id: "restart", label: "Restart preview", description: "Restart the preview sandbox." },
+];
+
 export function Composer() {
   const currentRun = useAppStore((s) => s.currentRun);
   const isRunning = useAppStore((s) => s.isRunning);
@@ -59,6 +67,20 @@ export function Composer() {
     }
   };
 
+  const handleQuickAction = (kind: string) => {
+    const templates: Record<string, string> = {
+      productize: "Productize the attached paper end-to-end.",
+      alternatives: "Generate alternative product candidates from this paper.",
+      revise: "Revise the PRD based on the latest verification report.",
+      fix: "Fix the failing build based on the latest verification report.",
+      restart: "Restart the preview sandbox.",
+    };
+    const text = templates[kind];
+    if (!text) return;
+    setInput(text);
+    fileInputRef.current?.blur();
+  };
+
   const handleAttach = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -103,6 +125,18 @@ export function Composer() {
           ))}
         </div>
       )}
+      <div className="flex items-center gap-1 mb-1 flex-wrap">
+        {QUICK_ACTIONS.map((action) => (
+          <button
+            key={action.id}
+            onClick={() => handleQuickAction(action.id)}
+            className="text-xs px-2 py-0.5 border border-border rounded hover:bg-accent"
+            title={action.description}
+          >
+            {action.label}
+          </button>
+        ))}
+      </div>
       <div className="flex items-end gap-2">
         <button
           onClick={() => fileInputRef.current?.click()}

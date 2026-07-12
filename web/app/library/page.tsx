@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { Sidebar } from "@/components/Sidebar";
@@ -12,7 +12,7 @@ export default function LibraryPage() {
   const [papers, setPapers] = useState<Paper[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
+  const loadAll = useCallback(() => {
     Promise.all([api.listRuns(), api.listLibrary()])
       .then(([runsResp, libResp]) => {
         setRuns(runsResp);
@@ -22,14 +22,14 @@ export default function LibraryPage() {
       .finally(() => setLoading(false));
   }, []);
 
+  useEffect(() => {
+    loadAll();
+  }, [loadAll]);
+
   const handleNewRun = async () => {
     const run = await api.createRun("New Run");
     setRuns((prev) => [run, ...prev]);
     router.push(`/runs/${run.id}`);
-  };
-
-  const handleSelectRun = (runId: string) => {
-    router.push(`/runs/${runId}`);
   };
 
   return (
@@ -38,17 +38,17 @@ export default function LibraryPage() {
         runs={runs}
         library={papers}
         onNewRun={handleNewRun}
-        onSelectRun={handleSelectRun}
+        onSelectRun={(id) => router.push(`/runs/${id}`)}
+        onRunsChanged={loadAll}
+        onLibraryChanged={loadAll}
+        onOpenPaper={(paperId) => router.push(`/library/${paperId}`)}
       />
       <div className="flex-1 overflow-y-auto p-6">
         <h1 className="text-2xl font-semibold mb-4">Paper Library</h1>
         {loading ? (
           <div className="space-y-2">
             {[1, 2, 3].map((i) => (
-              <div
-                key={i}
-                className="h-16 w-full bg-muted animate-pulse rounded"
-              />
+              <div key={i} className="h-16 w-full bg-muted animate-pulse rounded" />
             ))}
           </div>
         ) : papers.length === 0 ? (
