@@ -5,6 +5,7 @@ import { CapabilityCardView } from "./CapabilityCardView";
 import { PrdView } from "./PrdView";
 import { VerificationReportView } from "./VerificationReportView";
 import { api } from "@/lib/api";
+import { useAppStore } from "@/lib/store";
 
 interface ArtifactCardProps {
   type: string;
@@ -25,6 +26,7 @@ export function ArtifactCard({
 }: ArtifactCardProps) {
   const [expanded, setExpanded] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const addAttachment = useAppStore((s) => s.addAttachment);
 
   const label = type.replace(/_/g, " ");
 
@@ -66,6 +68,16 @@ export function ArtifactCard({
     }
   };
 
+  const handleUseAsContext = () => {
+    setMenuOpen(false);
+    addAttachment({
+      id: `artifact-${artifactId}`,
+      type: "paper",
+      name: `${label} (artifact)`,
+      paperId: artifactId,
+    });
+  };
+
   return (
     <div className="my-2 border border-border rounded-lg overflow-hidden">
       <div className="relative">
@@ -85,7 +97,22 @@ export function ArtifactCard({
           ···
         </button>
         {menuOpen && (
-          <div className="absolute right-6 top-9 z-10 bg-background border border-border rounded shadow-md py-1 text-xs w-32">
+          <div className="absolute right-6 top-9 z-10 bg-background border border-border rounded shadow-md py-1 text-xs w-40">
+            <button
+              onClick={() => {
+                setMenuOpen(false);
+                setExpanded(true);
+              }}
+              className="block w-full text-left px-3 py-1.5 hover:bg-accent"
+            >
+              Open
+            </button>
+            <button
+              onClick={handleUseAsContext}
+              className="block w-full text-left px-3 py-1.5 hover:bg-accent"
+            >
+              Use as context
+            </button>
             <button
               onClick={handleRename}
               className="block w-full text-left px-3 py-1.5 hover:bg-accent"

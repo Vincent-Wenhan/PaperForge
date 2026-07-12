@@ -7,6 +7,7 @@ is what orchestrator code uses to broadcast events to all subscribers.
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 import uuid
 from collections import defaultdict
@@ -165,7 +166,12 @@ class EventEmitter:
 
 
 class EventManager:
-    """Manages event subscribers per run, with monotonic seq per run."""
+    """Manages event subscribers per run, with monotonic seq per run.
+
+    Events are also persisted to SQLite (run_events table) so they survive
+    backend restart. The in-memory history is still used as a fast cache
+    for active SSE connections.
+    """
 
     def __init__(self) -> None:
         self._subscribers: dict[str, list[asyncio.Queue]] = defaultdict(list)
@@ -190,6 +196,24 @@ class EventManager:
         self._history[rid].append(event)
         if len(self._history[rid]) > self._max_history:
             self._history[rid].pop(0)
+
+        # Persist to SQLite so events survive backend restart (doc 11.2).
+        # Import here to avoid circular dependency.
+        try:
+            from paperforge.storage.db import get_storage
+
+            storage = get_storage()
+            storage.save_run_event(
+                run_id=rid,
+                event_id=event.id,
+                seq=event.seq,
+                type=event.type,
+                data=event.data,
+            )
+        except Exception:
+            # Persistence failures should not break the in-memory broadcast.
+            pass
+
         for q in self._subscribers.get(rid, []):
             try:
                 q.put_nowait(event)

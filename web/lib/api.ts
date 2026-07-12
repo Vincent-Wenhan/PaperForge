@@ -55,6 +55,19 @@ async function patchJson<T>(path: string, body: any): Promise<T> {
   return resp.json() as Promise<T>;
 }
 
+async function putJson<T>(path: string, body: any): Promise<T> {
+  const resp = await fetch(buildUrl(path), {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(`${resp.status}: ${text}`);
+  }
+  return resp.json() as Promise<T>;
+}
+
 export const api = {
   // === Runs ===
   createRun: async (title?: string): Promise<Run> => {
@@ -231,6 +244,41 @@ export const api = {
   },
   downloadArtifact: async (artifactId: string): Promise<Blob> => {
     const resp = await fetch(buildUrl(`/api/artifacts/${artifactId}/download`));
+    if (!resp.ok) throw new Error("Download failed");
+    return resp.blob();
+  },
+
+  // === App-based file API (doc 8.4) ===
+  listAppTree: async (appId: string): Promise<{ tree: any[] }> => {
+    return getJson(`/api/apps/${appId}/tree`);
+  },
+  readAppFile: async (appId: string, path: string): Promise<{ path: string; content: string }> => {
+    return getJson(`/api/apps/${appId}/files/${path}`);
+  },
+  writeAppFile: async (appId: string, path: string, content: string): Promise<{ path: string; saved: boolean }> => {
+    return putJson(`/api/apps/${appId}/files/${path}`, { content });
+  },
+  createAppEntry: async (
+    appId: string,
+    entry: { type: "file" | "directory"; path: string; content?: string }
+  ): Promise<{ path: string; created: boolean }> => {
+    return postJson(`/api/apps/${appId}/entries`, entry);
+  },
+  renameAppEntry: async (
+    appId: string,
+    path: string,
+    newPath: string
+  ): Promise<{ path: string; renamed: boolean }> => {
+    return patchJson(`/api/apps/${appId}/entries/${path}`, { new_path: newPath });
+  },
+  deleteAppEntry: async (
+    appId: string,
+    path: string
+  ): Promise<{ path: string; deleted: boolean }> => {
+    return deleteJson(`/api/apps/${appId}/entries/${path}`);
+  },
+  downloadAppZip: async (appId: string): Promise<Blob> => {
+    const resp = await fetch(buildUrl(`/api/apps/${appId}/download`));
     if (!resp.ok) throw new Error("Download failed");
     return resp.blob();
   },

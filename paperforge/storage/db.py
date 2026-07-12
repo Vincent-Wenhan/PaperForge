@@ -94,6 +94,17 @@ CREATE TABLE IF NOT EXISTS run_papers (
     attached_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (run_id, paper_id)
 );
+
+CREATE TABLE IF NOT EXISTS run_events (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    task_id TEXT,
+    seq INTEGER NOT NULL,
+    type TEXT NOT NULL,
+    data TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_run_events ON run_events(run_id, seq);
 """
 
 
@@ -604,6 +615,59 @@ class Storage:
         with self._conn() as conn:
             rows = conn.execute(query, (run_id,)).fetchall()
             return [dict(r) for r in rows]
+
+    # ===== Run event persistence (doc 11) =====
+
+    def save_run_event(
+        self,
+        run_id: str,
+        event_id: str,
+        seq: int,
+        type: str,
+        data: Any,
+        task_id: str | None = None,
+    ) -> None:
+        """Persist a single run event for replay after backend restart."""
+        with self._lock, self._conn() as conn:
+            conn.execute(
+                """INSERT OR REPLACE INTO run_events (id, run_id, task_id, seq, type, data, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    event_id,
+                    run_id,
+                    task_id,
+                    seq,
+                    type,
+                    json.dumps(data, ensure_ascii=False) if data is not None else None,
+                    datetime.utcnow().isoformat(),
+                ),
+            )
+
+    def list_run_events(
+        self,
+        run_id: str,
+        after_seq: int = 0,
+        limit: int = 1000,
+    ) -> list[dict[str, Any]]:
+        """Return persisted events for a run with seq > after_seq."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                """SELECT * FROM run_events
+                   WHERE run_id = ? AND seq > ?
+                   ORDER BY seq ASC
+                   LIMIT ?""",
+                (run_id, after_seq, limit),
+            ).fetchall()
+            out: list[dict[str, Any]] = []
+            for r in rows:
+                d = dict(r)
+                if d.get("data"):
+                    try:
+                        d["data"] = json.loads(d["data"])
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                out.append(d)
+            return out
 
 
 _storage: Storage | None = None

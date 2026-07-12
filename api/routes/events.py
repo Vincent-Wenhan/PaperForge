@@ -55,8 +55,7 @@ async def stream_events(run_id: str, request: Request) -> StreamingResponse:
 
     async def event_stream() -> AsyncIterator[str]:
         try:
-            # Replay history with seq > last_seq so the client resumes
-            # without missing events or duplicating already-seen ones.
+            # On reconnect/replay, yield events from history with seq > last_seq.
             for event in event_manager.get_history(run_id):
                 if event.seq <= last_seq:
                     continue
