@@ -23,6 +23,8 @@ export function ChatPanel() {
   const resolvePendingApproval = useAppStore((s) => s.resolvePendingApproval);
   const setArtifacts = useAppStore((s) => s.setArtifacts);
   const setIsRunning = useAppStore((s) => s.setIsRunning);
+  const appendMessageDelta = useAppStore((s) => s.appendMessageDelta);
+  const completeMessage = useAppStore((s) => s.completeMessage);
 
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -42,11 +44,31 @@ export function ChatPanel() {
       .catch(() => setArtifacts([]));
 
     const sse = new SSEClient();
-    sseRef.current = sse;
-    sse.connect(currentRun.id);
+
+    sse.on("message.started", (data: any) => {
+      useAppStore.getState().upsertMessage({
+        id: data.message_id,
+        role: "assistant",
+        content: "",
+        streaming: true,
+        status: "streaming",
+      });
+    });
 
     sse.on("message.delta", (data: any) => {
-      appendAssistantDelta(data.text || data.delta || "");
+      if (data.message_id) {
+        appendMessageDelta(data.message_id, data.delta || data.text || "");
+      } else {
+        appendAssistantDelta(data.text || data.delta || "");
+      }
+    });
+
+    sse.on("message.completed", (data: any) => {
+      if (data.message_id) {
+        completeMessage(data.message_id, data.content || "");
+      } else {
+        finalizeStreamingAssistant();
+      }
     });
 
     sse.on("run.finished", () => {
@@ -112,11 +134,14 @@ export function ChatPanel() {
       setIsRunning(true);
     });
 
+    sse.connect(currentRun.id);
+    sseRef.current = sse;
+
     return () => {
       sse.disconnect();
       sseRef.current = null;
     };
-  }, [currentRun, addMessage, appendAssistantDelta, finalizeStreamingAssistant, addEvent, setSandbox, addPendingApproval, resolvePendingApproval, setArtifacts, setIsRunning]);
+  }, [currentRun, addMessage, appendAssistantDelta, finalizeStreamingAssistant, addEvent, setSandbox, addPendingApproval, resolvePendingApproval, setArtifacts, setIsRunning, appendMessageDelta, completeMessage]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });

@@ -32,9 +32,6 @@ async def send_message(run_id: str, req: MessageCreate) -> dict:
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
 
-    # API layer owns user message persistence; orchestrator must not duplicate it.
-    storage.add_message(run_id=run_id, role="user", content=req.content)
-
     # Reject if a task is already running for this run; the caller must stop
     # the existing task before sending a new message. This prevents silent
     # cancellation of in-flight orchestrator work.
@@ -44,6 +41,9 @@ async def send_message(run_id: str, req: MessageCreate) -> dict:
             status_code=409,
             detail="A task is already running for this run. Cancel it first.",
         )
+
+    # API layer owns user message persistence; orchestrator must not duplicate it.
+    storage.add_message(run_id=run_id, role="user", content=req.content)
 
     orchestrator = Orchestrator()
     task_manager.start(run_id, orchestrator.run(run_id=run_id, user_message=req.content))

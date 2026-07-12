@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 
@@ -12,10 +12,20 @@ export function Composer() {
   const setIsRunning = useAppStore((s) => s.setIsRunning);
   const addAttachment = useAppStore((s) => s.addAttachment);
   const removeAttachment = useAppStore((s) => s.removeAttachment);
+  const composerPrefill = useAppStore((s) => s.composerPrefill);
+  const setComposerPrefill = useAppStore((s) => s.setComposerPrefill);
 
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Apply prefill when it changes (e.g., when user clicks "Ask PaperForge to fix")
+  useEffect(() => {
+    if (composerPrefill) {
+      setInput(composerPrefill);
+      setComposerPrefill("");
+    }
+  }, [composerPrefill, setComposerPrefill]);
 
   if (!currentRun) return null;
 

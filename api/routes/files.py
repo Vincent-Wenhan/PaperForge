@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import io
 import shutil
+import zipfile
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from paperforge.storage.db import get_storage
@@ -185,3 +188,36 @@ async def get_file_tree(sandbox_id: str) -> dict:
         )
 
     return {"tree": tree}
+
+
+@router.get("/sandboxes/{sandbox_id}/download")
+async def download_sandbox_zip(sandbox_id: str) -> StreamingResponse:
+    """Download the entire sandbox app as a ZIP file."""
+    storage = get_storage()
+    sandbox = storage.get_sandbox(sandbox_id)
+    if not sandbox:
+        raise HTTPException(status_code=404, detail="Sandbox not found")
+
+    root = Path(sandbox["app_path"])
+    if not root.exists():
+        raise HTTPException(status_code=404, detail="App path not found")
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for path in root.rglob("*"):
+            if not path.exists() or not path.is_file():
+                continue
+            rel_parts = path.relative_to(root).parts
+            if any(part in BLOCKED_PARTS for part in rel_parts):
+                continue
+            if path.suffix.lower() not in ALLOWED_EXTS:
+                continue
+            arcname = "/".join(rel_parts)
+            zf.write(path, arcname)
+
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename={sandbox_id}.zip"},
+    )

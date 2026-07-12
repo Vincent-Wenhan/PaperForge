@@ -76,4 +76,3 @@ async def restart_sandbox(sandbox_id: str) -> dict:
     manager = DockerSandboxManager(storage=storage)
     sandbox = await manager.restart(sandbox_id)
     return sandbox
-

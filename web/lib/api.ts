@@ -186,7 +186,10 @@ export const api = {
     return getJson(`/api/artifacts?${params.toString()}`);
   },
   getArtifact: async (artifactId: string): Promise<Artifact> => {
-    return getJson(`/api/artifacts/${artifactId}`);
+    return getJson<Artifact>(`/api/artifacts/${artifactId}`);
+  },
+  renameArtifact: async (artifactId: string, displayName: string): Promise<Artifact> => {
+    return patchJson<Artifact>(`/api/artifacts/${artifactId}`, { display_name: displayName });
   },
   deleteArtifact: async (artifactId: string): Promise<{ status: string }> => {
     return deleteJson(`/api/artifacts/${artifactId}`);
@@ -203,9 +206,19 @@ export const api = {
   },
 };
 
+export interface RunEvent<T = unknown> {
+  id: string;
+  seq: number;
+  run_id: string;
+  type: string;
+  ts: number;
+  payload: T;
+}
+
 export class SSEClient {
   private es: EventSource | null = null;
-  private handlers: Record<string, (data: any) => void> = {};
+  private handlers: Record<string, (payload: any, event: RunEvent) => void> = {};
+  private seenSeqs = new Set<number>();
 
   connect(runId: string) {
     this.disconnect();
@@ -215,8 +228,8 @@ export class SSEClient {
       console.log("[SSE] connected");
     };
 
-    this.es.onerror = (e) => {
-      console.warn("[SSE] error, will try reconnect");
+    this.es.onerror = () => {
+      console.warn("[SSE] error; browser will auto-reconnect");
     };
 
     // Re-attach all previously-registered handlers to the new EventSource.
@@ -225,21 +238,28 @@ export class SSEClient {
     }
   }
 
-  on(eventType: string, handler: (data: any) => void) {
-    this.handlers[eventType] = handler;
+  on<T = any>(eventType: string, handler: (payload: T, event: RunEvent<T>) => void) {
+    this.handlers[eventType] = handler as any;
     if (this.es) {
-      this._attach(eventType, handler);
+      this._attach(eventType, handler as any);
     }
   }
 
-  private _attach(eventType: string, handler: (data: any) => void) {
+  private _attach(eventType: string, handler: (payload: any, event: RunEvent) => void) {
     if (!this.es) return;
-    this.es.addEventListener(eventType, (e: any) => {
+    this.es.addEventListener(eventType, (e: MessageEvent) => {
       try {
-        const payload = JSON.parse(e.data);
-        const data = payload.data ?? payload;
-        console.log(`[SSE] event:${eventType} data=`, data);
-        handler(data);
+        const event = JSON.parse(e.data) as RunEvent;
+        if (this.seenSeqs.has(event.seq)) {
+          return; // dedup
+        }
+        this.seenSeqs.add(event.seq);
+        // Cap memory: keep last 500 seqs.
+        if (this.seenSeqs.size > 500) {
+          const arr = Array.from(this.seenSeqs).sort((a, b) => a - b);
+          for (let i = 0; i < 250; i++) this.seenSeqs.delete(arr[i]);
+        }
+        handler(event.payload, event);
       } catch (err) {
         console.error("[SSE] parse error:", err);
       }

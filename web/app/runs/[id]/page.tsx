@@ -7,6 +7,8 @@ import { useAppStore, type Run } from "@/lib/store";
 import { Sidebar } from "@/components/Sidebar";
 import { ChatPanel } from "@/components/ChatPanel";
 import { PreviewPanel } from "@/components/PreviewPanel";
+import { GlobalHeader } from "@/components/shell/GlobalHeader";
+import { CommandPalette } from "@/components/dialogs/CommandPalette";
 
 export default function RunWorkspacePage() {
   const params = useParams<{ id: string }>();
@@ -15,6 +17,7 @@ export default function RunWorkspacePage() {
   const [library, setLibrary] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
 
   const setCurrentRun = useAppStore((s) => s.setCurrentRun);
   const setSandbox = useAppStore((s) => s.setSandbox);
@@ -52,7 +55,6 @@ export default function RunWorkspacePage() {
       });
   }, [params.id, setCurrentRun, setArtifacts, setPendingApprovals]);
 
-  // Restore latest sandbox for the run (if any) so preview works on refresh.
   useEffect(() => {
     if (!params.id) return;
     api.listSandboxes()
@@ -70,6 +72,18 @@ export default function RunWorkspacePage() {
       .catch(() => setSandbox(null));
   }, [params.id, setSandbox]);
 
+  // Command palette shortcut (Ctrl/Cmd+K)
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        setPaletteOpen((v) => !v);
+      }
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, []);
+
   const handleNewRun = async () => {
     const run = await api.createRun("New Run");
     setRuns((prev) => [run, ...prev]);
@@ -82,52 +96,70 @@ export default function RunWorkspacePage() {
 
   if (loading) {
     return (
-      <div className="flex h-screen w-screen overflow-hidden">
-        <Sidebar
-          runs={runs}
-          library={library}
-          onNewRun={handleNewRun}
-          onSelectRun={handleSelectRun}
-        />
-        <div className="flex-1 flex items-center justify-center text-muted-foreground">
-          Loading run...
+      <>
+        <div className="flex h-screen w-screen flex-col overflow-hidden">
+          <GlobalHeader onToggleCommandPalette={() => setPaletteOpen(true)} />
+          <div className="flex flex-1 overflow-hidden">
+            <Sidebar
+              runs={runs}
+              library={library}
+              onNewRun={handleNewRun}
+              onSelectRun={handleSelectRun}
+            />
+            <div className="flex-1 flex items-center justify-center text-muted-foreground">
+              Loading run...
+            </div>
+          </div>
         </div>
-      </div>
+        <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      </>
     );
   }
 
   if (error) {
     return (
-      <div className="flex h-screen w-screen overflow-hidden">
-        <Sidebar
-          runs={runs}
-          library={library}
-          onNewRun={handleNewRun}
-          onSelectRun={handleSelectRun}
-        />
-        <div className="flex-1 flex flex-col items-center justify-center gap-3 text-muted-foreground">
-          <p className="text-destructive">{error}</p>
-          <button
-            onClick={() => router.push("/")}
-            className="px-3 py-1.5 border rounded hover:bg-accent"
-          >
-            Back to home
-          </button>
+      <>
+        <div className="flex h-screen w-screen flex-col overflow-hidden">
+          <GlobalHeader onToggleCommandPalette={() => setPaletteOpen(true)} />
+          <div className="flex flex-1 overflow-hidden">
+            <Sidebar
+              runs={runs}
+              library={library}
+              onNewRun={handleNewRun}
+              onSelectRun={handleSelectRun}
+            />
+            <div className="flex-1 flex flex-col items-center justify-center gap-3 text-muted-foreground">
+              <p className="text-destructive">{error}</p>
+              <button
+                onClick={() => router.push("/")}
+                className="px-3 py-1.5 border rounded hover:bg-accent"
+              >
+                Back to home
+              </button>
+            </div>
+          </div>
         </div>
-      </div>
+        <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      </>
     );
   }
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden">
-      <Sidebar
-        runs={runs}
-        library={library}
-        onNewRun={handleNewRun}
-        onSelectRun={handleSelectRun}
-      />
-      <ChatPanel />
-      <PreviewPanel />
-    </div>
+    <>
+      <div className="flex h-screen w-screen flex-col overflow-hidden">
+        <GlobalHeader onToggleCommandPalette={() => setPaletteOpen(true)} />
+        <div className="flex flex-1 overflow-hidden">
+          <Sidebar
+            runs={runs}
+            library={library}
+            onNewRun={handleNewRun}
+            onSelectRun={handleSelectRun}
+          />
+          <ChatPanel />
+          <PreviewPanel />
+        </div>
+      </div>
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+    </>
   );
 }

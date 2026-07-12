@@ -18,7 +18,7 @@ from paperforge.llm.base import ToolCall
 class Event:
     """An event to be sent to subscribers."""
 
-    __slots__ = ("id", "type", "data", "run_id", "ts")
+    __slots__ = ("id", "type", "data", "run_id", "ts", "seq")
 
     def __init__(
         self,
@@ -27,12 +27,14 @@ class Event:
         run_id: str | None = None,
         ts: float | None = None,
         id: str | None = None,
+        seq: int = 0,
     ) -> None:
-        self.id = id or uuid.uuid4().hex
+        self.id = id or f"evt_{uuid.uuid4().hex[:10]}"
         self.type = type
         self.data = data
         self.run_id = run_id
         self.ts = ts or time.time()
+        self.seq = seq
 
 
 class EventEmitter:
@@ -51,6 +53,18 @@ class EventEmitter:
 
     async def text(self, text: str) -> None:
         await self.emit("message.delta", {"text": text})
+
+    async def message_started(self, message_id: str) -> None:
+        await self.emit("message.started", {"message_id": message_id})
+
+    async def message_delta(self, message_id: str, delta: str) -> None:
+        await self.emit("message.delta", {"message_id": message_id, "delta": delta})
+
+    async def message_completed(self, message_id: str, content: str) -> None:
+        await self.emit("message.completed", {"message_id": message_id, "content": content})
+
+    async def message_failed(self, message_id: str, error: str) -> None:
+        await self.emit("message.failed", {"message_id": message_id, "error": error})
 
     async def tool_call(self, call: ToolCall) -> None:
         await self.emit(
@@ -123,11 +137,12 @@ class EventEmitter:
 
 
 class EventManager:
-    """Manages event subscribers per run."""
+    """Manages event subscribers per run, with monotonic seq per run."""
 
     def __init__(self) -> None:
         self._subscribers: dict[str, list[asyncio.Queue]] = defaultdict(list)
         self._history: dict[str, list[Event]] = defaultdict(list)
+        self._seq: dict[str, int] = defaultdict(int)
         self._max_history = 1000
 
     def register(self, run_id: str) -> asyncio.Queue:
@@ -141,6 +156,9 @@ class EventManager:
 
     async def broadcast(self, event: Event) -> None:
         rid = event.run_id or ""
+        # Assign monotonic seq per run.
+        self._seq[rid] += 1
+        event.seq = self._seq[rid]
         self._history[rid].append(event)
         if len(self._history[rid]) > self._max_history:
             self._history[rid].pop(0)

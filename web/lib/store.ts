@@ -12,6 +12,7 @@ export interface Message {
   name?: string;
   created_at?: string;
   streaming?: boolean;
+  status?: "streaming" | "completed" | "failed";
 }
 
 export interface Run {
@@ -53,6 +54,7 @@ export interface Event {
   data: any;
   run_id: string;
   ts?: number;
+  seq?: number;
 }
 
 export interface Approval {
@@ -89,25 +91,35 @@ interface AppState {
   artifacts: Artifact[];
   attachments: Attachment[];
   isRunning: boolean;
-  activeTab: "preview" | "artifacts" | "code" | "console" | "verification";
+  activeTab: "preview" | "files" | "artifacts" | "console" | "verification";
   sidebarCollapsed: boolean;
+  lastSeq: number;
+  composerPrefill: string;
 
   setCurrentRun: (run: Run | null) => void;
   setSandbox: (sb: Sandbox | null) => void;
   setPendingApprovals: (approvals: Approval[]) => void;
   addMessage: (msg: Message) => void;
+  upsertMessage: (msg: Message) => void;
   appendAssistantDelta: (text: string) => void;
+  appendMessageDelta: (messageId: string, delta: string) => void;
+  completeMessage: (messageId: string, content: string) => void;
+  failMessage: (messageId: string, error: string) => void;
   finalizeStreamingAssistant: () => void;
+  replaceMessages: (msgs: Message[]) => void;
   addEvent: (event: Event) => void;
   addPendingApproval: (approval: Approval) => void;
   resolvePendingApproval: (approvalId: string, approved: boolean) => void;
   setArtifacts: (artifacts: Artifact[]) => void;
   addArtifact: (artifact: Artifact) => void;
-  setActiveTab: (tab: "preview" | "artifacts" | "code" | "console" | "verification") => void;
+  updateRunStatus: (status: string) => void;
+  setActiveTab: (tab: "preview" | "files" | "artifacts" | "console" | "verification") => void;
   toggleSidebar: () => void;
   setIsRunning: (running: boolean) => void;
   addAttachment: (attachment: Attachment) => void;
   removeAttachment: (id: string) => void;
+  setLastSeq: (seq: number) => void;
+  setComposerPrefill: (text: string) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -121,6 +133,8 @@ export const useAppStore = create<AppState>((set) => ({
   isRunning: false,
   activeTab: "preview",
   sidebarCollapsed: false,
+  lastSeq: 0,
+  composerPrefill: "",
 
   setCurrentRun: (run) =>
     set({
@@ -131,10 +145,23 @@ export const useAppStore = create<AppState>((set) => ({
       artifacts: [],
       attachments: [],
       isRunning: false,
+      lastSeq: 0,
     }),
   setSandbox: (sb) => set({ sandbox: sb }),
   setPendingApprovals: (approvals) => set({ pendingApprovals: approvals }),
   addMessage: (msg) => set((s) => ({ messages: [...s.messages, msg] })),
+  upsertMessage: (msg) =>
+    set((s) => {
+      if (msg.id) {
+        const idx = s.messages.findIndex((m) => m.id === msg.id);
+        if (idx >= 0) {
+          const copy = [...s.messages];
+          copy[idx] = { ...copy[idx], ...msg };
+          return { messages: copy };
+        }
+      }
+      return { messages: [...s.messages, msg] };
+    }),
   appendAssistantDelta: (text) =>
     set((s) => {
       const last = s.messages[s.messages.length - 1];
@@ -149,15 +176,84 @@ export const useAppStore = create<AppState>((set) => ({
         ],
       };
     }),
+  appendMessageDelta: (messageId, delta) =>
+    set((s) => {
+      const idx = s.messages.findIndex((m) => m.id === messageId);
+      if (idx < 0) {
+        // Message not yet known — create a placeholder streaming message.
+        return {
+          messages: [
+            ...s.messages,
+            {
+              id: messageId,
+              role: "assistant",
+              content: delta,
+              streaming: true,
+              status: "streaming",
+            } as Message,
+          ],
+        };
+      }
+      const copy = [...s.messages];
+      const existing = copy[idx];
+      const nextContent = (existing.content || "") + delta;
+      copy[idx] = {
+        ...existing,
+        content: nextContent,
+        streaming: true,
+        status: "streaming",
+      };
+      return { messages: copy };
+    }),
+  completeMessage: (messageId, content) =>
+    set((s) => {
+      const idx = s.messages.findIndex((m) => m.id === messageId);
+      if (idx < 0) {
+        return {
+          messages: [
+            ...s.messages,
+            {
+              id: messageId,
+              role: "assistant",
+              content,
+              streaming: false,
+              status: "completed",
+            } as Message,
+          ],
+        };
+      }
+      const copy = [...s.messages];
+      copy[idx] = {
+        ...copy[idx],
+        content,
+        streaming: false,
+        status: "completed",
+      };
+      return { messages: copy };
+    }),
+  failMessage: (messageId, error) =>
+    set((s) => {
+      const idx = s.messages.findIndex((m) => m.id === messageId);
+      if (idx < 0) return {};
+      const copy = [...s.messages];
+      copy[idx] = {
+        ...copy[idx],
+        streaming: false,
+        status: "failed",
+        content: error,
+      };
+      return { messages: copy };
+    }),
   finalizeStreamingAssistant: () =>
     set((s) => {
       const last = s.messages[s.messages.length - 1];
       if (last && last.role === "assistant" && last.streaming) {
-        const updated = { ...last, streaming: false } as Message;
+        const updated = { ...last, streaming: false, status: "completed" as const };
         return { messages: [...s.messages.slice(0, -1), updated] };
       }
       return {};
     }),
+  replaceMessages: (msgs) => set({ messages: msgs }),
   addEvent: (event) => set((s) => ({ events: [...s.events, event] })),
   addPendingApproval: (approval) =>
     set((s) =>
@@ -180,6 +276,8 @@ export const useAppStore = create<AppState>((set) => ({
         ? s
         : { artifacts: [...s.artifacts, artifact] }
     ),
+  updateRunStatus: (status) =>
+    set((s) => (s.currentRun ? { currentRun: { ...s.currentRun, status } } : {})),
   setActiveTab: (tab) => set({ activeTab: tab }),
   toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
   setIsRunning: (running) => set({ isRunning: running }),
@@ -187,4 +285,6 @@ export const useAppStore = create<AppState>((set) => ({
     set((s) => ({ attachments: [...s.attachments, attachment] })),
   removeAttachment: (id) =>
     set((s) => ({ attachments: s.attachments.filter((a) => a.id !== id) })),
+  setLastSeq: (seq) => set((s) => ({ lastSeq: Math.max(s.lastSeq, seq) })),
+  setComposerPrefill: (text) => set({ composerPrefill: text }),
 }));

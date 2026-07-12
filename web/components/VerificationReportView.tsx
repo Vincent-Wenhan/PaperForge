@@ -1,12 +1,14 @@
 "use client";
 
+import { useAppStore } from "@/lib/store";
+
 interface VerificationReportViewProps {
   report: any;
 }
 
-export function VerificationReportView({
-  report,
-}: VerificationReportViewProps) {
+export function VerificationReportView({ report }: VerificationReportViewProps) {
+  const setComposerPrefill = useAppStore((s) => s.setComposerPrefill);
+
   if (!report) {
     return (
       <div className="p-4 text-muted-foreground">
@@ -16,6 +18,16 @@ export function VerificationReportView({
   }
 
   const scorePct = Math.round((report.overall_score || 0) * 100);
+  const buildErrors: string[] = report.build_errors || [];
+  const securityIssues: string[] = report.security_issues || [];
+  const hasIssues = buildErrors.length > 0 || securityIssues.length > 0;
+
+  const handleAskFix = () => {
+    const errSummary = buildErrors.slice(0, 3).join("; ");
+    setComposerPrefill(
+      `Please fix the following build errors:\n${errSummary}`,
+    );
+  };
 
   return (
     <div className="p-4 space-y-4">
@@ -38,30 +50,39 @@ export function VerificationReportView({
         </div>
       </div>
 
-      {report.build_errors && report.build_errors.length > 0 && (
+      {buildErrors.length > 0 && (
         <div>
           <h4 className="text-xs font-semibold uppercase text-muted-foreground">
             Build Errors
           </h4>
           <ul className="text-sm list-disc list-inside">
-            {report.build_errors.map((e: string, i: number) => (
+            {buildErrors.map((e: string, i: number) => (
               <li key={i}>{e}</li>
             ))}
           </ul>
         </div>
       )}
 
-      {report.security_issues && report.security_issues.length > 0 && (
+      {securityIssues.length > 0 && (
         <div>
           <h4 className="text-xs font-semibold uppercase text-muted-foreground">
             Security Issues
           </h4>
           <ul className="text-sm list-disc list-inside">
-            {report.security_issues.map((s: string, i: number) => (
+            {securityIssues.map((s: string, i: number) => (
               <li key={i}>{s}</li>
             ))}
           </ul>
         </div>
+      )}
+
+      {hasIssues && (
+        <button
+          onClick={handleAskFix}
+          className="px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded hover:opacity-90"
+        >
+          Ask PaperForge to fix
+        </button>
       )}
     </div>
   );
