@@ -204,6 +204,13 @@ class Storage:
             ).fetchone()
             return row["phase"] if row and row["phase"] else "init"
 
+    def get_run_status(self, run_id: str) -> str | None:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT status FROM runs WHERE id = ?", (run_id,)
+            ).fetchone()
+            return row["status"] if row else None
+
     def touch_run(self, run_id: str) -> None:
         now = datetime.utcnow().isoformat()
         with self._lock, self._conn() as conn:

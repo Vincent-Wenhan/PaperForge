@@ -135,6 +135,34 @@ class EventEmitter:
             {"sandbox_id": sandbox_id, "preview_url": preview_url},
         )
 
+    async def task_phase_changed(
+        self,
+        phase: str,
+        previous_phase: str | None = None,
+        task_id: str | None = None,
+    ) -> None:
+        await self.emit(
+            "task.phase.changed",
+            {
+                "phase": phase,
+                "previous_phase": previous_phase,
+                "task_id": task_id,
+            },
+        )
+
+    async def run_status_changed(
+        self,
+        status: str,
+        previous_status: str | None = None,
+    ) -> None:
+        await self.emit(
+            "run.status.changed",
+            {
+                "status": status,
+                "previous_status": previous_status,
+            },
+        )
+
 
 class EventManager:
     """Manages event subscribers per run, with monotonic seq per run."""

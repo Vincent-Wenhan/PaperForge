@@ -145,6 +145,23 @@ export function ChatPanel() {
       addEvent({ id: "", type: "preview.ready", data, run_id: currentRun.id });
     });
 
+    sse.on("run.status.changed", (data: any) => {
+      if (data?.status) {
+        useAppStore.getState().updateRunStatus(data.status);
+      }
+    });
+
+    sse.on("task.phase.changed", (data: any) => {
+      if (data?.phase && useAppStore.getState().currentRun) {
+        useAppStore.setState({
+          currentRun: {
+            ...useAppStore.getState().currentRun!,
+            phase: data.phase,
+          },
+        });
+      }
+    });
+
     sse.connect(currentRun.id);
     sseRef.current = sse;
 

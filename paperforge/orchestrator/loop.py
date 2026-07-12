@@ -89,8 +89,14 @@ class Orchestrator:
         event_manager = get_event_manager()
         emit = EventEmitter(run_id=run_id, manager=event_manager)
 
+        # Track previous status/phase so we only emit when they actually change.
+        prev_status = self.storage.get_run_status(run_id) or "active"
+        prev_phase = self.storage.get_run_phase(run_id) or "init"
+
         # Persist run status as running
         self.storage.update_run_status(run_id, "running")
+        if prev_status != "running":
+            await emit.run_status_changed("running", prev_status)
 
         # Restore phase from storage (default to INIT if missing)
         stored_phase = self.storage.get_run_phase(run_id) or "init"
@@ -214,8 +220,13 @@ class Orchestrator:
                                 ok = False
 
                             if ok:
+                                old_phase = self.phase
                                 self.phase = PHASE_TRANSITIONS[call.name]
                                 self.storage.update_run_phase(run_id, self.phase.value)
+                                await emit.task_phase_changed(
+                                    phase=self.phase.value,
+                                    previous_phase=old_phase.value,
+                                )
 
                     # Loop back to LLM
                     continue
