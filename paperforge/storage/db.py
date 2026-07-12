@@ -21,10 +21,14 @@ CREATE TABLE IF NOT EXISTS runs (
     title TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'active',
     phase TEXT NOT NULL DEFAULT 'init',
+    pinned INTEGER NOT NULL DEFAULT 0,
+    archived_at TIMESTAMP,
+    last_message_at TIMESTAMP,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_runs_updated ON runs(updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_runs_archived ON runs(archived_at);
 
 CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -128,11 +132,23 @@ class Storage:
     def _init_db(self) -> None:
         with self._lock, self._conn() as conn:
             conn.executescript(SCHEMA_SQL)
-            # Migration: add phase column if it doesn't exist
-            try:
-                conn.execute("SELECT phase FROM runs LIMIT 1")
-            except sqlite3.OperationalError:
-                conn.execute("ALTER TABLE runs ADD COLUMN phase TEXT DEFAULT 'init'")
+            # Migrations: add columns that older databases may be missing.
+            self._ensure_column(conn, "runs", "phase", "TEXT DEFAULT 'init'")
+            self._ensure_column(conn, "runs", "pinned", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(conn, "runs", "archived_at", "TIMESTAMP")
+            self._ensure_column(conn, "runs", "last_message_at", "TIMESTAMP")
+
+    @staticmethod
+    def _ensure_column(
+        conn: sqlite3.Connection,
+        table: str,
+        column: str,
+        decl: str,
+    ) -> None:
+        try:
+            conn.execute(f"SELECT {column} FROM {table} LIMIT 1")
+        except sqlite3.OperationalError:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 
     # ===== Runs =====
 
@@ -189,6 +205,47 @@ class Storage:
     def delete_run(self, run_id: str) -> None:
         with self._lock, self._conn() as conn:
             conn.execute("DELETE FROM runs WHERE id = ?", (run_id,))
+
+    def update_run(
+        self,
+        run_id: str,
+        title: str | None = None,
+        pinned: bool | None = None,
+    ) -> dict[str, Any] | None:
+        sets: list[str] = []
+        params: list[Any] = []
+        if title is not None:
+            sets.append("title = ?")
+            params.append(title)
+        if pinned is not None:
+            sets.append("pinned = ?")
+            params.append(1 if pinned else 0)
+        if not sets:
+            return self.get_run(run_id)
+        sets.append("updated_at = ?")
+        params.append(datetime.utcnow().isoformat())
+        params.append(run_id)
+        with self._lock, self._conn() as conn:
+            conn.execute(f"UPDATE runs SET {', '.join(sets)} WHERE id = ?", params)
+        return self.get_run(run_id)
+
+    def archive_run(self, run_id: str) -> dict[str, Any] | None:
+        now = datetime.utcnow().isoformat()
+        with self._lock, self._conn() as conn:
+            conn.execute(
+                "UPDATE runs SET archived_at = ?, updated_at = ? WHERE id = ?",
+                (now, now, run_id),
+            )
+        return self.get_run(run_id)
+
+    def restore_run(self, run_id: str) -> dict[str, Any] | None:
+        now = datetime.utcnow().isoformat()
+        with self._lock, self._conn() as conn:
+            conn.execute(
+                "UPDATE runs SET archived_at = NULL, updated_at = ? WHERE id = ?",
+                (now, run_id),
+            )
+        return self.get_run(run_id)
 
     # ===== Messages =====
 
@@ -347,6 +404,13 @@ class Storage:
                     "UPDATE papers SET status = ?, parsed_at = ? WHERE paper_id = ?",
                     (status, now, paper_id),
                 )
+
+    def update_paper_title(self, paper_id: str, title: str) -> None:
+        with self._lock, self._conn() as conn:
+            conn.execute(
+                "UPDATE papers SET title = ? WHERE paper_id = ?",
+                (title, paper_id),
+            )
 
     def delete_paper(self, paper_id: str) -> None:
         with self._lock, self._conn() as conn:

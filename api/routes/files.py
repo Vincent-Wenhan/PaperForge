@@ -1,7 +1,8 @@
-"""Files API routes: read/write/list files in a sandbox or generated app."""
+"""Files API routes: read/write/list/create/rename/move/delete files."""
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -11,23 +12,30 @@ from paperforge.storage.db import get_storage
 
 router = APIRouter()
 
-# ponytail: file interface safety — explicit allow-list keeps the editor
-# out of binaries, lockfiles, and build artifacts.
 ALLOWED_EXTS = {
     ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
     ".json", ".css", ".md", ".txt",
     ".html", ".svg",
 }
 BLOCKED_PARTS = {"node_modules", ".next", ".git", "dist", "build", ".cache"}
-MAX_FILE_SIZE = 1_000_000  # 1 MB
+MAX_FILE_SIZE = 1_000_000
 
 
 class FileWrite(BaseModel):
     content: str
 
 
+class FileCreate(BaseModel):
+    type: str  # "file" or "directory"
+    path: str
+    content: str = ""
+
+
+class FilePatch(BaseModel):
+    new_path: str
+
+
 def _resolve_safe(sandbox: dict, file_path: str) -> Path:
-    """Resolve a sandbox-relative path, rejecting traversal and blocked dirs."""
     if not file_path:
         raise HTTPException(status_code=400, detail="Empty file path")
 
@@ -53,7 +61,6 @@ def _resolve_safe(sandbox: dict, file_path: str) -> Path:
 
 @router.get("/sandboxes/{sandbox_id}/files/{file_path:path}")
 async def read_file(sandbox_id: str, file_path: str) -> dict:
-    """Read a file from the sandbox's app directory."""
     storage = get_storage()
     sandbox = storage.get_sandbox(sandbox_id)
     if not sandbox:
@@ -72,7 +79,6 @@ async def read_file(sandbox_id: str, file_path: str) -> dict:
 
 @router.put("/sandboxes/{sandbox_id}/files/{file_path:path}")
 async def write_file(sandbox_id: str, file_path: str, req: FileWrite) -> dict:
-    """Write content to a file in the sandbox's app directory."""
     storage = get_storage()
     sandbox = storage.get_sandbox(sandbox_id)
     if not sandbox:
@@ -88,9 +94,68 @@ async def write_file(sandbox_id: str, file_path: str, req: FileWrite) -> dict:
     return {"path": file_path, "saved": True}
 
 
+@router.post("/sandboxes/{sandbox_id}/entries")
+async def create_entry(sandbox_id: str, req: FileCreate) -> dict:
+    storage = get_storage()
+    sandbox = storage.get_sandbox(sandbox_id)
+    if not sandbox:
+        raise HTTPException(status_code=404, detail="Sandbox not found")
+
+    full_path = _resolve_safe(sandbox, req.path)
+
+    if req.type == "directory":
+        full_path.mkdir(parents=True, exist_ok=True)
+    else:
+        full_path.parent.mkdir(parents=True, exist_ok=True)
+        full_path.write_text(req.content, encoding="utf-8")
+
+    return {"path": req.path, "created": True}
+
+
+@router.patch("/sandboxes/{sandbox_id}/entries/{file_path:path}")
+async def rename_entry(
+    sandbox_id: str,
+    file_path: str,
+    req: FilePatch,
+) -> dict:
+    storage = get_storage()
+    sandbox = storage.get_sandbox(sandbox_id)
+    if not sandbox:
+        raise HTTPException(status_code=404, detail="Sandbox not found")
+
+    src = _resolve_safe(sandbox, file_path)
+    if not src.exists():
+        raise HTTPException(status_code=404, detail="Source not found")
+
+    new_path = _resolve_safe(sandbox, req.new_path)
+    if new_path.exists():
+        raise HTTPException(status_code=409, detail="Target already exists")
+
+    new_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(src), str(new_path))
+    return {"path": str(new_path), "renamed": True}
+
+
+@router.delete("/sandboxes/{sandbox_id}/entries/{file_path:path}")
+async def delete_entry(sandbox_id: str, file_path: str) -> dict:
+    storage = get_storage()
+    sandbox = storage.get_sandbox(sandbox_id)
+    if not sandbox:
+        raise HTTPException(status_code=404, detail="Sandbox not found")
+
+    full_path = _resolve_safe(sandbox, file_path)
+    if not full_path.exists():
+        raise HTTPException(status_code=404, detail="Not found")
+
+    if full_path.is_dir():
+        shutil.rmtree(full_path)
+    else:
+        full_path.unlink()
+    return {"path": file_path, "deleted": True}
+
+
 @router.get("/sandboxes/{sandbox_id}/tree")
 async def get_file_tree(sandbox_id: str) -> dict:
-    """Get the file tree for a sandbox's app directory."""
     storage = get_storage()
     sandbox = storage.get_sandbox(sandbox_id)
     if not sandbox:
