@@ -12,30 +12,30 @@ interface MessageViewProps {
 export function MessageView({ role, content, toolCalls }: MessageViewProps) {
   const isUser = role === "user";
 
+  if (isUser) {
+    return (
+      <div className="flex justify-end">
+        <div className="max-w-[80%] px-3 py-2 rounded-lg bg-primary text-primary-foreground text-sm whitespace-pre-wrap">
+          {content}
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
-      <div
-        className={`inline-block px-3 py-2 rounded-lg max-w-[80%] ${
-          isUser
-            ? "bg-primary text-primary-foreground"
-            : "bg-muted"
-        }`}
-      >
-        {isUser ? (
-          <div className="text-sm whitespace-pre-wrap">{content}</div>
-        ) : (
-          <div className="text-sm prose prose-sm max-w-none">
-            <ReactMarkdown>{content || ""}</ReactMarkdown>
-          </div>
-        )}
+    <div className="flex justify-start">
+      <div className="max-w-[720px] w-full px-1 py-1">
+        <div className="text-sm prose prose-sm max-w-none">
+          <ReactMarkdown>{content || ""}</ReactMarkdown>
+        </div>
         {toolCalls && toolCalls.length > 0 && (
           <div className="mt-2 space-y-1">
             {toolCalls.map((tc, i) => (
               <div
                 key={i}
-                className="text-xs bg-primary-foreground/10 rounded p-1"
+                className="text-xs bg-muted rounded p-1.5 border border-border"
               >
-                → {tc.name}({JSON.stringify(tc.args)})
+                <span className="font-mono text-muted-foreground">→ {tc.name}</span>
               </div>
             ))}
           </div>

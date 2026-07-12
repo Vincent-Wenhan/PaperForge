@@ -6,6 +6,7 @@ import { useAppStore } from "@/lib/store";
 import { MessageView } from "./MessageView";
 import { ToolCallCard } from "./ToolCallCard";
 import { ApprovalCard } from "./ApprovalCard";
+import { AgentActivity } from "./AgentActivity";
 import { Composer } from "./Composer";
 
 export function ChatPanel() {
@@ -147,18 +148,13 @@ export function ChatPanel() {
 
     sse.on("run.status.changed", (data: any) => {
       if (data?.status) {
-        useAppStore.getState().updateRunStatus(data.status);
+        useAppStore.getState().updateCurrentRun({ status: data.status });
       }
     });
 
     sse.on("task.phase.changed", (data: any) => {
-      if (data?.phase && useAppStore.getState().currentRun) {
-        useAppStore.setState({
-          currentRun: {
-            ...useAppStore.getState().currentRun!,
-            phase: data.phase,
-          },
-        });
+      if (data?.phase) {
+        useAppStore.getState().updateCurrentRun({ phase: data.phase });
       }
     });
 
@@ -218,25 +214,7 @@ export function ChatPanel() {
 
         {events.length > 0 && (
           <div className="space-y-2 mt-2">
-            {events.slice(-20).map((event, i) => {
-              if (event.type === "tool.call") {
-                return (
-                  <ToolCallCard
-                    key={`ev-${i}`}
-                    name={event.data.name || ""}
-                    args={event.data.args || {}}
-                  />
-                );
-              }
-              return (
-                <div
-                  key={`ev-${i}`}
-                  className="text-xs text-muted-foreground border-l-2 border-border pl-2"
-                >
-                  <span className="font-mono">{event.type}</span>
-                </div>
-              );
-            })}
+            <AgentActivity events={events.slice(-20)} />
           </div>
         )}
 

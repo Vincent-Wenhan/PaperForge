@@ -97,6 +97,7 @@ interface AppState {
   composerPrefill: string;
 
   setCurrentRun: (run: Run | null) => void;
+  updateCurrentRun: (patch: Partial<Run>) => void;
   setSandbox: (sb: Sandbox | null) => void;
   setPendingApprovals: (approvals: Approval[]) => void;
   addMessage: (msg: Message) => void;
@@ -147,6 +148,10 @@ export const useAppStore = create<AppState>((set) => ({
       isRunning: false,
       lastSeq: 0,
     }),
+  updateCurrentRun: (patch) =>
+    set((s) =>
+      s.currentRun ? { currentRun: { ...s.currentRun, ...patch } } : {},
+    ),
   setSandbox: (sb) => set({ sandbox: sb }),
   setPendingApprovals: (approvals) => set({ pendingApprovals: approvals }),
   addMessage: (msg) => set((s) => ({ messages: [...s.messages, msg] })),
