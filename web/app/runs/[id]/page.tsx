@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { useAppStore, type Paper, type Run } from "@/lib/store";
-import { useIsMobile } from "@/lib/useMediaQuery";
+import { useIsMobile, useIsTablet } from "@/lib/useMediaQuery";
 import { Sidebar } from "@/components/Sidebar";
 import { ChatPanel } from "@/components/ChatPanel";
 import { PreviewPanel } from "@/components/PreviewPanel";
@@ -16,6 +16,7 @@ export default function RunWorkspacePage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const isMobile = useIsMobile();
+  const isTablet = useIsTablet();
   const [runs, setRuns] = useState<any[]>([]);
   const [library, setLibrary] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -23,6 +24,7 @@ export default function RunWorkspacePage() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [activePanel, setActivePanel] = useState<"chat" | "preview">("chat");
 
   const setCurrentRun = useAppStore((s) => s.setCurrentRun);
   const setSandbox = useAppStore((s) => s.setSandbox);
@@ -153,6 +155,9 @@ export default function RunWorkspacePage() {
     );
   }
 
+  // On tablet/mobile, only show one panel at a time with a toggle.
+  const showSinglePanel = isMobile || isTablet;
+
   return (
     <>
       <div className="flex h-screen w-screen flex-col overflow-hidden">
@@ -207,8 +212,44 @@ export default function RunWorkspacePage() {
               }}
             />
           )}
-          <ChatPanel />
-          <PreviewPanel />
+          {showSinglePanel ? (
+            <div className="flex-1 flex flex-col overflow-hidden">
+              <div className="flex border-b border-border bg-muted/30" role="tablist">
+                <button
+                  role="tab"
+                  aria-selected={activePanel === "chat"}
+                  onClick={() => setActivePanel("chat")}
+                  className={`flex-1 px-4 py-2 text-sm border-b-2 ${
+                    activePanel === "chat"
+                      ? "border-primary font-medium bg-background"
+                      : "border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                  }`}
+                >
+                  Chat
+                </button>
+                <button
+                  role="tab"
+                  aria-selected={activePanel === "preview"}
+                  onClick={() => setActivePanel("preview")}
+                  className={`flex-1 px-4 py-2 text-sm border-b-2 ${
+                    activePanel === "preview"
+                      ? "border-primary font-medium bg-background"
+                      : "border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                  }`}
+                >
+                  Preview
+                </button>
+              </div>
+              <div className="flex-1 overflow-hidden">
+                {activePanel === "chat" ? <ChatPanel /> : <PreviewPanel />}
+              </div>
+            </div>
+          ) : (
+            <>
+              <ChatPanel />
+              <PreviewPanel />
+            </>
+          )}
         </div>
       </div>
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />

@@ -8,6 +8,7 @@ import { ToolCallCard } from "./ToolCallCard";
 import { ApprovalCard } from "./ApprovalCard";
 import { AgentActivity } from "./AgentActivity";
 import { Composer } from "./Composer";
+import { EmptyState } from "./Skeleton";
 
 export function ChatPanel() {
   const currentRun = useAppStore((s) => s.currentRun);
@@ -189,7 +190,19 @@ export function ChatPanel() {
         artifactCount={artifacts.length}
       />
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-3">
+      <div
+        className="flex-1 overflow-y-auto p-4 space-y-3"
+        role="log"
+        aria-live="polite"
+        aria-label="Conversation messages"
+      >
+        {messages.length === 0 && events.length === 0 && (
+          <EmptyState
+            icon="💬"
+            title="Start a conversation"
+            description="Send a message below to start working with PaperForge. Ask a question or request to productize a paper."
+          />
+        )}
         {messages.map((msg, i) => (
           <MessageView
             key={i}

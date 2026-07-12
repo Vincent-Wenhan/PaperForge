@@ -79,26 +79,36 @@ export function ArtifactCard({
   };
 
   return (
-    <div className="my-2 border border-border rounded-lg overflow-hidden">
+    <div className="my-2 border border-border rounded-lg overflow-hidden group">
       <div className="relative">
         <button
           onClick={() => setExpanded(!expanded)}
+          aria-expanded={expanded}
+          aria-label={`${label} — ${expanded ? "collapse" : "expand"}`}
           className="w-full px-3 py-2 bg-muted/50 flex items-center justify-between text-sm hover:bg-muted"
         >
           <span className="font-medium capitalize">{label}</span>
-          <span className="text-xs text-muted-foreground">
+          <span className="text-xs text-muted-foreground" aria-hidden="true">
             {expanded ? "▼" : "▶"}
           </span>
         </button>
         <button
           onClick={() => setMenuOpen(!menuOpen)}
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          aria-label={`Actions for ${label}`}
           className="absolute right-6 top-1.5 opacity-0 group-hover:opacity-100 hover:bg-accent rounded px-1 text-xs"
         >
           ···
         </button>
         {menuOpen && (
-          <div className="absolute right-6 top-9 z-10 bg-background border border-border rounded shadow-md py-1 text-xs w-40">
+          <div
+            role="menu"
+            aria-label={`Actions for ${label}`}
+            className="absolute right-6 top-9 z-10 bg-background border border-border rounded shadow-md py-1 text-xs w-40"
+          >
             <button
+              role="menuitem"
               onClick={() => {
                 setMenuOpen(false);
                 setExpanded(true);
@@ -108,24 +118,28 @@ export function ArtifactCard({
               Open
             </button>
             <button
+              role="menuitem"
               onClick={handleUseAsContext}
               className="block w-full text-left px-3 py-1.5 hover:bg-accent"
             >
               Use as context
             </button>
             <button
+              role="menuitem"
               onClick={handleRename}
               className="block w-full text-left px-3 py-1.5 hover:bg-accent"
             >
               Rename
             </button>
             <button
+              role="menuitem"
               onClick={handleDownload}
               className="block w-full text-left px-3 py-1.5 hover:bg-accent"
             >
               Download
             </button>
             <button
+              role="menuitem"
               onClick={handleDelete}
               className="block w-full text-left px-3 py-1.5 hover:bg-accent text-destructive"
             >

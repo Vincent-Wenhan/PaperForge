@@ -7,6 +7,7 @@ import { useAppStore } from "@/lib/store";
 import { ConsoleLogs } from "./ConsoleLogs";
 import { VerificationReportView } from "./VerificationReportView";
 import { ArtifactCard } from "./ArtifactCard";
+import { EmptyState } from "./Skeleton";
 
 const MonacoEditor = dynamic(() => import("@monaco-editor/react").then((m) => m.default), {
   ssr: false,
@@ -245,14 +246,20 @@ function PreviewFrame({ sandbox, progress, phase }: PreviewFrameProps) {
 
   if (!sandbox?.id) {
     return (
-      <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-8">
+      <div
+        className="flex flex-col items-center justify-center h-full text-muted-foreground p-8"
+        role="status"
+        aria-live="polite"
+      >
         <div className="text-lg font-medium mb-3">No live preview yet</div>
         <div className="text-sm">
           <div className="font-medium mb-1">Current phase: {phase || "init"}</div>
-          <ul className="space-y-1">
+          <ul className="space-y-1 list-none p-0" aria-label="Pipeline progress">
             {progress.map((step) => (
               <li key={step.id} className="flex items-center gap-2">
-                <span>{step.status === "complete" ? "✓" : step.status === "error" ? "✗" : "○"}</span>
+                <span aria-hidden="true">
+                  {step.status === "complete" ? "✓" : step.status === "error" ? "✗" : "○"}
+                </span>
                 <span>{step.label}</span>
               </li>
             ))}
@@ -524,9 +531,11 @@ function CodeEditor({
             }}
           />
         ) : (
-          <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm">
-            Select a file from the tree
-          </div>
+          <EmptyState
+            icon="📄"
+            title="Select a file from the tree"
+            description="Click any file in the file tree to open it in the editor."
+          />
         )}
       </div>
 
@@ -636,9 +645,11 @@ function FileTreeView({
 function ArtifactsList({ artifacts }: { artifacts: any[] }) {
   if (!artifacts || artifacts.length === 0) {
     return (
-      <div className="flex items-center justify-center h-full text-muted-foreground">
-        No artifacts yet. Run the pipeline to generate artifacts.
-      </div>
+      <EmptyState
+        icon="📦"
+        title="No artifacts yet"
+        description="Run the pipeline to generate artifacts. Capability cards, PRDs, and verification reports will appear here."
+      />
     );
   }
   return (

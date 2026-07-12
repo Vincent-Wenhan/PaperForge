@@ -193,7 +193,10 @@ export function Sidebar({
   // Collapsed desktop sidebar
   if (!isMobile && collapsed) {
     return (
-      <aside className="w-14 border-r border-border bg-muted/30 flex flex-col items-center py-3 gap-3">
+      <aside
+        className="w-14 border-r border-border bg-muted/30 flex flex-col items-center py-3 gap-3"
+        aria-label="Navigation (collapsed)"
+      >
         <button
           onClick={onToggleCollapse}
           className="p-2 hover:bg-accent rounded"
@@ -218,6 +221,7 @@ export function Sidebar({
         <button
           onClick={onNewRun}
           className="w-full px-3 py-2 text-sm font-medium bg-primary text-primary-foreground rounded hover:opacity-90"
+          aria-label="Create new run"
         >
           + New Run
         </button>
@@ -227,6 +231,7 @@ export function Sidebar({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search runs..."
+            aria-label="Search runs"
             className="w-full px-2 py-1 text-xs border border-border rounded focus:outline-none focus:ring-1 focus:ring-primary"
           />
         </div>
@@ -343,7 +348,10 @@ export function Sidebar({
   }
 
   return (
-    <aside className="w-64 border-r border-border bg-muted/30 flex flex-col">
+    <aside
+      className="w-64 border-r border-border bg-muted/30 flex flex-col"
+      aria-label="Run navigation"
+    >
       {sidebarContent}
     </aside>
   );
