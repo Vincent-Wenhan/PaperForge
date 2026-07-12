@@ -6,6 +6,7 @@ import { useAppStore } from "@/lib/store";
 import { MessageView } from "./MessageView";
 import { ToolCallCard } from "./ToolCallCard";
 import { ApprovalCard } from "./ApprovalCard";
+import { Composer } from "./Composer";
 
 export function ChatPanel() {
   const currentRun = useAppStore((s) => s.currentRun);
@@ -21,6 +22,7 @@ export function ChatPanel() {
   const addPendingApproval = useAppStore((s) => s.addPendingApproval);
   const resolvePendingApproval = useAppStore((s) => s.resolvePendingApproval);
   const setArtifacts = useAppStore((s) => s.setArtifacts);
+  const setIsRunning = useAppStore((s) => s.setIsRunning);
 
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -41,34 +43,38 @@ export function ChatPanel() {
 
     const sse = new SSEClient();
     sseRef.current = sse;
-    // Connect first so EventSource is ready, then attach handlers.
     sse.connect(currentRun.id);
 
-    sse.on("message.delta", (data) => {
-      appendAssistantDelta(data.text || "");
+    sse.on("message.delta", (data: any) => {
+      appendAssistantDelta(data.text || data.delta || "");
     });
 
     sse.on("run.finished", () => {
       finalizeStreamingAssistant();
+      setIsRunning(false);
     });
 
     sse.on("run.error", () => {
       finalizeStreamingAssistant();
+      setIsRunning(false);
     });
 
-    sse.on("tool.call", (data) => {
+    sse.on("tool.call", (data: any) => {
       addEvent({ id: data.id || "", type: "tool.call", data, run_id: currentRun.id });
     });
 
-    sse.on("tool.result", (data) => {
+    sse.on("tool.result", (data: any) => {
       addEvent({ id: data.call_id || "", type: "tool.result", data, run_id: currentRun.id });
     });
 
-    sse.on("artifact.created", (data) => {
+    sse.on("artifact.created", (data: any) => {
       addEvent({ id: data.artifact_id || "", type: "artifact.created", data, run_id: currentRun.id });
+      if (data.artifact_id) {
+        api.getArtifact(data.artifact_id).then((a) => useAppStore.getState().addArtifact(a)).catch(() => {});
+      }
     });
 
-    sse.on("approval.requested", (data) => {
+    sse.on("approval.requested", (data: any) => {
       addEvent({ id: data.approval_id || "", type: "approval.requested", data, run_id: currentRun.id });
       addPendingApproval({
         approval_id: data.approval_id,
@@ -78,12 +84,12 @@ export function ChatPanel() {
       });
     });
 
-    sse.on("approval.resolved", (data) => {
+    sse.on("approval.resolved", (data: any) => {
       addEvent({ id: data.approval_id || "", type: "approval.resolved", data, run_id: currentRun.id });
       resolvePendingApproval(data.approval_id, !!data.approved);
     });
 
-    sse.on("sandbox.started", (data) => {
+    sse.on("sandbox.started", (data: any) => {
       setSandbox({
         id: data.sandbox_id,
         run_id: currentRun.id,
@@ -93,50 +99,28 @@ export function ChatPanel() {
       });
     });
 
-    sse.on("sandbox.error", (data) => {
+    sse.on("sandbox.error", (data: any) => {
       addEvent({ id: "", type: "sandbox.error", data, run_id: currentRun.id });
     });
 
-    sse.on("preview.ready", (data) => {
+    sse.on("preview.ready", (data: any) => {
       addEvent({ id: "", type: "preview.ready", data, run_id: currentRun.id });
     });
 
-    sse.on("run.started", (data) => {
+    sse.on("run.started", (data: any) => {
       addEvent({ id: "", type: "run.started", data, run_id: currentRun.id });
-    });
-
-    sse.on("run.finished", (data) => {
-      addEvent({ id: "", type: "run.finished", data, run_id: currentRun.id });
-    });
-
-    sse.on("run.error", (data) => {
-      addEvent({ id: "", type: "run.error", data, run_id: currentRun.id });
+      setIsRunning(true);
     });
 
     return () => {
       sse.disconnect();
       sseRef.current = null;
     };
-  }, [currentRun, addMessage, appendAssistantDelta, finalizeStreamingAssistant, addEvent, setSandbox, addPendingApproval, resolvePendingApproval, setArtifacts]);
+  }, [currentRun, addMessage, appendAssistantDelta, finalizeStreamingAssistant, addEvent, setSandbox, addPendingApproval, resolvePendingApproval, setArtifacts, setIsRunning]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, events]);
-
-  const handleSend = async () => {
-    if (!input.trim() || !currentRun) return;
-    const content = input;
-    setInput("");
-    setSending(true);
-    addMessage({ role: "user", content });
-    try {
-      await api.sendMessage(currentRun.id, content);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setSending(false);
-    }
-  };
 
   if (!currentRun) {
     return (
@@ -206,24 +190,7 @@ export function ChatPanel() {
         <div ref={messagesEndRef} />
       </div>
 
-      <div className="p-3 border-t border-border flex gap-2">
-        <input
-          type="text"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && !sending && handleSend()}
-          placeholder="Send a message..."
-          className="flex-1 px-3 py-2 border border-border rounded focus:outline-none focus:ring-1 focus:ring-primary"
-          disabled={sending}
-        />
-        <button
-          onClick={handleSend}
-          disabled={sending || !input.trim()}
-          className="px-4 py-2 bg-primary text-primary-foreground rounded disabled:opacity-50"
-        >
-          Send
-        </button>
-      </div>
+      <Composer />
     </div>
   );
 }

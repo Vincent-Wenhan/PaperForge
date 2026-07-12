@@ -19,6 +19,9 @@ export interface Run {
   title: string;
   status: string;
   phase?: string;
+  pinned?: boolean;
+  archived_at?: string | null;
+  last_message_at?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -30,6 +33,7 @@ export interface Paper {
   status: string;
   created_at?: string;
   parsed_at?: string;
+  card_path?: string;
 }
 
 export interface Sandbox {
@@ -58,6 +62,24 @@ export interface Approval {
   status: "pending" | "approved" | "rejected";
 }
 
+export interface Artifact {
+  id: string;
+  run_id?: string;
+  type: string;
+  path?: string;
+  metadata?: Record<string, any>;
+  data?: any;
+  created_at?: string;
+}
+
+export interface Attachment {
+  id: string;
+  type: "file" | "paper";
+  name: string;
+  file?: File;
+  paperId?: string;
+}
+
 interface AppState {
   currentRun: Run | null;
   messages: Message[];
@@ -65,6 +87,8 @@ interface AppState {
   sandbox: Sandbox | null;
   pendingApprovals: Approval[];
   artifacts: Artifact[];
+  attachments: Attachment[];
+  isRunning: boolean;
   activeTab: "preview" | "artifacts" | "code" | "console" | "verification";
   sidebarCollapsed: boolean;
 
@@ -81,16 +105,9 @@ interface AppState {
   addArtifact: (artifact: Artifact) => void;
   setActiveTab: (tab: "preview" | "artifacts" | "code" | "console" | "verification") => void;
   toggleSidebar: () => void;
-}
-
-export interface Artifact {
-  id: string;
-  run_id?: string;
-  type: string;
-  path?: string;
-  metadata?: Record<string, any>;
-  data?: any;
-  created_at?: string;
+  setIsRunning: (running: boolean) => void;
+  addAttachment: (attachment: Attachment) => void;
+  removeAttachment: (id: string) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -100,11 +117,21 @@ export const useAppStore = create<AppState>((set) => ({
   sandbox: null,
   pendingApprovals: [],
   artifacts: [],
+  attachments: [],
+  isRunning: false,
   activeTab: "preview",
   sidebarCollapsed: false,
 
   setCurrentRun: (run) =>
-    set({ currentRun: run, messages: [], events: [], pendingApprovals: [], artifacts: [] }),
+    set({
+      currentRun: run,
+      messages: [],
+      events: [],
+      pendingApprovals: [],
+      artifacts: [],
+      attachments: [],
+      isRunning: false,
+    }),
   setSandbox: (sb) => set({ sandbox: sb }),
   setPendingApprovals: (approvals) => set({ pendingApprovals: approvals }),
   addMessage: (msg) => set((s) => ({ messages: [...s.messages, msg] })),
@@ -125,7 +152,7 @@ export const useAppStore = create<AppState>((set) => ({
   finalizeStreamingAssistant: () =>
     set((s) => {
       const last = s.messages[s.messages.length - 1];
-      if (last && last.role === "assistant" && (last as any).streaming) {
+      if (last && last.role === "assistant" && last.streaming) {
         const updated = { ...last, streaming: false } as Message;
         return { messages: [...s.messages.slice(0, -1), updated] };
       }
@@ -155,4 +182,9 @@ export const useAppStore = create<AppState>((set) => ({
     ),
   setActiveTab: (tab) => set({ activeTab: tab }),
   toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
+  setIsRunning: (running) => set({ isRunning: running }),
+  addAttachment: (attachment) =>
+    set((s) => ({ attachments: [...s.attachments, attachment] })),
+  removeAttachment: (id) =>
+    set((s) => ({ attachments: s.attachments.filter((a) => a.id !== id) })),
 }));

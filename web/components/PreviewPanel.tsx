@@ -24,6 +24,7 @@ export function PreviewPanel() {
   const [tree, setTree] = useState<any[]>([]);
   const [currentFile, setCurrentFile] = useState("");
   const [fileContent, setFileContent] = useState("");
+  const [dirty, setDirty] = useState(false);
 
   useEffect(() => {
     if (!sandbox) return;
@@ -41,7 +42,7 @@ export function PreviewPanel() {
 
   const previewReady = Boolean(sandbox?.id) && sandbox?.status === "running";
 
-  const progress = [
+  const progress: ProgressItem[] = [
     { id: "capability", label: "Capability card", status: capability ? "complete" : "pending" },
     { id: "prd", label: "PRD", status: prd ? "complete" : "pending" },
     { id: "app", label: "App generated", status: app ? "complete" : "pending" },
@@ -87,9 +88,13 @@ export function PreviewPanel() {
             tree={tree}
             currentFile={currentFile}
             fileContent={fileContent}
+            dirty={dirty}
             onOpenFile={openFile}
             onSaveFile={saveFile}
-            onContentChange={setFileContent}
+            onContentChange={(v: string) => {
+              setFileContent(v);
+              setDirty(true);
+            }}
           />
         )}
         {activeTab === "console" && <ConsoleLogs sandboxId={sandbox?.id} />}
@@ -103,11 +108,13 @@ export function PreviewPanel() {
     const resp = await api.readFile(sandbox.id, path);
     setCurrentFile(path);
     setFileContent(resp.content);
+    setDirty(false);
   }
 
   async function saveFile() {
     if (!sandbox || !currentFile) return;
     await api.writeFile(sandbox.id, currentFile, fileContent);
+    setDirty(false);
   }
 }
 
@@ -194,6 +201,7 @@ function CodeEditor({
   tree,
   currentFile,
   fileContent,
+  dirty,
   onOpenFile,
   onSaveFile,
   onContentChange,
@@ -205,7 +213,10 @@ function CodeEditor({
       </div>
       <div className="flex-1 flex flex-col">
         <div className="flex items-center justify-between px-3 py-1 border-b border-border">
-          <span className="text-xs font-mono">{currentFile || "(no file)"}</span>
+          <span className="text-xs font-mono">
+            {currentFile || "(no file)"}
+            <span className="ml-2 text-amber-500">{dirty ? "●" : ""}</span>
+          </span>
           <button
             onClick={onSaveFile}
             disabled={!currentFile}

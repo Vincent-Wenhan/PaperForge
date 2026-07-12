@@ -38,6 +38,19 @@ async function deleteJson<T>(path: string): Promise<T> {
   return resp.json() as Promise<T>;
 }
 
+async function patchJson<T>(path: string, body: any): Promise<T> {
+  const resp = await fetch(buildUrl(path), {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(`${resp.status}: ${text}`);
+  }
+  return resp.json() as Promise<T>;
+}
+
 export const api = {
   // === Runs ===
   createRun: async (title?: string): Promise<Run> => {
@@ -49,8 +62,23 @@ export const api = {
   getRun: async (id: string): Promise<Run> => {
     return getJson<Run>(`/api/runs/${id}`);
   },
+  updateRun: async (
+    id: string,
+    patch: { title?: string; pinned?: boolean }
+  ): Promise<Run> => {
+    return patchJson<Run>(`/api/runs/${id}`, patch);
+  },
+  archiveRun: async (id: string): Promise<Run> => {
+    return postJson<Run>(`/api/runs/${id}/archive`, {});
+  },
+  restoreRun: async (id: string): Promise<Run> => {
+    return postJson<Run>(`/api/runs/${id}/restore`, {});
+  },
   deleteRun: async (id: string): Promise<{ status: string }> => {
     return deleteJson(`/api/runs/${id}`);
+  },
+  cancelRun: async (id: string): Promise<{ status: string }> => {
+    return postJson(`/api/runs/${id}/cancel`, {});
   },
 
   // === Messages ===
@@ -78,6 +106,9 @@ export const api = {
   getPaper: async (paperId: string): Promise<{ paper: Paper; capability_card: any }> => {
     return getJson(`/api/library/${paperId}`);
   },
+  renamePaper: async (paperId: string, title: string): Promise<Paper> => {
+    return patchJson(`/api/library/${paperId}`, { title });
+  },
   deletePaper: async (paperId: string): Promise<{ status: string }> => {
     return deleteJson(`/api/library/${paperId}`);
   },
@@ -92,11 +123,12 @@ export const api = {
   stopSandbox: async (sandboxId: string): Promise<{ status: string }> => {
     return postJson(`/api/sandboxes/${sandboxId}/stop`, {});
   },
+  restartSandbox: async (sandboxId: string): Promise<Sandbox> => {
+    return postJson(`/api/sandboxes/${sandboxId}/restart`, {});
+  },
   getSandbox: async (sandboxId: string): Promise<Sandbox> => {
     return getJson<Sandbox>(`/api/sandboxes/${sandboxId}`);
   },
-
-  // === Files ===
   readFile: async (sandboxId: string, path: string): Promise<{ path: string; content: string }> => {
     return getJson(`/api/files/sandboxes/${sandboxId}/files/${path}`);
   },
@@ -111,6 +143,28 @@ export const api = {
   },
   getFileTree: async (sandboxId: string): Promise<{ tree: any[] }> => {
     return getJson(`/api/files/sandboxes/${sandboxId}/tree`);
+  },
+  createEntry: async (
+    sandboxId: string,
+    entry: { type: "file" | "directory"; path: string; content?: string }
+  ): Promise<{ path: string; created: boolean }> => {
+    return postJson(`/api/files/sandboxes/${sandboxId}/entries`, entry);
+  },
+  renameEntry: async (
+    sandboxId: string,
+    path: string,
+    newPath: string
+  ): Promise<{ path: string; renamed: boolean }> => {
+    return patchJson(
+      `/api/files/sandboxes/${sandboxId}/entries/${path}`,
+      { new_path: newPath }
+    );
+  },
+  deleteEntry: async (
+    sandboxId: string,
+    path: string
+  ): Promise<{ path: string; deleted: boolean }> => {
+    return deleteJson(`/api/files/sandboxes/${sandboxId}/entries/${path}`);
   },
 
   // === Preview ===
@@ -134,14 +188,20 @@ export const api = {
   getArtifact: async (artifactId: string): Promise<Artifact> => {
     return getJson(`/api/artifacts/${artifactId}`);
   },
+  deleteArtifact: async (artifactId: string): Promise<{ status: string }> => {
+    return deleteJson(`/api/artifacts/${artifactId}`);
+  },
+  downloadArtifact: async (artifactId: string): Promise<Blob> => {
+    const resp = await fetch(buildUrl(`/api/artifacts/${artifactId}/download`));
+    if (!resp.ok) throw new Error("Download failed");
+    return resp.blob();
+  },
 
   // === Settings ===
   getSettings: async (): Promise<any> => {
     return getJson(`/api/settings`);
   },
 };
-
-// === SSE Client ===
 
 export class SSEClient {
   private es: EventSource | null = null;
