@@ -82,8 +82,15 @@ export const api = {
   },
 
   // === Messages ===
-  sendMessage: async (runId: string, content: string): Promise<{ status: string; run_id: string }> => {
-    return postJson(`/api/runs/${runId}/messages`, { content });
+  sendMessage: async (
+    runId: string,
+    content: string,
+    paperIds: string[] = [],
+  ): Promise<{ status: string; run_id: string }> => {
+    return postJson(`/api/runs/${runId}/messages`, {
+      content,
+      paper_ids: paperIds,
+    });
   },
   listMessages: async (runId: string): Promise<Message[]> => {
     return getJson<Message[]>(`/api/runs/${runId}/messages`);

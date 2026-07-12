@@ -87,6 +87,13 @@ CREATE TABLE IF NOT EXISTS approvals (
     resolved_at TIMESTAMP,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS run_papers (
+    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    paper_id TEXT NOT NULL REFERENCES papers(paper_id) ON DELETE CASCADE,
+    attached_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (run_id, paper_id)
+);
 """
 
 
@@ -532,6 +539,64 @@ class Storage:
                 "UPDATE approvals SET status = ?, resolved_at = ? WHERE id = ?",
                 (status, now, approval_id),
             )
+
+    def list_approvals(
+        self,
+        run_id: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """List approvals, optionally filtered by run_id and/or status."""
+        query = "SELECT * FROM approvals WHERE 1=1"
+        params: list[Any] = []
+        if run_id:
+            query += " AND run_id = ?"
+            params.append(run_id)
+        if status:
+            query += " AND status = ?"
+            params.append(status)
+        query += " ORDER BY created_at DESC"
+        with self._conn() as conn:
+            rows = conn.execute(query, params).fetchall()
+            out = []
+            for r in rows:
+                d = dict(r)
+                d["args"] = json.loads(d.get("args") or "{}")
+                out.append(d)
+            return out
+
+    # ===== Run-Paper attachments =====
+
+    def attach_paper_to_run(self, run_id: str, paper_id: str) -> dict[str, Any]:
+        """Attach a paper to a run. Idempotent."""
+        now = datetime.utcnow().isoformat()
+        with self._lock, self._conn() as conn:
+            conn.execute(
+                """INSERT OR IGNORE INTO run_papers (run_id, paper_id, attached_at)
+                   VALUES (?, ?, ?)""",
+                (run_id, paper_id, now),
+            )
+        return {"run_id": run_id, "paper_id": paper_id, "attached_at": now}
+
+    def detach_paper_from_run(self, run_id: str, paper_id: str) -> bool:
+        """Detach a paper from a run. Returns True if a row was deleted."""
+        with self._lock, self._conn() as conn:
+            cur = conn.execute(
+                "DELETE FROM run_papers WHERE run_id = ? AND paper_id = ?",
+                (run_id, paper_id),
+            )
+            return cur.rowcount > 0
+
+    def list_run_papers(self, run_id: str) -> list[dict[str, Any]]:
+        """List papers attached to a run."""
+        query = """
+            SELECT p.* FROM papers p
+            JOIN run_papers rp ON rp.paper_id = p.paper_id
+            WHERE rp.run_id = ?
+            ORDER BY rp.attached_at DESC
+        """
+        with self._conn() as conn:
+            rows = conn.execute(query, (run_id,)).fetchall()
+            return [dict(r) for r in rows]
 
 
 _storage: Storage | None = None

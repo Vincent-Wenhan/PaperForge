@@ -45,6 +45,10 @@ async def send_message(run_id: str, req: MessageCreate) -> dict:
     # API layer owns user message persistence; orchestrator must not duplicate it.
     storage.add_message(run_id=run_id, role="user", content=req.content)
 
+    # Attach any new papers to this run as explicit context (doc 4.3/4.4).
+    for paper_id in req.paper_ids:
+        storage.attach_paper_to_run(run_id, paper_id)
+
     orchestrator = Orchestrator()
     task_manager.start(run_id, orchestrator.run(run_id=run_id, user_message=req.content))
 
