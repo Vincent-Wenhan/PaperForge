@@ -373,7 +373,7 @@ interface RunRowProps {
   onTogglePin: () => void;
 }
 
-function RunRow({
+export function RunRow({
   run,
   onSelect,
   menuOpen,
