@@ -23,6 +23,22 @@ def _last_event_id(request: Request) -> int:
         return 0
 
 
+def _encode_sse(row: dict) -> str:
+    envelope = {
+        "id": row["id"],
+        "seq": row["seq"],
+        "run_id": row["run_id"],
+        "type": row["type"],
+        "ts": row.get("created_at"),
+        "payload": row.get("data") or {},
+    }
+    return (
+        f"id: {row['seq']}\n"
+        f"event: {row['type']}\n"
+        f"data: {json.dumps(envelope, ensure_ascii=False)}\n\n"
+    )
+
+
 @router.get("/{run_id}/events")
 async def stream_events(
     run_id: str,
@@ -59,44 +75,57 @@ async def stream_events(
     event_manager = get_event_manager()
     queue = event_manager.register(run_id)
 
-    last_seq = after_seq if after_seq is not None else _last_event_id(request)
+    cursor = after_seq if after_seq is not None else _last_event_id(request)
 
     async def event_stream() -> AsyncIterator[str]:
         try:
-            # On reconnect/replay, yield events from history with seq > last_seq.
-            for event in event_manager.get_history(run_id):
-                if event.seq <= last_seq:
-                    continue
-                payload = {
-                    "id": event.id,
-                    "seq": event.seq,
-                    "run_id": event.run_id,
-                    "type": event.type,
-                    "ts": event.ts,
-                    "payload": event.data,
-                }
-                yield f"id: {event.seq}\nevent: {event.type}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+            # 1) Snapshot the DB upper bound BEFORE consuming the live
+            #    queue. This prevents a race where an event is persisted
+            #    after our snapshot but before we register the queue,
+            #    which would cause us to miss it.
+            upper_bound = await asyncio.to_thread(
+                storage.get_max_event_seq, run_id
+            )
 
+            # 2) Replay persisted events with seq > cursor AND seq <= upper_bound.
+            rows = await asyncio.to_thread(
+                storage.list_run_events,
+                run_id,
+                cursor,
+                5000,
+                upper_bound,
+            )
+            for row in rows:
+                if row["seq"] <= cursor:
+                    continue
+                cursor = row["seq"]
+                yield _encode_sse(row)
+
+            # 3) Consume the live queue, skipping events already replayed.
             while True:
                 if await request.is_disconnected():
                     break
 
                 try:
                     event = await asyncio.wait_for(queue.get(), timeout=15.0)
-                    if event.seq <= last_seq:
-                        # Skip already-acknowledged events on reconnect.
-                        continue
-                    payload = {
-                        "id": event.id,
-                        "seq": event.seq,
-                        "run_id": event.run_id,
-                        "type": event.type,
-                        "ts": event.ts,
-                        "payload": event.data,
-                    }
-                    yield f"id: {event.seq}\nevent: {event.type}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
                 except asyncio.TimeoutError:
                     yield ": ping\n\n"
+                    continue
+
+                if event.seq <= cursor:
+                    continue
+                cursor = event.seq
+
+                # Build a row-like dict so we can reuse _encode_sse.
+                row = {
+                    "id": event.id,
+                    "seq": event.seq,
+                    "run_id": event.run_id or run_id,
+                    "type": event.type,
+                    "data": event.data,
+                    "created_at": event.ts,
+                }
+                yield _encode_sse(row)
         finally:
             event_manager.unregister(run_id, queue)
 

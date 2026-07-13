@@ -124,6 +124,8 @@ CREATE INDEX IF NOT EXISTS idx_papers_status ON papers(status);
 CREATE INDEX IF NOT EXISTS idx_artifacts_run ON artifacts(run_id);
 CREATE INDEX IF NOT EXISTS idx_artifacts_type ON artifacts(type);
 CREATE INDEX IF NOT EXISTS idx_run_events ON run_events(run_id, seq);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_run_events_run_seq
+    ON run_events(run_id, seq);
 CREATE INDEX IF NOT EXISTS idx_tasks_run ON tasks(run_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 """
@@ -734,6 +736,57 @@ class Storage:
 
     # ===== Run event persistence (doc 11) =====
 
+    def append_run_event(
+        self,
+        *,
+        run_id: str,
+        event_id: str,
+        event_type: str,
+        data: Any,
+        task_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Append a run event with DB-assigned monotonic seq.
+
+        Uses BEGIN IMMEDIATE to serialize concurrent appenders so that
+        each event gets a unique per-run seq even under contention.
+        """
+        now = datetime.utcnow().isoformat()
+        with self._lock, self._conn() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                row = conn.execute(
+                    "SELECT COALESCE(MAX(seq), 0) AS max_seq FROM run_events WHERE run_id = ?",
+                    (run_id,),
+                ).fetchone()
+                seq = int(row["max_seq"]) + 1
+                conn.execute(
+                    """INSERT INTO run_events
+                       (id, run_id, task_id, seq, type, data, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        event_id,
+                        run_id,
+                        task_id,
+                        seq,
+                        event_type,
+                        json.dumps(data, ensure_ascii=False) if data is not None else None,
+                        now,
+                    ),
+                )
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+        return {
+            "id": event_id,
+            "run_id": run_id,
+            "task_id": task_id,
+            "seq": seq,
+            "type": event_type,
+            "data": data,
+            "created_at": now,
+        }
+
     def save_run_event(
         self,
         run_id: str,
@@ -759,21 +812,39 @@ class Storage:
                 ),
             )
 
+    def get_max_event_seq(self, run_id: str) -> int:
+        """Return the highest seq for a run, or 0 if no events."""
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT COALESCE(MAX(seq), 0) AS max_seq FROM run_events WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()
+            return int(row["max_seq"])
+
     def list_run_events(
         self,
         run_id: str,
         after_seq: int = 0,
         limit: int = 1000,
+        up_to_seq: int | None = None,
     ) -> list[dict[str, Any]]:
-        """Return persisted events for a run with seq > after_seq."""
+        """Return persisted events for a run with seq > after_seq.
+
+        If ``up_to_seq`` is given, only events with seq <= up_to_seq are
+        returned. This lets an SSE route snapshot the DB upper bound
+        before subscribing to live events, then replay everything up to
+        that bound without race.
+        """
+        query = """SELECT * FROM run_events
+                   WHERE run_id = ? AND seq > ?"""
+        params: list[Any] = [run_id, after_seq]
+        if up_to_seq is not None:
+            query += " AND seq <= ?"
+            params.append(up_to_seq)
+        query += " ORDER BY seq ASC LIMIT ?"
+        params.append(limit)
         with self._conn() as conn:
-            rows = conn.execute(
-                """SELECT * FROM run_events
-                   WHERE run_id = ? AND seq > ?
-                   ORDER BY seq ASC
-                   LIMIT ?""",
-                (run_id, after_seq, limit),
-            ).fetchall()
+            rows = conn.execute(query, params).fetchall()
             out: list[dict[str, Any]] = []
             for r in rows:
                 d = dict(r)

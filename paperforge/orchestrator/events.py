@@ -7,14 +7,13 @@ is what orchestrator code uses to broadcast events to all subscribers.
 from __future__ import annotations
 
 import asyncio
-import json
+import contextlib
 import time
 import uuid
 from collections import defaultdict
 from typing import Any
 
 from paperforge.llm.base import ToolCall
-
 
 class Event:
     """An event to be sent to subscribers."""
@@ -190,35 +189,46 @@ class EventManager:
 
     async def broadcast(self, event: Event) -> None:
         rid = event.run_id or ""
-        # Assign monotonic seq per run.
-        self._seq[rid] += 1
-        event.seq = self._seq[rid]
-        self._history[rid].append(event)
-        if len(self._history[rid]) > self._max_history:
-            self._history[rid].pop(0)
 
-        # Persist to SQLite so events survive backend restart (doc 11.2).
-        # Import here to avoid circular dependency.
+        # Persist FIRST so the seq assigned by SQLite is authoritative.
+        # If a subscriber queue overflows or a subscriber is slow, the
+        # event is still recoverable from the database on reconnect.
         try:
             from paperforge.storage.db import get_storage
 
             storage = get_storage()
-            storage.save_run_event(
+            row = await asyncio.to_thread(
+                storage.append_run_event,
                 run_id=rid,
                 event_id=event.id,
-                seq=event.seq,
-                type=event.type,
+                event_type=event.type,
                 data=event.data,
             )
+            event.seq = row["seq"]
         except Exception:
-            # Persistence failures should not break the in-memory broadcast.
-            pass
+            # If persistence fails, fall back to in-memory seq so the
+            # show can go on, but flag the event as not durable.
+            self._seq[rid] += 1
+            event.seq = self._seq[rid]
+
+        self._history[rid].append(event)
+        if len(self._history[rid]) > self._max_history:
+            self._history[rid].pop(0)
 
         for q in self._subscribers.get(rid, []):
             try:
                 q.put_nowait(event)
             except asyncio.QueueFull:
-                pass
+                # Insert an explicit gap marker so the client knows to
+                # rehydrate from the database.
+                gap = Event(
+                    type="stream.gap",
+                    data={"resume_after": event.seq - 1},
+                    run_id=rid,
+                    seq=event.seq,
+                )
+                with contextlib.suppress(asyncio.QueueFull):
+                    q.put_nowait(gap)
 
     def get_history(self, run_id: str) -> list[Event]:
         return list(self._history.get(run_id, []))
