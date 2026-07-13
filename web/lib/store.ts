@@ -108,6 +108,7 @@ interface AppState {
   failMessage: (messageId: string, error: string) => void;
   finalizeStreamingAssistant: () => void;
   replaceMessages: (msgs: Message[]) => void;
+  removeMessage: (messageId: string) => void;
   addEvent: (event: Event) => void;
   addPendingApproval: (approval: Approval) => void;
   resolvePendingApproval: (approvalId: string, approved: boolean) => void;
@@ -119,6 +120,7 @@ interface AppState {
   setIsRunning: (running: boolean) => void;
   addAttachment: (attachment: Attachment) => void;
   removeAttachment: (id: string) => void;
+  clearAttachments: () => void;
   setLastSeq: (seq: number) => void;
   setComposerPrefill: (text: string) => void;
 }
@@ -259,6 +261,8 @@ export const useAppStore = create<AppState>((set) => ({
       return {};
     }),
   replaceMessages: (msgs) => set({ messages: msgs }),
+  removeMessage: (messageId) =>
+    set((s) => ({ messages: s.messages.filter((m) => m.id !== messageId) })),
   addEvent: (event) => set((s) => ({ events: [...s.events, event] })),
   addPendingApproval: (approval) =>
     set((s) =>
@@ -290,6 +294,7 @@ export const useAppStore = create<AppState>((set) => ({
     set((s) => ({ attachments: [...s.attachments, attachment] })),
   removeAttachment: (id) =>
     set((s) => ({ attachments: s.attachments.filter((a) => a.id !== id) })),
+  clearAttachments: () => set({ attachments: [] }),
   setLastSeq: (seq) => set((s) => ({ lastSeq: Math.max(s.lastSeq, seq) })),
   setComposerPrefill: (text) => set({ composerPrefill: text }),
 }));

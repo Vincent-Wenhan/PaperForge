@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS runs (
 
 CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    public_id TEXT UNIQUE,
     run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
     role TEXT NOT NULL,
     content TEXT,
@@ -311,12 +312,16 @@ class Storage:
         tool_calls: list[dict] | None = None,
         tool_call_id: str | None = None,
         name: str | None = None,
-    ) -> int:
+        public_id: str | None = None,
+    ) -> dict[str, Any]:
+        if public_id is None:
+            public_id = f"msg_{uuid.uuid4().hex[:10]}"
         with self._lock, self._conn() as conn:
             cur = conn.execute(
-                """INSERT INTO messages (run_id, role, content, tool_calls, tool_call_id, name)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
+                """INSERT INTO messages (public_id, run_id, role, content, tool_calls, tool_call_id, name)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
                 (
+                    public_id,
                     run_id,
                     role,
                     content,
@@ -325,7 +330,11 @@ class Storage:
                     name,
                 ),
             )
-            return cur.lastrowid
+            row = conn.execute(
+                "SELECT * FROM messages WHERE id = ?",
+                (cur.lastrowid,),
+            ).fetchone()
+        return dict(row)
 
     def list_messages(self, run_id: str) -> list[dict[str, Any]]:
         with self._conn() as conn:

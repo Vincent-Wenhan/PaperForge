@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -18,6 +19,7 @@ router = APIRouter()
 class MessageCreate(BaseModel):
     content: str
     paper_ids: list[str] = []
+    public_id: str | None = None
 
 
 def _derive_title(content: str, max_len: int = 50) -> str:
@@ -57,7 +59,12 @@ async def send_message(run_id: str, req: MessageCreate) -> dict:
         )
 
     # API layer owns user message persistence; orchestrator must not duplicate it.
-    storage.add_message(run_id=run_id, role="user", content=req.content)
+    message = storage.add_message(
+        run_id=run_id,
+        role="user",
+        content=req.content,
+        public_id=req.public_id,
+    )
 
     # Auto-generate run title from the first user message (doc 6.5).
     # Only update if the title is still the default placeholder so we
@@ -74,7 +81,11 @@ async def send_message(run_id: str, req: MessageCreate) -> dict:
     orchestrator = Orchestrator()
     task_manager.start(run_id, orchestrator.run(run_id=run_id, user_message=req.content))
 
-    return {"status": "queued", "run_id": run_id}
+    return {
+        "status": "queued",
+        "run_id": run_id,
+        "message": message,
+    }
 
 
 @router.get("/{run_id}/messages")

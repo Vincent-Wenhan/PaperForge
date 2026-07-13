@@ -113,10 +113,12 @@ export const api = {
     runId: string,
     content: string,
     paperIds: string[] = [],
-  ): Promise<{ status: string; run_id: string }> => {
+    publicId?: string,
+  ): Promise<{ status: string; run_id: string; message?: any }> => {
     return postJson(`/api/runs/${runId}/messages`, {
       content,
       paper_ids: paperIds,
+      public_id: publicId,
     });
   },
   listMessages: async (runId: string): Promise<Message[]> => {

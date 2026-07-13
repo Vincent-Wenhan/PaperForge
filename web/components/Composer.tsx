@@ -18,6 +18,8 @@ export function Composer() {
   const isRunning = useAppStore((s) => s.isRunning);
   const attachments = useAppStore((s) => s.attachments);
   const addMessage = useAppStore((s) => s.addMessage);
+  const removeMessage = useAppStore((s) => s.removeMessage);
+  const clearAttachments = useAppStore((s) => s.clearAttachments);
   const setIsRunning = useAppStore((s) => s.setIsRunning);
   const addAttachment = useAppStore((s) => s.addAttachment);
   const removeAttachment = useAppStore((s) => s.removeAttachment);
@@ -27,8 +29,10 @@ export function Composer() {
 
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const submitLock = useRef(false);
 
   // Apply prefill when it changes (e.g., when user clicks "Ask PaperForge to fix")
   useEffect(() => {
@@ -50,27 +54,60 @@ export function Composer() {
   if (!currentRun) return null;
 
   const handleSend = async () => {
-    if (!input.trim() || sending) return;
-    const content = input;
-    setInput("");
-    setSending(true);
-    addMessage({ role: "user", content });
+    const content = input.trim();
+    if (!content || sending || isRunning || submitLock.current) return;
 
-    const paperIds = attachments
-      .filter((att) => att.type === "paper" && att.paperId)
-      .map((att) => att.paperId as string);
+    submitLock.current = true;
+    setSending(true);
+
+    const optimisticId =
+      typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? crypto.randomUUID()
+        : `msg_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+
+    addMessage({
+      id: optimisticId,
+      role: "user",
+      content,
+      streaming: true,
+      status: "streaming",
+    });
 
     try {
+      const paperIds: string[] = [];
+      for (const attachment of attachments) {
+        if (attachment.type === "paper" && attachment.paperId) {
+          paperIds.push(attachment.paperId);
+          continue;
+        }
+        if (attachment.file) {
+          if (attachment.file.type !== "application/pdf") {
+            throw new Error("PaperForge currently supports PDF attachments only");
+          }
+          setUploading(true);
+          try {
+            const uploaded = await api.uploadPaper(attachment.file);
+            paperIds.push(uploaded.paper_id);
+          } finally {
+            setUploading(false);
+          }
+        }
+      }
+
       await api.sendMessage(currentRun.id, content, paperIds);
+      clearAttachments();
+      setInput("");
       setIsRunning(true);
-    } catch (err) {
-      console.error(err);
+    } catch (error) {
+      removeMessage(optimisticId);
+      setInput(content);
       toast({
-        title: "Failed to send message",
-        description: err instanceof Error ? err.message : undefined,
+        title: "Message was not sent",
+        description: error instanceof Error ? error.message : String(error),
         variant: "error",
       });
     } finally {
+      submitLock.current = false;
       setSending(false);
     }
   };
@@ -114,14 +151,16 @@ export function Composer() {
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey && !sending) {
-      e.preventDefault();
-      handleSend();
-    }
-    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-      e.preventDefault();
-      handleSend();
-    }
+    if (e.nativeEvent.isComposing) return;
+    if (e.key !== "Enter") return;
+
+    const commandEnter = e.metaKey || e.ctrlKey;
+    const plainEnter = !e.shiftKey && !e.metaKey && !e.ctrlKey;
+    if (!commandEnter && !plainEnter) return;
+    if (sending) return;
+
+    e.preventDefault();
+    void handleSend();
   };
 
   return (
@@ -160,15 +199,17 @@ export function Composer() {
       <div className="flex items-end gap-2">
         <button
           onClick={() => fileInputRef.current?.click()}
-          className="p-2 hover:bg-accent rounded text-sm"
-          title="Attach file"
-          aria-label="Attach file"
+          disabled={sending || isRunning}
+          className="p-2 hover:bg-accent rounded text-sm disabled:opacity-50"
+          title="Attach PDF"
+          aria-label="Attach PDF"
         >
           +
         </button>
         <input
           ref={fileInputRef}
           type="file"
+          accept="application/pdf"
           className="hidden"
           onChange={handleAttach}
         />
@@ -177,10 +218,14 @@ export function Composer() {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Ask PaperForge to build or change something..."
+          placeholder={
+            isRunning
+              ? "Run in progress — wait for it to finish or cancel"
+              : "Ask PaperForge to build or change something..."
+          }
           rows={2}
-          className="flex-1 px-3 py-2 border border-border rounded resize-none focus:outline-none focus:ring-1 focus:ring-primary text-sm"
-          disabled={sending}
+          className="flex-1 px-3 py-2 border border-border rounded resize-none focus:outline-none focus:ring-1 focus:ring-primary text-sm disabled:opacity-50"
+          disabled={sending || isRunning}
         />
         {isRunning ? (
           <button
@@ -192,10 +237,10 @@ export function Composer() {
         ) : (
           <button
             onClick={handleSend}
-            disabled={sending || !input.trim()}
+            disabled={sending || uploading || !input.trim()}
             className="px-4 py-2 bg-primary text-primary-foreground rounded disabled:opacity-50 text-sm"
           >
-            Send
+            {uploading ? "Uploading…" : "Send"}
           </button>
         )}
       </div>
