@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -128,18 +129,26 @@ class BuildRunner:
             return await self._run_local(app_path, result, install_timeout, build_timeout)
 
         cfg = get_config()
-        try:
+
+        def make_client() -> "docker.DockerClient":
             client = docker.from_env()
             client.ping()
+            return client
+
+        try:
+            client = await asyncio.to_thread(make_client)
         except (DockerException, Exception) as e:
             logger.warning(f"Docker not available ({e}), falling back to local build")
             self.mode = "local"
             result.environment = "local"
             return await self._run_local(app_path, result, install_timeout, build_timeout)
 
-        container_name = f"paperforge-build-{asyncio.get_event_loop().time_ns()}"
+        container_name = f"paperforge-build-{uuid.uuid4().hex[:12]}"
+        container = None
+
         try:
-            container = client.containers.create(
+            container = await asyncio.to_thread(
+                client.containers.create,
                 image=cfg.SANDBOX_IMAGE,
                 command="sh -c 'npm install --no-audit --no-fund && npm run build'",
                 volumes={str(app_path.resolve()): {"bind": "/app", "mode": "rw"}},
@@ -147,39 +156,43 @@ class BuildRunner:
                 detach=True,
                 name=container_name,
             )
-            container.start()
+            await asyncio.to_thread(container.start)
 
             # Poll container status until it exits or times out
-            elapsed = 0
+            deadline = asyncio.get_event_loop().time() + install_timeout + build_timeout
             while True:
-                container.reload()
-                if container.status != "running":
-                    break
-                if elapsed > install_timeout + build_timeout:
-                    container.kill()
+                if asyncio.get_event_loop().time() > deadline:
+                    await asyncio.to_thread(container.kill)
                     result.errors.append("Docker build timed out")
                     return result
-                await asyncio.sleep(2)
-                elapsed += 2
 
-            logs = container.logs().decode("utf-8", errors="replace")
+                await asyncio.to_thread(container.reload)
+                if container.status != "running":
+                    break
+                await asyncio.sleep(2)
+
+            logs = await asyncio.to_thread(
+                container.logs, stdout=True, stderr=True
+            )
+            text = logs.decode("utf-8", errors="replace") if isinstance(logs, bytes) else str(logs)
             exit_code = container.attrs["State"].get("ExitCode")
 
             result.exit_code = exit_code
-            result.stdout = logs
+            result.stdout = text
             if exit_code == 0:
                 result.ok = True
                 result.install_succeeded = True
                 result.build_succeeded = True
             else:
-                for line in logs.splitlines():
+                for line in text.splitlines():
                     if "error" in line.lower() or "failed" in line.lower():
                         result.errors.append(line.strip())
         finally:
-            try:
-                container.remove(force=True)
-            except Exception:
-                pass
+            if container is not None:
+                try:
+                    await asyncio.to_thread(container.remove, force=True)
+                except Exception:
+                    logger.warning("Failed to remove build container", exc_info=True)
 
         return result
 
