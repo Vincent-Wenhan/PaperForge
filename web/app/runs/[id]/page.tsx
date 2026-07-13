@@ -130,6 +130,17 @@ export default function RunWorkspacePage() {
       .catch(() => setSandbox(null));
   }, [params.id, setSandbox]);
 
+  // Ponytail: also fetch the latest sandbox via the dedicated endpoint as a
+  // fallback in case listSandboxes is filtered or returns stale data.
+  useEffect(() => {
+    if (!params.id) return;
+    api.getLatestSandboxForRun(params.id)
+      .then((sb) => {
+        if (sb) setSandbox(sb);
+      })
+      .catch(() => {});
+  }, [params.id, setSandbox]);
+
   // Command palette shortcut (Ctrl/Cmd+K)
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {

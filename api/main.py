@@ -74,6 +74,7 @@ def create_app() -> FastAPI:
         approvals,
         artifacts,
         apps,
+        tasks,
     )
 
     app.include_router(runs.router, prefix="/api/runs", tags=["runs"])
@@ -87,6 +88,7 @@ def create_app() -> FastAPI:
     app.include_router(approvals.router, prefix="/api/approvals", tags=["approvals"])
     app.include_router(artifacts.router, prefix="/api/artifacts", tags=["artifacts"])
     app.include_router(apps.router, prefix="/api/apps", tags=["apps"])
+    app.include_router(tasks.router, prefix="/api/runs/{run_id}/tasks", tags=["tasks"])
 
     @app.get("/api/health")
     async def health():
