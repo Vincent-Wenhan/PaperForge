@@ -221,3 +221,27 @@ async def download_sandbox_zip(sandbox_id: str) -> StreamingResponse:
         media_type="application/zip",
         headers={"Content-Disposition": f"attachment; filename={sandbox_id}.zip"},
     )
+
+
+@router.get("/sandboxes/{sandbox_id}/files/{file_path:path}/download")
+async def download_single_file(sandbox_id: str, file_path: str) -> StreamingResponse:
+    """Download a single file from a sandbox (doc 8.4)."""
+    storage = get_storage()
+    sandbox = storage.get_sandbox(sandbox_id)
+    if not sandbox:
+        raise HTTPException(status_code=404, detail="Sandbox not found")
+
+    full_path = _resolve_safe(sandbox, file_path)
+    if not full_path.exists() or not full_path.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+
+    if full_path.stat().st_size > MAX_FILE_SIZE:
+        raise HTTPException(status_code=413, detail="File too large")
+
+    return StreamingResponse(
+        io.BytesIO(full_path.read_bytes()),
+        media_type="application/octet-stream",
+        headers={
+            "Content-Disposition": f"attachment; filename={full_path.name}",
+        },
+    )

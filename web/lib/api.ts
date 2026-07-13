@@ -162,6 +162,9 @@ export const api = {
   listSandboxes: async (): Promise<Sandbox[]> => {
     return getJson(`/api/sandboxes`);
   },
+  getLatestSandboxForRun: async (runId: string): Promise<Sandbox | null> => {
+    return getJson<Sandbox | null>(`/api/sandboxes/latest?run_id=${runId}`);
+  },
   startSandbox: async (runId: string, appPath: string): Promise<Sandbox> => {
     return postJson(`/api/sandboxes`, { app_path: appPath, run_id: runId });
   },

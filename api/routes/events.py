@@ -24,7 +24,11 @@ def _last_event_id(request: Request) -> int:
 
 
 @router.get("/{run_id}/events")
-async def stream_events(run_id: str, request: Request) -> StreamingResponse:
+async def stream_events(
+    run_id: str,
+    request: Request,
+    after_seq: int | None = None,
+) -> StreamingResponse:
     """Stream SSE events for a run.
 
     Emits a `RunEvent` envelope per event:
@@ -42,6 +46,10 @@ async def stream_events(run_id: str, request: Request) -> StreamingResponse:
     The server also sends the SSE `id:` field so the browser's native
     EventSource includes it in `Last-Event-ID` on reconnect, allowing
     dedup on the client side.
+
+    Cursor-based resume is supported via either:
+    - `?after_seq=N` query parameter, or
+    - `Last-Event-ID` HTTP header (browser-native EventSource sets this)
     """
     storage = get_storage()
     run = storage.get_run(run_id)
@@ -51,7 +59,7 @@ async def stream_events(run_id: str, request: Request) -> StreamingResponse:
     event_manager = get_event_manager()
     queue = event_manager.register(run_id)
 
-    last_seq = _last_event_id(request)
+    last_seq = after_seq if after_seq is not None else _last_event_id(request)
 
     async def event_stream() -> AsyncIterator[str]:
         try:
