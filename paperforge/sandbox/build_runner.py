@@ -73,9 +73,15 @@ class BuildRunner:
         install_timeout: int,
         build_timeout: int,
     ) -> BuildResult:
-        # npm install
+        # Use `npm ci` when lockfile is present (deterministic installs),
+        # otherwise fall back to `npm install`.
+        use_ci = (app_path / "package-lock.json").exists()
+        install_cmd = ["npm", "ci", "--no-audit", "--no-fund"] if use_ci else [
+            "npm", "install", "--no-audit", "--no-fund",
+        ]
+
         install_ok, install_stdout, install_stderr = await self._exec(
-            ["npm", "install", "--no-audit", "--no-fund"],
+            install_cmd,
             app_path,
             install_timeout,
         )
@@ -146,11 +152,14 @@ class BuildRunner:
         container_name = f"paperforge-build-{uuid.uuid4().hex[:12]}"
         container = None
 
+        use_ci = (app_path / "package-lock.json").exists()
+        install_cmd = "npm ci --no-audit --no-fund" if use_ci else "npm install --no-audit --no-fund"
+
         try:
             container = await asyncio.to_thread(
                 client.containers.create,
                 image=cfg.SANDBOX_IMAGE,
-                command="sh -c 'npm install --no-audit --no-fund && npm run build'",
+                command=f"sh -c '{install_cmd} && npm run build'",
                 volumes={str(app_path.resolve()): {"bind": "/app", "mode": "rw"}},
                 working_dir="/app",
                 detach=True,

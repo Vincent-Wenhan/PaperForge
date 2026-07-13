@@ -366,7 +366,7 @@ async def handle_generate(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
 
 
 async def handle_verify(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
-    """Verify a generated Next.js app."""
+    """Verify a generated Next.js app, running the full build/lint/typecheck."""
     from paperforge.agents.verifier import verify_app
 
     app_path = args["app_path"]

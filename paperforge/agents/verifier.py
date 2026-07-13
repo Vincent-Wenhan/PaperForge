@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 from pathlib import Path
@@ -28,6 +29,10 @@ DANGEROUS_PATTERNS = [
     (re.compile(r"new\s+Function\s*\("), "new Function() usage"),
 ]
 
+MAX_REPAIR_ROUNDS = 3
+TYPECHECK_TIMEOUT = 120
+LINT_TIMEOUT = 120
+
 
 async def verify_app(
     app_path: str | Path,
@@ -35,24 +40,22 @@ async def verify_app(
     llm: LLMClient,
     storage: Storage,
 ) -> dict[str, Any]:
-    """Verify a generated Next.js app.
+    """Verify a generated Next.js app across five layers.
 
-    Args:
-        app_path: path to the generated app
-        prd_id: optional PRD ID for coverage check
-        llm: LLM client
-        storage: storage instance
+    L1 Workspace integrity (files, secrets, dangerous APIs)
+    L2 Static quality (TypeScript via tsc --noEmit, ESLint via next lint)
+    L3 Build (npm ci + next build, prefers Docker if available)
+    L4 Runtime readiness is deferred to run_in_sandbox
+    L5 Product acceptance is delegated to a future acceptance-test runner
 
-    Returns:
-        Verification report dict
+    Returns a verification report dict.
     """
     app_path = Path(app_path)
     app_id = app_path.name
 
-    # 1. Collect files
     files = collect_files(app_path)
 
-    # 2. Build/structure check (static)
+    # L1: Workspace integrity
     has_package_json = any(f[0] == "package.json" for f in files)
     has_app_dir = any(f[0].startswith("app/") for f in files)
     has_page = any(f[0] in ["app/page.tsx", "app/page.jsx", "app/page.js"] for f in files)
@@ -60,6 +63,8 @@ async def verify_app(
     build_succeeded = has_package_json and has_app_dir and has_page
     build_errors: list[str] = []
     build_warnings: list[str] = []
+    type_errors: list[str] = []
+    lint_errors: list[str] = []
     if not has_package_json:
         build_errors.append("Missing package.json")
     if not has_app_dir:
@@ -67,9 +72,7 @@ async def verify_app(
     if not has_page:
         build_errors.append("Missing app/page.tsx")
 
-    # 2b. Real build check via unified BuildRunner.
-    #     Prefers Docker build when available (matches sandbox env),
-    #     falls back to local subprocess otherwise.
+    # L3: Real build via unified BuildRunner.
     try:
         runner = BuildRunner(mode="docker")
         result = await runner.run(app_path)
@@ -84,7 +87,29 @@ async def verify_app(
     build_errors.extend(result.errors)
     build_warnings.extend(result.warnings)
 
-    # 3. PRD coverage
+    # L2: Static quality (only run if structure check passed)
+    if has_package_json:
+        tc_ok, tc_out, tc_err = await _exec(
+            ["npx", "--no-install", "tsc", "--noEmit"],
+            app_path,
+            TYPECHECK_TIMEOUT,
+        )
+        if not tc_ok:
+            for line in (tc_out + "\n" + tc_err).splitlines():
+                if line.strip():
+                    type_errors.append(line.strip())
+
+        lint_ok, lint_out, lint_err = await _exec(
+            ["npm", "run", "lint", "--silent"],
+            app_path,
+            LINT_TIMEOUT,
+        )
+        if not lint_ok:
+            for line in (lint_out + "\n" + lint_err).splitlines():
+                if line.strip():
+                    lint_errors.append(line.strip())
+
+    # L1b: PRD coverage
     prd: dict[str, Any] = {}
     if prd_id:
         artifact = storage.get_artifact(prd_id)
@@ -100,7 +125,6 @@ async def verify_app(
     extra_features: list[str] = []
     covered = 0
     for feature in prd_features:
-        # Check if feature name (or its keywords) appears in any file
         keywords = [w.lower() for w in feature.split() if len(w) > 3]
         if not keywords:
             continue
@@ -118,7 +142,7 @@ async def verify_app(
     total = len(prd_features) or 1
     prd_coverage = covered / total
 
-    # 4. Mock/Real boundary
+    # L1c: Mock/Real boundary
     mock_files = [f for f in files if "mock" in f[0].lower()]
     real_files = [f for f in files if "real" in f[0].lower()]
     mock_count = len(mock_files)
@@ -128,11 +152,7 @@ async def verify_app(
     if not boundary_clear:
         boundary_issues.append("Mock and real adapters not clearly separated")
 
-    # 5. Type/Lint errors (basic)
-    type_errors: list[str] = []
-    lint_errors: list[str] = []
-
-    # 6. Security scan
+    # L1d: Security scan
     security_issues: list[str] = []
     for file_path, content in files:
         for pattern in SECRET_PATTERNS:
@@ -144,7 +164,7 @@ async def verify_app(
             if pattern.search(content):
                 security_issues.append(f"{msg} in {file_path}")
 
-    # 7. Calculate score
+    # Calculate score
     score = 0.0
     if build_succeeded:
         score += 0.4
@@ -163,6 +183,10 @@ async def verify_app(
         recommendations.append("Remove hardcoded secrets and dangerous APIs")
     if not boundary_clear:
         recommendations.append("Separate mock and real adapters into distinct files")
+    if type_errors:
+        recommendations.append(f"Fix {len(type_errors)} TypeScript error(s)")
+    if lint_errors:
+        recommendations.append(f"Fix {len(lint_errors)} lint error(s)")
     if not recommendations:
         recommendations.append("App looks good. Ready for preview.")
 
@@ -187,7 +211,6 @@ async def verify_app(
         "recommendations": recommendations,
     }
 
-    # Validate against VerificationReport schema
     try:
         validated = VerificationReport.model_validate(report)
         report = validated.model_dump()
@@ -197,19 +220,15 @@ async def verify_app(
     return report
 
 
-async def run_build(app_path: Path, timeout: int = 180) -> tuple[bool, list[str], list[str]]:
-    """Run npm install + npm run build in the app directory.
-
-    Returns:
-        Tuple of (success, errors, warnings)
-    """
-    if not (app_path / "package.json").exists():
-        return False, ["package.json not found"], []
-
+async def _exec(
+    cmd: list[str],
+    cwd: Path,
+    timeout: int,
+) -> tuple[bool, str, str]:
     try:
         proc = await asyncio.create_subprocess_exec(
-            "npm", "install", "--no-audit", "--no-fund",
-            cwd=str(app_path),
+            *cmd,
+            cwd=str(cwd),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -218,54 +237,15 @@ async def run_build(app_path: Path, timeout: int = 180) -> tuple[bool, list[str]
         except asyncio.TimeoutError:
             proc.kill()
             await proc.wait()
-            return False, [f"npm install timed out after {timeout}s"], []
+            return False, "", f"Command timed out after {timeout}s"
 
-        install_stdout = stdout.decode("utf-8", errors="replace") if stdout else ""
-        install_stderr = stderr.decode("utf-8", errors="replace") if stderr else ""
-
-        if proc.returncode != 0:
-            errors = []
-            combined = install_stdout + "\n" + install_stderr
-            for line in combined.split("\n"):
-                if "error" in line.lower() or "failed" in line.lower():
-                    errors.append(line.strip())
-            return False, ["npm install failed"] + errors[:20], []
-
-        build_proc = await asyncio.create_subprocess_exec(
-            "npm", "run", "build",
-            cwd=str(app_path),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        try:
-            build_stdout, build_stderr = await asyncio.wait_for(build_proc.communicate(), timeout=timeout)
-        except asyncio.TimeoutError:
-            build_proc.kill()
-            await build_proc.wait()
-            return False, [f"npm run build timed out after {timeout}s"], []
-
-        build_stdout_text = build_stdout.decode("utf-8", errors="replace") if build_stdout else ""
-        build_stderr_text = build_stderr.decode("utf-8", errors="replace") if build_stderr else ""
-
-        if build_proc.returncode == 0:
-            warnings = []
-            for line in build_stderr_text.split("\n"):
-                if "warning" in line.lower():
-                    warnings.append(line.strip())
-            return True, [], warnings
-
-        errors = []
-        combined = build_stdout_text + "\n" + build_stderr_text
-        for line in combined.split("\n"):
-            if "error" in line.lower() or "failed" in line.lower():
-                errors.append(line.strip())
-
-        return False, errors[:50], []
-
+        stdout_text = stdout.decode("utf-8", errors="replace") if stdout else ""
+        stderr_text = stderr.decode("utf-8", errors="replace") if stderr else ""
+        return proc.returncode == 0, stdout_text, stderr_text
     except FileNotFoundError:
-        return False, ["npm not found in PATH"], []
+        return False, "", f"Command not found: {cmd[0]}"
     except Exception as e:
-        return False, [f"Build execution error: {e}"], []
+        return False, "", f"Execution error: {e}"
 
 
 def collect_files(root: Path) -> list[tuple[str, str]]:
@@ -280,7 +260,6 @@ def collect_files(root: Path) -> list[tuple[str, str]]:
     for path in root.rglob("*"):
         if not path.is_file():
             continue
-        # Skip node_modules etc.
         if any(part in skip_dirs for part in path.parts):
             continue
         if path.suffix.lower() in skip_exts:
