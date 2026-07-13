@@ -81,7 +81,8 @@ async def plan_product(
         source_data = {
             "composition_id": f"single_{card_ids[0]}",
             "source_cards": list(card_ids),
-            "product_candidates": [],
+            "capability_cards": cards,
+            "product_candidates": build_single_paper_candidates(cards),
         }
         source_label = "single-paper"
 
@@ -162,3 +163,30 @@ async def plan_product(
             messages.append(Message(role="user", content=f"Your JSON did not match the PRD schema: {e}. Please fix and return a valid PRD."))
 
     raise ValueError(f"ProductPlanner failed after {MAX_RETRIES} retries: {last_error}")
+
+
+def build_single_paper_candidates(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Derive seed product candidates from capability cards."""
+    candidates: list[dict[str, Any]] = []
+    for item in cards:
+        capability = item.get("capability") or item
+        tasks = (
+            capability.get("tasks")
+            or capability.get("capabilities")
+            or capability.get("product_candidates")
+            or []
+        )
+        for index, task in enumerate(tasks[:4]):
+            if isinstance(task, str):
+                name, description = task, task
+            else:
+                name = task.get("name") or task.get("task") or f"Capability {index + 1}"
+                description = task.get("description") or task.get("summary") or ""
+            candidates.append({
+                "candidate_id": f"seed_{index + 1}",
+                "name": name,
+                "core_capability": description,
+                "evidence": task.get("evidence", []) if isinstance(task, dict) else [],
+            })
+    return candidates
+

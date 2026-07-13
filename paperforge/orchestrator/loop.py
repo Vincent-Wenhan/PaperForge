@@ -19,6 +19,7 @@ from paperforge.orchestrator.approvals import get_approval_registry
 from paperforge.orchestrator.events import EventEmitter, get_event_manager
 from paperforge.orchestrator.tools import TOOL_DEFINITIONS, ToolContext, dispatch_tool
 from paperforge.prompts import load_prompt
+from paperforge.schemas.tool_result import ToolResult, ToolStatus
 from paperforge.storage.db import Storage, get_storage
 
 logger = logging.getLogger(__name__)
@@ -59,8 +60,9 @@ ALLOWED_TOOLS: dict[RunPhase, set[str]] = {
     RunPhase.ERROR: set(),
 }
 
-
-# Mapping tool name → next phase on success.
+# Legacy mapping tool name → next phase. Kept for backwards compatibility
+# with older tests that import it. The orchestrator loop now reads
+# `next_phase` from the ToolResult returned by each tool handler.
 PHASE_TRANSITIONS: dict[str, RunPhase] = {
     "parse_paper": RunPhase.PARSED,
     "compose_capabilities": RunPhase.COMPOSED,
@@ -183,50 +185,55 @@ class Orchestrator:
                         )
                     )
 
+                    stop_loop = False
                     # Execute each tool call
                     for call in response.tool_calls:
                         await emit.tool_call(call)
 
-                        result = await self._execute_tool_call(call, ctx, emit, run_id)
+                        result_str = await self._execute_tool_call(call, ctx, emit, run_id)
 
                         # Save tool result message
                         self.storage.add_message(
                             run_id=run_id,
                             role="tool",
-                            content=result,
+                            content=result_str,
                             tool_call_id=call.id,
                             name=call.name,
                         )
 
-                        await emit.tool_result(call.name, result, call.id)
+                        await emit.tool_result(call.name, result_str, call.id)
 
-                        # Add to messages
-                        messages.append(
-                            Message(
-                                role="tool",
-                                content=result,
-                                tool_call_id=call.id,
-                                name=call.name,
-                            )
-                        )
+                        # Apply ToolResult side-effects (phase transition, stop)
+                        try:
+                            parsed = json.loads(result_str)
+                        except (json.JSONDecodeError, TypeError):
+                            parsed = {}
 
-                        # Phase transition only on successful tool execution.
-                        # Parse the ToolResult envelope to check `ok`.
-                        if call.name in PHASE_TRANSITIONS:
+                        tool_result = ToolResult.model_validate(parsed) if isinstance(parsed, dict) else None
+                        if tool_result is None:
+                            continue
+
+                        if tool_result.next_phase:
                             try:
-                                parsed = json.loads(result)
-                                ok = parsed.get("ok", False) if isinstance(parsed, dict) else False
-                            except (json.JSONDecodeError, TypeError):
-                                ok = False
+                                new_phase = RunPhase(tool_result.next_phase)
+                            except ValueError:
+                                new_phase = self.phase
+                            old_phase = self.phase
+                            self.phase = new_phase
+                            self.storage.update_run_phase(run_id, self.phase.value)
+                            await emit.task_phase_changed(
+                                phase=self.phase.value,
+                                previous_phase=old_phase.value,
+                            )
 
-                            if ok:
-                                old_phase = self.phase
-                                self.phase = PHASE_TRANSITIONS[call.name]
-                                self.storage.update_run_phase(run_id, self.phase.value)
-                                await emit.task_phase_changed(
-                                    phase=self.phase.value,
-                                    previous_phase=old_phase.value,
-                                )
+                        if tool_result.stop_loop:
+                            stop_loop = True
+                            break
+
+                    if stop_loop:
+                        self.storage.update_run_status(run_id, "active")
+                        await emit.run_finished()
+                        return
 
                     # Loop back to LLM
                     continue

@@ -14,7 +14,7 @@ from typing import Any
 from paperforge.config import get_config
 from paperforge.llm.base import LLMClient, Message, ToolCall, ToolDefinition
 from paperforge.orchestrator.events import EventEmitter
-from paperforge.schemas.tool_result import ToolResult
+from paperforge.schemas.tool_result import ToolResult, ToolStatus
 from paperforge.storage.db import Storage
 
 
@@ -277,7 +277,8 @@ async def handle_plan_product(args: dict[str, Any], ctx: ToolContext) -> ToolRes
 
     The planner returns a PlannerOutput wrapper:
       - needs_more_input=True: questions are surfaced back to the LLM/user
-        and no PRD artifact is saved.
+        and no PRD artifact is saved. Tool returns BLOCKED so the orchestrator
+        does not advance phase.
       - needs_more_input=False: a PRD is saved as an artifact.
     """
     from paperforge.agents.product_planner import plan_product
@@ -288,8 +289,8 @@ async def handle_plan_product(args: dict[str, Any], ctx: ToolContext) -> ToolRes
 
     if not composition_id and not card_ids:
         return ToolResult(
-            ok=False,
             tool="plan_product",
+            status=ToolStatus.FAILED,
             error="Either composition_id or card_ids must be provided.",
         )
 
@@ -304,13 +305,11 @@ async def handle_plan_product(args: dict[str, Any], ctx: ToolContext) -> ToolRes
     if planner_output.get("needs_more_input"):
         questions = planner_output.get("questions") or []
         return ToolResult(
-            ok=True,
             tool="plan_product",
-            data={
-                "needs_more_input": True,
-                "questions": questions,
-            },
+            status=ToolStatus.BLOCKED,
+            data={"questions": questions},
             summary="Need more input from user before generating PRD.",
+            stop_loop=True,
         )
 
     prd = planner_output.get("prd") or {}
@@ -322,11 +321,12 @@ async def handle_plan_product(args: dict[str, Any], ctx: ToolContext) -> ToolRes
     await ctx.emit.artifact_created("prd", str(ctx.storage.prds_dir), artifact_id)
 
     return ToolResult(
-        ok=True,
         tool="plan_product",
+        status=ToolStatus.SUCCEEDED,
         artifact_id=artifact_id,
         data={"prd_id": prd.get("prd_id"), "prd": prd},
         summary=f"Generated PRD from composition {composition_id}.",
+        next_phase="planned",
     )
 
 
@@ -386,13 +386,15 @@ async def handle_verify(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
     )
     await ctx.emit.artifact_created("verification_report", str(ctx.storage.reports_dir), artifact_id)
 
+    ready = bool(report.get("ready_for_preview"))
     return ToolResult(
-        ok=True,
         tool="verify_app",
+        status=ToolStatus.SUCCEEDED if ready else ToolStatus.FAILED,
         artifact_id=artifact_id,
         data={"report": report},
         summary=f"Verified app: score={report.get('overall_score', 0):.2f}, "
                 f"ready={report.get('ready_for_preview', False)}.",
+        next_phase="verified" if ready else None,
     )
 
 
@@ -409,32 +411,48 @@ async def handle_run_sandbox(args: dict[str, Any], ctx: ToolContext) -> ToolResu
     except Exception as e:
         await ctx.emit.sandbox_error(str(e))
         return ToolResult(
-            ok=False,
             tool="run_in_sandbox",
+            status=ToolStatus.FAILED,
             error=str(e),
+        )
+
+    if sandbox.get("status") != "running":
+        await ctx.emit.sandbox_error(
+            sandbox.get("error") or "Sandbox failed to start"
+        )
+        return ToolResult(
+            tool="run_in_sandbox",
+            status=ToolStatus.FAILED,
+            error=sandbox.get("error") or "Sandbox did not enter running state",
         )
 
     await ctx.emit.sandbox_started(sandbox["id"], sandbox.get("container_id", ""), sandbox.get("preview_port", 0))
 
     # Wait for the Next.js dev server to be ready before emitting preview.ready
     ready = await manager.wait_for_ready(sandbox["id"], timeout=60)
-    if ready:
-        preview_url = f"/api/preview/{sandbox['id']}/"
-        await ctx.emit.preview_ready(sandbox["id"], preview_url)
-    else:
+    if not ready:
         await ctx.emit.sandbox_error(f"Sandbox {sandbox['id']} failed health check within 60s")
+        return ToolResult(
+            tool="run_in_sandbox",
+            status=ToolStatus.FAILED,
+            error="Preview server did not become HTTP-ready within 60 seconds",
+            retryable=True,
+        )
 
+    preview_url = f"/api/preview/{sandbox['id']}/"
+    await ctx.emit.preview_ready(sandbox["id"], preview_url)
     return ToolResult(
-        ok=True,
         tool="run_in_sandbox",
+        status=ToolStatus.SUCCEEDED,
         data={
             "sandbox_id": sandbox["id"],
             "container_id": sandbox.get("container_id"),
             "preview_port": sandbox.get("preview_port"),
-            "preview_url": preview_url if ready else None,
+            "preview_url": preview_url,
             "status": sandbox.get("status"),
         },
         summary=f"Launched sandbox {sandbox['id']} on port {sandbox.get('preview_port')}.",
+        next_phase="preview_ready",
     )
 
 
@@ -446,8 +464,8 @@ async def handle_stop_sandbox(args: dict[str, Any], ctx: ToolContext) -> ToolRes
     manager = DockerSandboxManager(storage=ctx.storage)
     await manager.stop(sandbox_id)
     return ToolResult(
-        ok=True,
         tool="stop_sandbox",
+        status=ToolStatus.SUCCEEDED,
         data={"sandbox_id": sandbox_id, "status": "stopped"},
         summary=f"Stopped sandbox {sandbox_id}.",
     )
@@ -457,8 +475,10 @@ async def handle_finish(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
     """Signal that the orchestration is complete."""
     summary = args.get("summary", "Task completed")
     return ToolResult(
-        ok=True,
         tool="finish",
+        status=ToolStatus.SUCCEEDED,
         data={"summary": summary, "status": "done"},
         summary=summary,
+        next_phase="done",
+        stop_loop=True,
     )
