@@ -2,21 +2,20 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import {
+  Panel,
+  PanelGroup,
+  PanelResizeHandle,
+} from "react-resizable-panels";
 import { api } from "@/lib/api";
-import { useAppStore, type Paper, type Run } from "@/lib/store";
+import { useAppStore, type Run } from "@/lib/store";
 import { useIsMobile, useIsTablet } from "@/lib/useMediaQuery";
 import { Sidebar } from "@/components/Sidebar";
 import { ChatPanel } from "@/components/ChatPanel";
 import { PreviewPanel } from "@/components/PreviewPanel";
-import { ResizableDivider } from "@/components/shell/ResizableDivider";
 import { GlobalHeader } from "@/components/shell/GlobalHeader";
 import { CommandPalette } from "@/components/dialogs/CommandPalette";
 import { SkeletonMessage, SidebarSkeleton } from "@/components/Skeleton";
-
-const SIDEBAR_WIDTH_KEY = "paperforge.sidebarWidth";
-const CHAT_WIDTH_KEY = "paperforge.chatWidth";
-const DEFAULT_SIDEBAR_WIDTH = 260;
-const DEFAULT_CHAT_WIDTH = 480;
 
 export default function RunWorkspacePage() {
   const params = useParams<{ id: string }>();
@@ -31,8 +30,6 @@ export default function RunWorkspacePage() {
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [activePanel, setActivePanel] = useState<"chat" | "preview">("chat");
-  const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
-  const [chatWidth, setChatWidth] = useState(DEFAULT_CHAT_WIDTH);
 
   const setCurrentRun = useAppStore((s) => s.setCurrentRun);
   const setSandbox = useAppStore((s) => s.setSandbox);
@@ -77,42 +74,6 @@ export default function RunWorkspacePage() {
       });
   }, [params.id, setCurrentRun, setArtifacts, setPendingApprovals]);
 
-  // Ponytail: load persisted panel widths from localStorage.
-  useEffect(() => {
-    try {
-      const sw = localStorage.getItem(SIDEBAR_WIDTH_KEY);
-      const cw = localStorage.getItem(CHAT_WIDTH_KEY);
-      if (sw) setSidebarWidth(Math.max(200, Math.min(480, parseInt(sw, 10))));
-      if (cw) setChatWidth(Math.max(360, Math.min(900, parseInt(cw, 10))));
-    } catch {
-      // localStorage may be unavailable (SSR, privacy mode); defaults are fine.
-    }
-  }, []);
-
-  const handleSidebarResize = useCallback((delta: number) => {
-    setSidebarWidth((prev) => {
-      const next = Math.max(200, Math.min(480, prev + delta));
-      try {
-        localStorage.setItem(SIDEBAR_WIDTH_KEY, String(next));
-      } catch {
-        // ignore
-      }
-      return next;
-    });
-  }, []);
-
-  const handleChatResize = useCallback((delta: number) => {
-    setChatWidth((prev) => {
-      const next = Math.max(360, Math.min(900, prev + delta));
-      try {
-        localStorage.setItem(CHAT_WIDTH_KEY, String(next));
-      } catch {
-        // ignore
-      }
-      return next;
-    });
-  }, []);
-
   useEffect(() => {
     if (!params.id) return;
     api.listSandboxes()
@@ -130,8 +91,6 @@ export default function RunWorkspacePage() {
       .catch(() => setSandbox(null));
   }, [params.id, setSandbox]);
 
-  // Ponytail: also fetch the latest sandbox via the dedicated endpoint as a
-  // fallback in case listSandboxes is filtered or returns stale data.
   useEffect(() => {
     if (!params.id) return;
     api.getLatestSandboxForRun(params.id)
@@ -141,7 +100,6 @@ export default function RunWorkspacePage() {
       .catch(() => {});
   }, [params.id, setSandbox]);
 
-  // Command palette shortcut (Ctrl/Cmd+K)
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "k") {
@@ -224,14 +182,7 @@ export default function RunWorkspacePage() {
   return (
     <>
       <div className="flex h-screen w-screen flex-col overflow-hidden">
-        <GlobalHeader
-          onToggleCommandPalette={() => setPaletteOpen(true)}
-          onToggleSidebar={
-            isMobile
-              ? () => setMobileSidebarOpen((v) => !v)
-              : () => setSidebarCollapsed((v) => !v)
-          }
-        />
+        <GlobalHeader onToggleCommandPalette={() => setPaletteOpen(true)} />
         <div className="flex flex-1 overflow-hidden">
           {isMobile && mobileSidebarOpen ? (
             <Sidebar
@@ -239,8 +190,6 @@ export default function RunWorkspacePage() {
               library={library}
               onNewRun={handleNewRun}
               onSelectRun={handleSelectRun}
-              onRunsChanged={loadRuns}
-              onLibraryChanged={loadLibrary}
               onCloseMobile={() => setMobileSidebarOpen(false)}
               onOpenPaper={(paperId) => router.push(`/library/${paperId}`)}
               onAttachPaper={(paper) => {
@@ -254,39 +203,30 @@ export default function RunWorkspacePage() {
               }}
             />
           ) : (
-            <>
-              <div
-                className="flex flex-col overflow-hidden bg-muted/30"
-                style={{ width: `${sidebarWidth}px`, minWidth: "200px" }}
-              >
-                <Sidebar
-                  runs={runs}
-                  library={library}
-                  onNewRun={handleNewRun}
-                  onSelectRun={handleSelectRun}
-                  onRunsChanged={loadRuns}
-                  onLibraryChanged={loadLibrary}
-                  collapsed={sidebarCollapsed}
-                  onToggleCollapse={() =>
-                    setSidebarCollapsed((v) => !v)
-                  }
-                  onOpenPaper={(paperId) =>
-                    router.push(`/library/${paperId}`)
-                  }
-                  onAttachPaper={(paper) => {
-                    const store = useAppStore.getState();
-                    store.addAttachment({
-                      id: `paper-${paper.paper_id}`,
-                      type: "paper",
-                      name: paper.title,
-                      paperId: paper.paper_id,
-                    });
-                  }}
-                />
-              </div>
-              <ResizableDivider onResize={handleSidebarResize} />
-            </>
+            <Sidebar
+              runs={runs}
+              library={library}
+              onNewRun={handleNewRun}
+              onSelectRun={handleSelectRun}
+              collapsed={sidebarCollapsed}
+              onToggleCollapse={() =>
+                setSidebarCollapsed((v) => !v)
+              }
+              onOpenPaper={(paperId) =>
+                router.push(`/library/${paperId}`)
+              }
+              onAttachPaper={(paper) => {
+                const store = useAppStore.getState();
+                store.addAttachment({
+                  id: `paper-${paper.paper_id}`,
+                  type: "paper",
+                  name: paper.title,
+                  paperId: paper.paper_id,
+                });
+              }}
+            />
           )}
+
           {showSinglePanel ? (
             <div className="flex-1 flex flex-col overflow-hidden">
               <div className="flex border-b border-border bg-muted/30" role="tablist">
@@ -312,7 +252,7 @@ export default function RunWorkspacePage() {
                       : "border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/50"
                   }`}
                 >
-                  Preview
+                  Workbench
                 </button>
               </div>
               <div className="flex-1 overflow-hidden">
@@ -320,16 +260,15 @@ export default function RunWorkspacePage() {
               </div>
             </div>
           ) : (
-            <>
-              <div
-                className="flex flex-col overflow-hidden border-r border-border"
-                style={{ width: `${chatWidth}px`, minWidth: "360px" }}
-              >
+            <PanelGroup direction="horizontal" autoSaveId="paperforge-layout">
+              <Panel defaultSize={42} minSize={28}>
                 <ChatPanel />
-              </div>
-              <ResizableDivider onResize={handleChatResize} />
-              <PreviewPanel />
-            </>
+              </Panel>
+              <PanelResizeHandle className="w-px bg-border hover:bg-primary/40 transition-colors" />
+              <Panel defaultSize={58} minSize={30}>
+                <PreviewPanel />
+              </Panel>
+            </PanelGroup>
           )}
         </div>
       </div>

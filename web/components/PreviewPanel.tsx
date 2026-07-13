@@ -2,6 +2,11 @@
 
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  Panel,
+  PanelGroup,
+  PanelResizeHandle,
+} from "react-resizable-panels";
 import { api } from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 import { ConsoleLogs } from "./ConsoleLogs";
@@ -14,7 +19,16 @@ const MonacoEditor = dynamic(() => import("@monaco-editor/react").then((m) => m.
   loading: () => <div className="p-4 text-muted-foreground">Loading editor...</div>,
 });
 
-type Tab = "preview" | "files" | "artifacts" | "console" | "verification";
+type Tab = "preview" | "code" | "changes" | "tests" | "artifacts" | "logs";
+
+const WORKBENCH_TABS: { id: Tab; label: string }[] = [
+  { id: "preview", label: "Preview" },
+  { id: "code", label: "Code" },
+  { id: "changes", label: "Changes" },
+  { id: "tests", label: "Tests" },
+  { id: "artifacts", label: "Artifacts" },
+  { id: "logs", label: "Logs" },
+];
 
 interface TreeNode {
   path: string;
@@ -29,13 +43,19 @@ interface EditorTab {
   dirty: boolean;
 }
 
+const SANDBOX_STATUS_LABEL: Record<string, string> = {
+  running: "Running",
+  pending: "Starting",
+  stopped: "Stopped",
+  error: "Error",
+};
+
 export function PreviewPanel() {
   const sandbox = useAppStore((s) => s.sandbox);
   const artifacts = useAppStore((s) => s.artifacts);
-  const currentRun = useAppStore((s) => s.currentRun);
-  const activeTab = useAppStore((s) => s.activeTab);
-  const setActiveTab = useAppStore((s) => s.setActiveTab);
+  const events = useAppStore((s) => s.events);
 
+  const [activeTab, setActiveTab] = useState<Tab>("preview");
   const [tree, setTree] = useState<TreeNode[]>([]);
   const [tabs, setTabs] = useState<EditorTab[]>([]);
   const [activeTabPath, setActiveTabPath] = useState<string | null>(null);
@@ -54,29 +74,10 @@ export function PreviewPanel() {
       .catch(() => {
         if (active) setTree([]);
       });
-    return () => { active = false; };
+    return () => {
+      active = false;
+    };
   }, [sandbox]);
-
-  const progress = useMemo(() => {
-    const capability = artifacts.find((a) => a.type === "capability_card");
-    const prd = artifacts.find((a) => a.type === "prd");
-    const app = artifacts.find((a) => a.type === "nextjs_app");
-    const verification = artifacts.find((a) => a.type === "verification_report");
-    const report = verification?.data?.report ?? verification?.data ?? null;
-    const previewReady = Boolean(sandbox?.id) && sandbox?.status === "running";
-
-    return [
-      { id: "capability", label: "Capability card", status: capability ? "complete" : "pending" },
-      { id: "prd", label: "PRD", status: prd ? "complete" : "pending" },
-      { id: "app", label: "App generated", status: app ? "complete" : "pending" },
-      {
-        id: "verified",
-        label: "Build verified",
-        status: report?.build_succeeded ? "complete" : verification ? "error" : "pending",
-      },
-      { id: "preview", label: "Live preview", status: previewReady ? "complete" : "pending" },
-    ];
-  }, [artifacts, sandbox]);
 
   const refreshTree = async () => {
     if (!sandbox?.id) return;
@@ -135,43 +136,47 @@ export function PreviewPanel() {
     }
   };
 
-  const tabs_list: Tab[] = ["preview", "files", "artifacts", "console", "verification"];
-
   return (
-    <div className="flex-1 flex flex-col h-full">
-      <div className="flex border-b border-border bg-muted/30" role="tablist">
-        {tabs_list.map((t) => (
-          <button
-            key={t}
-            onClick={() => setActiveTab(t)}
-            role="tab"
-            aria-selected={activeTab === t}
-            className={`px-4 py-2 text-sm border-b-2 capitalize transition-colors ${
-              activeTab === t
-                ? "border-primary font-medium bg-background"
-                : "border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/50"
-            }`}
-          >
-            {t}
-            {t === "files" && tree.length > 0 && (
-              <span className="ml-1 text-xs text-muted-foreground">
-                ({countFiles(tree)})
-              </span>
-            )}
-            {t === "artifacts" && artifacts.length > 0 && (
-              <span className="ml-1 text-xs text-muted-foreground">
-                ({artifacts.length})
-              </span>
-            )}
-          </button>
-        ))}
+    <div className="flex-1 flex flex-col h-full overflow-hidden">
+      <div className="flex items-center justify-between border-b border-border bg-muted/30">
+        <div className="flex" role="tablist">
+          {WORKBENCH_TABS.map((tab) => {
+            const count =
+              tab.id === "artifacts"
+                ? artifacts.length
+                : tab.id === "logs"
+                  ? events.length
+                  : undefined;
+            return (
+              <button
+                key={tab.id}
+                role="tab"
+                aria-selected={activeTab === tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`px-3 py-2 text-xs border-b-2 transition-colors ${
+                  activeTab === tab.id
+                    ? "border-primary font-medium bg-background"
+                    : "border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                }`}
+              >
+                {tab.label}
+                {count !== undefined && count > 0 && (
+                  <span className="ml-1 text-muted-foreground">{count}</span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+        <div className="pr-2 text-xs text-muted-foreground">
+          {sandbox
+            ? `Sandbox: ${SANDBOX_STATUS_LABEL[sandbox.status] || sandbox.status}`
+            : "No sandbox"}
+        </div>
       </div>
 
       <div className="flex-1 overflow-hidden">
-        {activeTab === "preview" && (
-          <PreviewFrame sandbox={sandbox} progress={progress} phase={currentRun?.phase} />
-        )}
-        {activeTab === "files" && (
+        {activeTab === "preview" && <PreviewFrame sandbox={sandbox} />}
+        {activeTab === "code" && (
           <CodeEditor
             tree={tree}
             tabs={tabs}
@@ -184,20 +189,14 @@ export function PreviewPanel() {
             onRefreshTree={refreshTree}
           />
         )}
-        {activeTab === "artifacts" && <ArtifactsList artifacts={artifacts} />}
-        {activeTab === "console" && <ConsoleLogs sandboxId={sandbox?.id} />}
-        {activeTab === "verification" && (
-          <VerificationReportView
-            report={
-              artifacts.find((a) => a.type === "verification_report")?.data
-                ?.report ?? null
-            }
-            onJumpToFile={(path) => {
-              setActiveTab("files");
-              openFile(path);
-            }}
-          />
+        {activeTab === "changes" && (
+          <ChangesList artifacts={artifacts} events={events} />
         )}
+        {activeTab === "tests" && (
+          <TestsTab artifacts={artifacts} sandbox={sandbox} />
+        )}
+        {activeTab === "artifacts" && <ArtifactsList artifacts={artifacts} />}
+        {activeTab === "logs" && <ConsoleLogs sandboxId={sandbox?.id} />}
       </div>
     </div>
   );
@@ -207,11 +206,9 @@ export function PreviewPanel() {
 
 interface PreviewFrameProps {
   sandbox?: any;
-  progress: { id: string; label: string; status: string }[];
-  phase?: string;
 }
 
-function PreviewFrame({ sandbox, progress, phase }: PreviewFrameProps) {
+function PreviewFrame({ sandbox }: PreviewFrameProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [viewport, setViewport] = useState<"desktop" | "tablet" | "mobile">("desktop");
 
@@ -253,26 +250,11 @@ function PreviewFrame({ sandbox, progress, phase }: PreviewFrameProps) {
 
   if (!sandbox?.id) {
     return (
-      <div
-        className="flex flex-col items-center justify-center h-full text-muted-foreground p-8"
-        role="status"
-        aria-live="polite"
-      >
-        <div className="text-lg font-medium mb-3">No live preview yet</div>
-        <div className="text-sm">
-          <div className="font-medium mb-1">Current phase: {phase || "init"}</div>
-          <ul className="space-y-1 list-none p-0" aria-label="Pipeline progress">
-            {progress.map((step) => (
-              <li key={step.id} className="flex items-center gap-2">
-                <span aria-hidden="true">
-                  {step.status === "complete" ? "✓" : step.status === "error" ? "✗" : "○"}
-                </span>
-                <span>{step.label}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      </div>
+      <EmptyState
+        icon="🚀"
+        title="No live preview yet"
+        description="Once the orchestrator reaches the preview phase, the live app will appear here."
+      />
     );
   }
 
@@ -344,8 +326,6 @@ function CodeEditor({
   onRefreshTree,
 }: CodeEditorProps) {
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; path: string } | null>(null);
-  const [creating, setCreating] = useState<{ parentPath: string; name: string } | null>(null);
 
   const toggleDir = (path: string) => {
     setExpandedDirs((prev) => {
@@ -369,71 +349,6 @@ function CodeEditor({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [activeTabPath, onSaveFile]);
 
-  useEffect(() => {
-    const handleClick = () => setContextMenu(null);
-    if (contextMenu) {
-      window.addEventListener("click", handleClick);
-      return () => window.removeEventListener("click", handleClick);
-    }
-  }, [contextMenu]);
-
-  const handleCreateFile = async (parentPath: string, name: string) => {
-    if (!sandbox?.id || !name) return;
-    const newPath = parentPath ? `${parentPath}/${name}` : name;
-    try {
-      await api.createEntry(sandbox.id, { type: "file", path: newPath, content: "" });
-      await onRefreshTree();
-      onOpenFile(newPath);
-    } catch (err) {
-      console.error("Failed to create file:", err);
-    }
-  };
-
-  const handleRenameEntry = async (oldPath: string) => {
-    if (!sandbox?.id) return;
-    const newName = prompt("New name:", oldPath.split("/").pop());
-    if (!newName) return;
-    const parent = oldPath.split("/").slice(0, -1).join("/");
-    const newPath = parent ? `${parent}/${newName}` : newName;
-    try {
-      await api.renameEntry(sandbox.id, oldPath, newPath);
-      await onRefreshTree();
-    } catch (err) {
-      console.error("Failed to rename:", err);
-    }
-  };
-
-  const handleDeleteEntry = async (path: string) => {
-    if (!sandbox?.id) return;
-    if (!confirm(`Delete ${path}?`)) return;
-    try {
-      await api.deleteEntry(sandbox.id, path);
-      await onRefreshTree();
-      if (tabs.find((t) => t.path === path)) onCloseTab(path);
-    } catch (err) {
-      console.error("Failed to delete:", err);
-    }
-  };
-
-  const handleDownloadZip = async () => {
-    if (!sandbox?.id) return;
-    try {
-      const resp = await fetch(`/api/files/sandboxes/${sandbox.id}/download`);
-      if (!resp.ok) throw new Error("Download failed");
-      const blob = await resp.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${sandbox.id}.zip`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    } catch (err) {
-      console.error("Failed to download ZIP:", err);
-    }
-  };
-
   return (
     <div className="flex h-full">
       <div className="w-56 border-r border-border overflow-y-auto bg-muted/30 flex flex-col">
@@ -441,50 +356,19 @@ function CodeEditor({
           <span className="text-xs font-semibold">FILES</span>
           <div className="flex gap-1">
             <button
-              onClick={() => setCreating({ parentPath: "", name: "" })}
+              onClick={onRefreshTree}
               className="text-xs hover:bg-muted rounded px-1"
-              title="New file"
+              title="Refresh tree"
             >
-              +
-            </button>
-            <button
-              onClick={handleDownloadZip}
-              className="text-xs hover:bg-muted rounded px-1"
-              title="Download as ZIP"
-            >
-              ↓
+              ↻
             </button>
           </div>
         </div>
-        {creating && (
-          <div className="px-2 py-1 border-b border-border">
-            <input
-              autoFocus
-              type="text"
-              value={creating.name}
-              onChange={(e) => setCreating({ ...creating, name: e.target.value })}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  handleCreateFile(creating.parentPath, creating.name);
-                  setCreating(null);
-                }
-                if (e.key === "Escape") setCreating(null);
-              }}
-              onBlur={() => setCreating(null)}
-              placeholder="filename.tsx"
-              className="w-full px-1 py-0.5 text-xs border border-primary rounded focus:outline-none"
-            />
-          </div>
-        )}
         <FileTreeView
           tree={tree}
           expandedDirs={expandedDirs}
           onToggleDir={toggleDir}
           onSelectFile={onOpenFile}
-          onContextMenu={(e, path) => {
-            e.preventDefault();
-            setContextMenu({ x: e.clientX, y: e.clientY, path });
-          }}
         />
       </div>
 
@@ -545,32 +429,6 @@ function CodeEditor({
           />
         )}
       </div>
-
-      {contextMenu && (
-        <div
-          className="fixed z-50 bg-background border border-border rounded shadow-md py-1 text-xs w-40"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
-        >
-          <button
-            onClick={() => {
-              handleRenameEntry(contextMenu.path);
-              setContextMenu(null);
-            }}
-            className="block w-full text-left px-3 py-1.5 hover:bg-muted"
-          >
-            Rename
-          </button>
-          <button
-            onClick={() => {
-              handleDeleteEntry(contextMenu.path);
-              setContextMenu(null);
-            }}
-            className="block w-full text-left px-3 py-1.5 hover:bg-muted text-destructive"
-          >
-            Delete
-          </button>
-        </div>
-      )}
     </div>
   );
 }
@@ -582,7 +440,6 @@ interface FileTreeViewProps {
   expandedDirs: Set<string>;
   onToggleDir: (path: string) => void;
   onSelectFile: (path: string) => void;
-  onContextMenu: (e: React.MouseEvent, path: string) => void;
 }
 
 function FileTreeView({
@@ -590,7 +447,6 @@ function FileTreeView({
   expandedDirs,
   onToggleDir,
   onSelectFile,
-  onContextMenu,
 }: FileTreeViewProps) {
   const renderNode = (node: TreeNode, depth: number = 0) => {
     const name = node.path.split("/").pop();
@@ -601,7 +457,6 @@ function FileTreeView({
         <div key={node.path}>
           <button
             onClick={() => onToggleDir(node.path)}
-            onContextMenu={(e) => onContextMenu(e, node.path)}
             className="w-full text-left py-1 text-xs hover:bg-accent flex items-center gap-1"
             style={{ paddingLeft: `${depth * 12 + 8}px` }}
           >
@@ -626,7 +481,6 @@ function FileTreeView({
       <button
         key={node.path}
         onClick={() => onSelectFile(node.path)}
-        onContextMenu={(e) => onContextMenu(e, node.path)}
         className="w-full text-left py-1 text-xs hover:bg-accent"
         style={{ paddingLeft: `${depth * 12 + 20}px` }}
       >
@@ -670,6 +524,147 @@ function ArtifactsList({ artifacts }: { artifacts: any[] }) {
           data={artifact.data}
         />
       ))}
+    </div>
+  );
+}
+
+// ===== Changes Tab =====
+
+interface ChangesListProps {
+  artifacts: any[];
+  events: any[];
+}
+
+function ChangesList({ artifacts, events }: ChangesListProps) {
+  const toolEvents = events.filter(
+    (e) => e.type === "tool.call" || e.type === "tool.result"
+  );
+
+  if (toolEvents.length === 0) {
+    return (
+      <EmptyState
+        icon="📝"
+        title="No changes yet"
+        description="As the agent modifies files, the diff history will appear here."
+      />
+    );
+  }
+
+  return (
+    <div className="h-full overflow-y-auto p-3 space-y-2">
+      <div className="text-xs text-muted-foreground mb-2">
+        {toolEvents.length} agent action{toolEvents.length === 1 ? "" : "s"}
+      </div>
+      {toolEvents
+        .slice()
+        .reverse()
+        .map((event, idx) => {
+          const isCall = event.type === "tool.call";
+          const name = event.data?.name || event.data?.tool || "tool";
+          return (
+            <div
+              key={idx}
+              className="border border-border rounded p-2 text-xs"
+            >
+              <div className="flex items-center justify-between mb-1">
+                <span className="font-mono font-medium">{name}</span>
+                <span className="text-muted-foreground">
+                  {isCall ? "started" : "completed"}
+                </span>
+              </div>
+              {event.data?.args && (
+                <pre className="text-xs overflow-x-auto bg-muted/30 p-2 rounded">
+                  {JSON.stringify(event.data.args, null, 2)}
+                </pre>
+              )}
+              {event.data?.result && (
+                <pre className="text-xs overflow-x-auto bg-muted/30 p-2 rounded mt-1 max-h-32 overflow-y-auto">
+                  {typeof event.data.result === "string"
+                    ? event.data.result
+                    : JSON.stringify(event.data.result, null, 2)}
+                </pre>
+              )}
+            </div>
+          );
+        })}
+    </div>
+  );
+}
+
+// ===== Tests Tab =====
+
+interface TestsTabProps {
+  artifacts: any[];
+  sandbox?: any;
+}
+
+function TestsTab({ artifacts, sandbox }: TestsTabProps) {
+  const verification = artifacts.find((a) => a.type === "verification_report");
+  const report = verification?.data?.report ?? verification?.data ?? null;
+
+  const checks = [
+    {
+      id: "build",
+      label: "Build",
+      status: report?.build_succeeded ? "pass" : "fail",
+      detail: report?.build_succeeded
+        ? "Build succeeded"
+        : "Build failed",
+    },
+    {
+      id: "typecheck",
+      label: "Type check",
+      status: report?.type_errors?.length === 0 ? "pass" : "fail",
+      detail: report?.type_errors?.length
+        ? `${report.type_errors.length} type error(s)`
+        : "No type errors",
+    },
+    {
+      id: "lint",
+      label: "Lint",
+      status: report?.lint_errors?.length === 0 ? "pass" : "fail",
+      detail: report?.lint_errors?.length
+        ? `${report.lint_errors.length} lint error(s)`
+        : "No lint errors",
+    },
+    {
+      id: "preview",
+      label: "Preview",
+      status: sandbox?.status === "running" ? "pass" : "fail",
+      detail: sandbox?.status === "running"
+        ? "Preview server running"
+        : "Preview not started",
+    },
+  ];
+
+  return (
+    <div className="h-full overflow-y-auto p-3 space-y-2">
+      <div className="text-xs text-muted-foreground mb-2">Verification checks</div>
+      {checks.map((check) => (
+        <div
+          key={check.id}
+          className="flex items-center justify-between border border-border rounded p-2 text-xs"
+        >
+          <div>
+            <div className="font-medium">{check.label}</div>
+            <div className="text-muted-foreground">{check.detail}</div>
+          </div>
+          <span
+            className={`px-2 py-0.5 rounded font-medium ${
+              check.status === "pass"
+                ? "bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-200"
+                : "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-200"
+            }`}
+          >
+            {check.status === "pass" ? "PASS" : "FAIL"}
+          </span>
+        </div>
+      ))}
+      {report && (
+        <div className="mt-4">
+          <VerificationReportView report={report} />
+        </div>
+      )}
     </div>
   );
 }
