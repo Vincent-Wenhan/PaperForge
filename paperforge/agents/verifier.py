@@ -6,11 +6,12 @@ import asyncio
 import json
 import logging
 import re
+import shutil
+import time
 from pathlib import Path
 from typing import Any
 
 from paperforge.llm.base import LLMClient, Message
-from paperforge.prompts import load_prompt
 from paperforge.schemas.verification import VerificationReport
 from paperforge.sandbox.build_runner import BuildRunner
 from paperforge.storage.db import Storage
@@ -218,6 +219,156 @@ async def verify_app(
         logger.warning(f"Schema validation failed: {e}. Using raw report.")
 
     return report
+
+
+async def build_and_repair(
+    app_path: str | Path,
+    prd_id: str | None,
+    llm: LLMClient,
+    storage: Storage,
+    *,
+    max_attempts: int = MAX_REPAIR_ROUNDS,
+) -> dict[str, Any]:
+    """Generate → Verify → Repair loop.
+
+    For each attempt:
+      1. Run ``verify_app`` to get a fresh report.
+      2. If ``ready_for_preview`` is true, return the report.
+      3. Otherwise, snapshot the workspace, ask the LLM for a patch
+         that fixes the top build/type/lint errors, apply it, and
+         re-verify.
+
+    The function always returns the most recent verification report,
+    even if repair did not succeed within ``max_attempts``.
+    """
+    app_path = Path(app_path)
+    attempts: list[dict[str, Any]] = []
+    latest_report: dict[str, Any] = {}
+
+    for attempt in range(1, max_attempts + 1):
+        started_at = time.monotonic()
+        report = await verify_app(
+            app_path=app_path,
+            prd_id=prd_id,
+            llm=llm,
+            storage=storage,
+        )
+        elapsed = time.monotonic() - started_at
+        latest_report = report
+
+        attempts.append({
+            "attempt": attempt,
+            "elapsed_s": round(elapsed, 2),
+            "build_succeeded": report.get("build_succeeded"),
+            "type_errors": len(report.get("type_errors", [])),
+            "lint_errors": len(report.get("lint_errors", [])),
+            "overall_score": report.get("overall_score"),
+            "ready_for_preview": report.get("ready_for_preview"),
+        })
+
+        if report.get("ready_for_preview"):
+            break
+
+        # Snapshot before patching so we can roll back.
+        snapshot_dir = app_path.with_name(f"{app_path.name}.attempt_{attempt}")
+        if snapshot_dir.exists():
+            shutil.rmtree(snapshot_dir)
+        shutil.copytree(app_path, snapshot_dir)
+
+        try:
+            patched = await _apply_repair_patch(
+                app_path=app_path,
+                report=report,
+                llm=llm,
+            )
+            if not patched:
+                # Could not produce a patch; stop early to avoid wasting
+                # attempts on the same error.
+                break
+        except Exception as exc:
+            logger.warning(f"Repair attempt {attempt} failed: {exc}")
+            shutil.rmtree(app_path)
+            shutil.copytree(snapshot_dir, app_path)
+            break
+
+    latest_report["repair_attempts"] = attempts
+    return latest_report
+
+
+async def _apply_repair_patch(
+    app_path: Path,
+    report: dict[str, Any],
+    llm: LLMClient,
+) -> bool:
+    """Ask the LLM for a patch that fixes the top errors in the report.
+
+    Returns ``True`` if a patch was applied, ``False`` otherwise. The
+    patch is restricted to the same ``BUSINESS_FILES`` allowlist as the
+    generator so a hallucinating model cannot write arbitrary files.
+    """
+    from paperforge.config import get_config
+    from paperforge.prompts import load_prompt
+    from paperforge.schemas.app_manifest import BUSINESS_FILES
+
+    # Collect the most actionable errors. Type errors and build errors
+    # are the ones the LLM can usually fix in a single pass.
+    errors: list[str] = []
+    errors.extend(report.get("build_errors", [])[:8])
+    errors.extend(report.get("type_errors", [])[:8])
+    errors.extend(report.get("lint_errors", [])[:8])
+    if not errors:
+        return False
+
+    files = collect_files(app_path)
+    relevant_files = [
+        {"path": p, "content": c}
+        for p, c in files
+        if p in BUSINESS_FILES
+    ]
+    if not relevant_files:
+        return False
+
+    prompt = load_prompt("repair_agent")
+    user_content = json.dumps({
+        "errors": errors,
+        "files": relevant_files,
+    }, ensure_ascii=False, indent=2)
+
+    cfg = get_config()
+    response = await llm.chat(
+        model=cfg.GENERATOR_MODEL,
+        messages=[
+            Message(role="system", content=prompt),
+            Message(role="user", content=user_content),
+        ],
+        response_format={"type": "json_object"},
+    )
+
+    content = response.content or "{}"
+    try:
+        patch = json.loads(content)
+    except json.JSONDecodeError:
+        return False
+
+    patched_files = patch.get("files") or []
+    if not patched_files:
+        return False
+
+    for entry in patched_files:
+        rel_path = entry.get("path") or ""
+        normalized = rel_path.replace("\\", "/").lstrip("/")
+        if normalized not in BUSINESS_FILES:
+            logger.warning(f"Repair patch skips non-allowlist file: {rel_path}")
+            continue
+        target = (app_path / normalized).resolve()
+        try:
+            target.relative_to(app_path.resolve())
+        except ValueError:
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(entry.get("content") or "", encoding="utf-8")
+
+    return True
 
 
 async def _exec(
