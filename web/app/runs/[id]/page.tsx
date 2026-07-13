@@ -196,12 +196,20 @@ export default function RunWorkspacePage() {
             />
             <div className="flex-1 flex flex-col items-center justify-center gap-3 text-muted-foreground">
               <p className="text-destructive">{error}</p>
-              <button
-                onClick={() => router.push("/")}
-                className="px-3 py-1.5 border rounded hover:bg-accent"
-              >
-                Back to home
-              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={handleNewRun}
+                  className="px-3 py-1.5 bg-primary text-primary-foreground rounded text-sm"
+                >
+                  New Run
+                </button>
+                <button
+                  onClick={() => router.push("/")}
+                  className="px-3 py-1.5 border rounded text-sm"
+                >
+                  Back to home
+                </button>
+              </div>
             </div>
           </div>
         </div>
