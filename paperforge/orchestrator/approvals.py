@@ -47,3 +47,8 @@ def get_approval_registry() -> ApprovalRegistry:
     if _registry is None:
         _registry = ApprovalRegistry()
     return _registry
+
+
+def reset_approval_registry() -> None:
+    global _registry
+    _registry = None

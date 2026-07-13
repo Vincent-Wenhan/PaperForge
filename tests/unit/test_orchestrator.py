@@ -189,11 +189,15 @@ async def test_orchestrator_approval_flow(storage):
     # Start orchestrator in background — it will block waiting for approval
     task = asyncio.create_task(orc.run(run_id="run_approval", user_message="Generate"))
 
-    # Give it a moment to create the approval
-    await asyncio.sleep(0.15)
-
-    # The approval registry should have a pending approval
+    # Poll for the approval to be registered (up to 2s). The orchestrator
+    # creates the approval asynchronously after emitting approval.requested.
     registry = get_approval_registry()
+    deadline = 2.0
+    while deadline > 0:
+        if len(registry._pending) > 0 or len(registry._results) > 0:
+            break
+        await asyncio.sleep(0.05)
+        deadline -= 0.05
     assert len(registry._pending) > 0 or len(registry._results) > 0
 
     # Clean up the task

@@ -8,6 +8,7 @@ import pytest
 
 from paperforge.config import reset_config, reset_settings
 from paperforge.storage.db import reset_storage
+from paperforge.orchestrator.approvals import reset_approval_registry
 from paperforge.orchestrator.events import reset_event_manager
 
 
@@ -28,11 +29,13 @@ def isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     reset_config()
     reset_storage()
     reset_event_manager()
+    reset_approval_registry()
     yield
     reset_settings()
     reset_config()
     reset_storage()
     reset_event_manager()
+    reset_approval_registry()
 
 
 @pytest.fixture
