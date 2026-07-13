@@ -15,7 +15,7 @@ from typing import Any
 from paperforge.config import get_config
 
 
-SCHEMA_SQL = """
+SCHEMA_SQL_TABLES = """
 CREATE TABLE IF NOT EXISTS runs (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
@@ -27,8 +27,6 @@ CREATE TABLE IF NOT EXISTS runs (
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
-CREATE INDEX IF NOT EXISTS idx_runs_updated ON runs(updated_at DESC);
-CREATE INDEX IF NOT EXISTS idx_runs_archived ON runs(archived_at);
 
 CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -40,7 +38,6 @@ CREATE TABLE IF NOT EXISTS messages (
     name TEXT,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
-CREATE INDEX IF NOT EXISTS idx_messages_run ON messages(run_id, id);
 
 CREATE TABLE IF NOT EXISTS sandboxes (
     id TEXT PRIMARY KEY,
@@ -53,8 +50,6 @@ CREATE TABLE IF NOT EXISTS sandboxes (
     started_at TIMESTAMP,
     stopped_at TIMESTAMP
 );
-CREATE INDEX IF NOT EXISTS idx_sandboxes_run ON sandboxes(run_id);
-CREATE INDEX IF NOT EXISTS idx_sandboxes_status ON sandboxes(status);
 
 CREATE TABLE IF NOT EXISTS papers (
     paper_id TEXT PRIMARY KEY,
@@ -65,7 +60,6 @@ CREATE TABLE IF NOT EXISTS papers (
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     parsed_at TIMESTAMP
 );
-CREATE INDEX IF NOT EXISTS idx_papers_status ON papers(status);
 
 CREATE TABLE IF NOT EXISTS artifacts (
     id TEXT PRIMARY KEY,
@@ -79,8 +73,6 @@ CREATE TABLE IF NOT EXISTS artifacts (
     updated_at TIMESTAMP,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
-CREATE INDEX IF NOT EXISTS idx_artifacts_run ON artifacts(run_id);
-CREATE INDEX IF NOT EXISTS idx_artifacts_type ON artifacts(type);
 
 CREATE TABLE IF NOT EXISTS approvals (
     id TEXT PRIMARY KEY,
@@ -108,8 +100,36 @@ CREATE TABLE IF NOT EXISTS run_events (
     data TEXT,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
-CREATE INDEX IF NOT EXISTS idx_run_events ON run_events(run_id, seq);
+
+CREATE TABLE IF NOT EXISTS tasks (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    title TEXT,
+    goal TEXT,
+    status TEXT NOT NULL DEFAULT 'queued',
+    phase TEXT NOT NULL DEFAULT 'init',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    completed_at TIMESTAMP
+);
 """
+
+SCHEMA_SQL_INDEXES = """
+CREATE INDEX IF NOT EXISTS idx_runs_updated ON runs(updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_runs_archived ON runs(archived_at);
+CREATE INDEX IF NOT EXISTS idx_messages_run ON messages(run_id, id);
+CREATE INDEX IF NOT EXISTS idx_sandboxes_run ON sandboxes(run_id);
+CREATE INDEX IF NOT EXISTS idx_sandboxes_status ON sandboxes(status);
+CREATE INDEX IF NOT EXISTS idx_papers_status ON papers(status);
+CREATE INDEX IF NOT EXISTS idx_artifacts_run ON artifacts(run_id);
+CREATE INDEX IF NOT EXISTS idx_artifacts_type ON artifacts(type);
+CREATE INDEX IF NOT EXISTS idx_run_events ON run_events(run_id, seq);
+CREATE INDEX IF NOT EXISTS idx_tasks_run ON tasks(run_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+"""
+
+# Kept for compatibility; new init uses SCHEMA_SQL_TABLES + SCHEMA_SQL_INDEXES.
+SCHEMA_SQL = SCHEMA_SQL_TABLES + SCHEMA_SQL_INDEXES
 
 
 class Storage:
@@ -153,13 +173,16 @@ class Storage:
 
     def _init_db(self) -> None:
         with self._lock, self._conn() as conn:
-            conn.executescript(SCHEMA_SQL)
-            # Migrations: add columns that older databases may be missing.
+            # Step 1: Create tables (without indexes that may reference
+            # columns missing in older databases).
+            conn.executescript(SCHEMA_SQL_TABLES)
+            # Step 2: Migrations - add columns that older databases may be missing.
             self._ensure_column(conn, "runs", "phase", "TEXT DEFAULT 'init'")
             self._ensure_column(conn, "runs", "pinned", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(conn, "runs", "archived_at", "TIMESTAMP")
             self._ensure_column(conn, "runs", "last_message_at", "TIMESTAMP")
-
+            # Step 3: Create indexes (now that all columns exist).
+            conn.executescript(SCHEMA_SQL_INDEXES)
     @staticmethod
     def _ensure_column(
         conn: sqlite3.Connection,
@@ -350,6 +373,93 @@ class Storage:
                 "SELECT * FROM sandboxes WHERE id = ?", (sandbox_id,)
             ).fetchone()
             return dict(row) if row else None
+
+    def get_latest_sandbox_for_run(self, run_id: str) -> dict[str, Any] | None:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM sandboxes WHERE run_id = ? ORDER BY created_at DESC LIMIT 1",
+                (run_id,),
+            ).fetchone()
+            return dict(row) if row else None
+
+    # ===== Tasks =====
+
+    def create_task(
+        self,
+        run_id: str,
+        title: str | None = None,
+        goal: str | None = None,
+        status: str = "queued",
+        phase: str = "init",
+    ) -> dict[str, Any]:
+        now = datetime.utcnow().isoformat()
+        task_id = f"task_{uuid.uuid4().hex[:8]}"
+        with self._lock, self._conn() as conn:
+            conn.execute(
+                """INSERT INTO tasks (id, run_id, title, goal, status, phase, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (task_id, run_id, title, goal, status, phase, now, now),
+            )
+        return {
+            "id": task_id,
+            "run_id": run_id,
+            "title": title,
+            "goal": goal,
+            "status": status,
+            "phase": phase,
+            "created_at": now,
+            "updated_at": now,
+        }
+
+    def get_task(self, task_id: str) -> dict[str, Any] | None:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM tasks WHERE id = ?", (task_id,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def list_tasks(self, run_id: str) -> list[dict[str, Any]]:
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM tasks WHERE run_id = ? ORDER BY created_at DESC",
+                (run_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def update_task(
+        self,
+        task_id: str,
+        title: str | None = None,
+        status: str | None = None,
+        phase: str | None = None,
+        goal: str | None = None,
+    ) -> dict[str, Any] | None:
+        sets: list[str] = []
+        params: list[Any] = []
+        if title is not None:
+            sets.append("title = ?")
+            params.append(title)
+        if status is not None:
+            sets.append("status = ?")
+            params.append(status)
+        if phase is not None:
+            sets.append("phase = ?")
+            params.append(phase)
+        if goal is not None:
+            sets.append("goal = ?")
+            params.append(goal)
+        if not sets:
+            return self.get_task(task_id)
+        sets.append("updated_at = ?")
+        params.append(datetime.utcnow().isoformat())
+        params.append(task_id)
+        with self._lock, self._conn() as conn:
+            conn.execute(f"UPDATE tasks SET {', '.join(sets)} WHERE id = ?", params)
+        return self.get_task(task_id)
+
+    def delete_task(self, task_id: str) -> None:
+        with self._lock, self._conn() as conn:
+            conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
 
     def list_sandboxes(self, status: str | None = None) -> list[dict[str, Any]]:
         query = "SELECT * FROM sandboxes"
