@@ -15,10 +15,11 @@ from typing import Any
 
 from paperforge.llm.base import ToolCall
 
+
 class Event:
     """An event to be sent to subscribers."""
 
-    __slots__ = ("id", "type", "data", "run_id", "ts", "seq")
+    __slots__ = ("id", "type", "data", "run_id", "task_id", "ts", "seq")
 
     def __init__(
         self,
@@ -28,11 +29,13 @@ class Event:
         ts: float | None = None,
         id: str | None = None,
         seq: int = 0,
+        task_id: str | None = None,
     ) -> None:
         self.id = id or f"evt_{uuid.uuid4().hex[:10]}"
         self.type = type
         self.data = data
         self.run_id = run_id
+        self.task_id = task_id
         self.ts = ts or time.time()
         self.seq = seq
 
@@ -40,12 +43,22 @@ class Event:
 class EventEmitter:
     """Emitter for a single run. Holds a reference to the manager."""
 
-    def __init__(self, run_id: str, manager: "EventManager") -> None:
+    def __init__(self, run_id: str, manager: EventManager) -> None:
         self.run_id = run_id
         self.manager = manager
 
-    async def emit(self, event_type: str, data: Any = None) -> Event:
-        event = Event(type=event_type, data=data, run_id=self.run_id)
+    async def emit(
+        self,
+        event_type: str,
+        data: Any = None,
+        task_id: str | None = None,
+    ) -> Event:
+        event = Event(
+            type=event_type,
+            data=data,
+            run_id=self.run_id,
+            task_id=task_id,
+        )
         await self.manager.broadcast(event)
         return event
 
@@ -148,6 +161,7 @@ class EventEmitter:
                 "previous_phase": previous_phase,
                 "task_id": task_id,
             },
+            task_id=task_id,
         )
 
     async def run_status_changed(
@@ -172,11 +186,12 @@ class EventManager:
     for active SSE connections.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, storage: Any | None = None) -> None:
         self._subscribers: dict[str, list[asyncio.Queue]] = defaultdict(list)
         self._history: dict[str, list[Event]] = defaultdict(list)
         self._seq: dict[str, int] = defaultdict(int)
         self._max_history = 1000
+        self._storage = storage
 
     def register(self, run_id: str) -> asyncio.Queue:
         q: asyncio.Queue = asyncio.Queue(maxsize=1000)
@@ -194,15 +209,18 @@ class EventManager:
         # If a subscriber queue overflows or a subscriber is slow, the
         # event is still recoverable from the database on reconnect.
         try:
-            from paperforge.storage.db import get_storage
+            storage = self._storage
+            if storage is None:
+                from paperforge.storage.db import get_storage
 
-            storage = get_storage()
+                storage = get_storage()
             row = await asyncio.to_thread(
                 storage.append_run_event,
                 run_id=rid,
                 event_id=event.id,
                 event_type=event.type,
                 data=event.data,
+                task_id=event.task_id,
             )
             event.seq = row["seq"]
         except Exception:
@@ -231,6 +249,27 @@ class EventManager:
                     q.put_nowait(gap)
 
     def get_history(self, run_id: str) -> list[Event]:
+        try:
+            storage = self._storage
+            if storage is None:
+                from paperforge.storage.db import get_storage
+
+                storage = get_storage()
+            rows = storage.list_run_events(run_id, after_seq=0)
+            if rows:
+                return [
+                    Event(
+                        type=row["type"],
+                        data=row.get("data"),
+                        run_id=run_id,
+                        id=row["id"],
+                        seq=int(row["seq"]),
+                        task_id=row.get("task_id"),
+                    )
+                    for row in rows
+                ]
+        except Exception:
+            pass
         return list(self._history.get(run_id, []))
 
     def has_subscribers(self, run_id: str) -> bool:

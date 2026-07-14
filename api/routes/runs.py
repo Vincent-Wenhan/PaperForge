@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from paperforge.orchestrator.events import get_event_manager
 from paperforge.orchestrator.tasks import get_run_task_manager
 from paperforge.storage.db import get_storage
 
@@ -47,6 +47,46 @@ def _to_run(row: dict) -> Run:
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
+
+
+def _to_message(row: dict[str, Any]) -> dict[str, Any]:
+    """Return one stable message shape for initial hydration and SSE merges."""
+    message = dict(row)
+    public_id = message.get("public_id") or f"msg_{message.get('id')}"
+    message["public_id"] = public_id
+    message["id"] = public_id
+    message["content"] = message.get("content") or ""
+    message["status"] = message.get("status") or "completed"
+    if message.get("parts") is None:
+        message["parts"] = []
+    return message
+
+
+def _to_artifact(storage: Any, row: dict[str, Any]) -> dict[str, Any]:
+    artifact = storage.get_artifact(row["id"]) or dict(row)
+    artifact.setdefault("metadata", {})
+    artifact.setdefault("data", {})
+    return artifact
+
+
+def _to_approval(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "approval_id": row["id"],
+        "id": row["id"],
+        "run_id": row["run_id"],
+        "tool": row["tool_name"],
+        "tool_name": row["tool_name"],
+        "args": row.get("args") or {},
+        "status": row["status"],
+        "created_at": row["created_at"],
+        "resolved_at": row.get("resolved_at"),
+    }
+
+
+def _to_task(row: dict[str, Any]) -> dict[str, Any]:
+    task = dict(row)
+    task.setdefault("task_id", task.get("id"))
+    return task
 
 
 @router.post("", response_model=Run)
@@ -199,25 +239,31 @@ async def get_run_state(run_id: str) -> dict:
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
 
-    messages = storage.list_messages(run_id)
-    artifacts = storage.list_artifacts(run_id=run_id)
-
-    sandboxes = storage.list_sandboxes()
-    run_sandboxes = [s for s in sandboxes if s.get("run_id") == run_id]
-    sandbox = run_sandboxes[0] if run_sandboxes else None
-
-    approvals = storage.list_approvals(run_id=run_id, status="pending")
-
-    event_manager = get_event_manager()
-    history = event_manager.get_history(run_id)
-    event_cursor = max((e.seq for e in history), default=0)
+    messages = [_to_message(row) for row in storage.list_messages(run_id)]
+    artifacts = [
+        _to_artifact(storage, row)
+        for row in storage.list_artifacts(run_id=run_id)
+    ]
+    sandbox = storage.get_latest_sandbox_for_run(run_id)
+    approvals = [
+        _to_approval(row)
+        for row in storage.list_approvals(run_id=run_id, status="pending")
+    ]
+    all_approvals = [
+        _to_approval(row)
+        for row in storage.list_approvals(run_id=run_id)
+    ]
+    tasks = [_to_task(row) for row in storage.list_tasks(run_id)]
+    event_cursor = storage.get_max_event_seq(run_id)
 
     return {
-        "run": run,
+        "run": _to_run(run).model_dump(),
         "messages": messages,
         "artifacts": artifacts,
         "sandbox": sandbox,
         "pending_approvals": approvals,
+        "approvals": all_approvals,
+        "tasks": tasks,
         "event_cursor": event_cursor,
     }
 

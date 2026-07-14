@@ -14,7 +14,6 @@ from typing import Any
 
 from paperforge.config import get_config
 
-
 SCHEMA_SQL_TABLES = """
 CREATE TABLE IF NOT EXISTS runs (
     id TEXT PRIMARY KEY,
@@ -37,6 +36,8 @@ CREATE TABLE IF NOT EXISTS messages (
     tool_calls TEXT,
     tool_call_id TEXT,
     name TEXT,
+    status TEXT NOT NULL DEFAULT 'completed',
+    parts TEXT,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -184,6 +185,19 @@ class Storage:
             self._ensure_column(conn, "runs", "pinned", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(conn, "runs", "archived_at", "TIMESTAMP")
             self._ensure_column(conn, "runs", "last_message_at", "TIMESTAMP")
+            self._ensure_column(conn, "messages", "public_id", "TEXT")
+            self._ensure_column(conn, "messages", "status", "TEXT NOT NULL DEFAULT 'completed'")
+            self._ensure_column(conn, "messages", "parts", "TEXT")
+            # Older databases predate public_id. Backfill deterministically
+            # before creating the unique index used by new writes.
+            conn.execute(
+                "UPDATE messages SET public_id = 'msg_legacy_' || id "
+                "WHERE public_id IS NULL OR public_id = ''"
+            )
+            conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_messages_public_id "
+                "ON messages(public_id)"
+            )
             # Step 3: Create indexes (now that all columns exist).
             conn.executescript(SCHEMA_SQL_INDEXES)
     @staticmethod
@@ -313,13 +327,16 @@ class Storage:
         tool_call_id: str | None = None,
         name: str | None = None,
         public_id: str | None = None,
+        status: str = "completed",
+        parts: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         if public_id is None:
             public_id = f"msg_{uuid.uuid4().hex[:10]}"
         with self._lock, self._conn() as conn:
             cur = conn.execute(
-                """INSERT INTO messages (public_id, run_id, role, content, tool_calls, tool_call_id, name)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                """INSERT INTO messages
+                   (public_id, run_id, role, content, tool_calls, tool_call_id, name, status, parts)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     public_id,
                     run_id,
@@ -328,6 +345,8 @@ class Storage:
                     json.dumps(tool_calls, ensure_ascii=False) if tool_calls else None,
                     tool_call_id,
                     name,
+                    status,
+                    json.dumps(parts, ensure_ascii=False) if parts else None,
                 ),
             )
             row = conn.execute(
@@ -347,6 +366,8 @@ class Storage:
             d = dict(r)
             if d.get("tool_calls"):
                 d["tool_calls"] = json.loads(d["tool_calls"])
+            if d.get("parts"):
+                d["parts"] = json.loads(d["parts"])
             result.append(d)
         return result
 
@@ -676,14 +697,18 @@ class Storage:
             d["args"] = json.loads(d.get("args") or "{}")
             return d
 
-    def resolve_approval(self, approval_id: str, approved: bool) -> None:
+    def resolve_approval(self, approval_id: str, approved: bool) -> dict[str, Any] | None:
         now = datetime.utcnow().isoformat()
         status = "approved" if approved else "rejected"
         with self._lock, self._conn() as conn:
-            conn.execute(
-                "UPDATE approvals SET status = ?, resolved_at = ? WHERE id = ?",
+            cur = conn.execute(
+                "UPDATE approvals SET status = ?, resolved_at = ? "
+                "WHERE id = ? AND status = 'pending'",
                 (status, now, approval_id),
             )
+            if cur.rowcount == 0:
+                return None
+        return self.get_approval(approval_id)
 
     def list_approvals(
         self,
