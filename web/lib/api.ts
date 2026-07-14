@@ -1,8 +1,9 @@
 import type { Run, Message, Paper, Sandbox, Event, Approval, Artifact } from "./store";
+import type { RunSession } from "./contracts";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "";
 
-function buildUrl(path: string): string {
+export function buildUrl(path: string): string {
   if (API_BASE) return `${API_BASE}${path}`;
   return path;
 }
@@ -11,11 +12,63 @@ export function buildPaperPdfUrl(paperId: string): string {
   return buildUrl(`/api/library/${paperId}/pdf`);
 }
 
+export function triggerBrowserDownload(blob: Blob, filename: string): void {
+  if (typeof window === "undefined" || typeof URL.createObjectURL !== "function") return;
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+export class ApiError extends Error {
+  readonly status: number;
+  readonly code?: string;
+  readonly detail: unknown;
+  readonly payload: unknown;
+
+  constructor(
+    status: number,
+    detail: unknown,
+    code?: string,
+    payload?: unknown,
+  ) {
+    const message = typeof detail === "string" ? detail : `Request failed (${status})`;
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.detail = detail;
+    this.code = code;
+    this.payload = payload;
+  }
+
+  get userMessage(): string {
+    if (this.status === 404) return "The requested resource was not found.";
+    if (this.status >= 500) return "PaperForge encountered a server error. Please retry.";
+    return this.message;
+  }
+}
+
+async function apiErrorFromResponse(resp: Response): Promise<ApiError> {
+  const raw = await resp.text();
+  let payload: any = raw;
+  try {
+    payload = raw ? JSON.parse(raw) : {};
+  } catch {
+    // Keep the raw response as the detail below.
+  }
+  const detail = payload && typeof payload === "object"
+    ? payload.detail ?? payload.error ?? raw
+    : raw;
+  const code = payload && typeof payload === "object" ? payload.code : undefined;
+  return new ApiError(resp.status, detail || resp.statusText, code, payload);
+}
+
 async function getJson<T>(path: string): Promise<T> {
   const resp = await fetch(buildUrl(path));
   if (!resp.ok) {
-    const text = await resp.text();
-    throw new Error(`${resp.status}: ${text}`);
+    throw await apiErrorFromResponse(resp);
   }
   return resp.json() as Promise<T>;
 }
@@ -27,8 +80,7 @@ async function postJson<T>(path: string, body?: any): Promise<T> {
     body: body ? JSON.stringify(body) : undefined,
   });
   if (!resp.ok) {
-    const text = await resp.text();
-    throw new Error(`${resp.status}: ${text}`);
+    throw await apiErrorFromResponse(resp);
   }
   return resp.json() as Promise<T>;
 }
@@ -36,8 +88,7 @@ async function postJson<T>(path: string, body?: any): Promise<T> {
 async function deleteJson<T>(path: string): Promise<T> {
   const resp = await fetch(buildUrl(path), { method: "DELETE" });
   if (!resp.ok) {
-    const text = await resp.text();
-    throw new Error(`${resp.status}: ${text}`);
+    throw await apiErrorFromResponse(resp);
   }
   return resp.json() as Promise<T>;
 }
@@ -49,8 +100,7 @@ async function patchJson<T>(path: string, body: any): Promise<T> {
     body: JSON.stringify(body),
   });
   if (!resp.ok) {
-    const text = await resp.text();
-    throw new Error(`${resp.status}: ${text}`);
+    throw await apiErrorFromResponse(resp);
   }
   return resp.json() as Promise<T>;
 }
@@ -62,8 +112,7 @@ async function putJson<T>(path: string, body: any): Promise<T> {
     body: JSON.stringify(body),
   });
   if (!resp.ok) {
-    const text = await resp.text();
-    throw new Error(`${resp.status}: ${text}`);
+    throw await apiErrorFromResponse(resp);
   }
   return resp.json() as Promise<T>;
 }
@@ -79,15 +128,13 @@ export const api = {
   getRun: async (id: string): Promise<Run> => {
     return getJson<Run>(`/api/runs/${id}`);
   },
-  getRunState: async (id: string): Promise<{
-    run: Run;
-    messages: Message[];
-    artifacts: Artifact[];
-    sandbox: Sandbox | null;
-    pending_approvals: Approval[];
-    event_cursor: number;
-  }> => {
-    return getJson(`/api/runs/${id}/state`);
+  getRunState: async (id: string): Promise<RunSession> => {
+    const state = await getJson<RunSession>(`/api/runs/${id}/state`);
+    return {
+      ...state,
+      approvals: state.approvals || state.pending_approvals || [],
+      tasks: state.tasks || [],
+    };
   },
   updateRun: async (
     id: string,
@@ -136,7 +183,7 @@ export const api = {
       method: "POST",
       body: formData,
     });
-    if (!resp.ok) throw new Error("Upload failed");
+    if (!resp.ok) throw await apiErrorFromResponse(resp);
     return resp.json();
   },
   getPaper: async (paperId: string): Promise<{ paper: Paper; capability_card: any }> => {
@@ -156,7 +203,7 @@ export const api = {
   },
   downloadPaperPdf: async (paperId: string): Promise<Blob> => {
     const resp = await fetch(buildPaperPdfUrl(paperId));
-    if (!resp.ok) throw new Error("Download failed");
+    if (!resp.ok) throw await apiErrorFromResponse(resp);
     return resp.blob();
   },
 
@@ -167,8 +214,8 @@ export const api = {
   getLatestSandboxForRun: async (runId: string): Promise<Sandbox | null> => {
     return getJson<Sandbox | null>(`/api/sandboxes/latest?run_id=${runId}`);
   },
-  startSandbox: async (runId: string, appPath: string): Promise<Sandbox> => {
-    return postJson(`/api/sandboxes`, { app_path: appPath, run_id: runId });
+  startSandbox: async (runId: string, appArtifactId: string): Promise<Sandbox> => {
+    return postJson(`/api/sandboxes`, { app_artifact_id: appArtifactId, run_id: runId });
   },
   stopSandbox: async (sandboxId: string): Promise<{ status: string }> => {
     return postJson(`/api/sandboxes/${sandboxId}/stop`, {});
@@ -191,7 +238,7 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ content }),
     });
-    if (!resp.ok) throw new Error("Write failed");
+    if (!resp.ok) throw await apiErrorFromResponse(resp);
     return resp.json();
   },
   getFileTree: async (sandboxId: string): Promise<{ tree: any[] }> => {
@@ -249,43 +296,69 @@ export const api = {
   },
   downloadArtifact: async (artifactId: string): Promise<Blob> => {
     const resp = await fetch(buildUrl(`/api/artifacts/${artifactId}/download`));
-    if (!resp.ok) throw new Error("Download failed");
+    if (!resp.ok) throw await apiErrorFromResponse(resp);
     return resp.blob();
   },
 
   // === App-based file API (doc 8.4) ===
-  listAppTree: async (appId: string): Promise<{ tree: any[] }> => {
-    return getJson(`/api/apps/${appId}/tree`);
+  listAppTree: async (appId: string, runId?: string): Promise<{ tree: any[] }> => {
+    const query = runId ? `?run_id=${encodeURIComponent(runId)}` : "";
+    return getJson(`/api/apps/${appId}/tree${query}`);
   },
-  readAppFile: async (appId: string, path: string): Promise<{ path: string; content: string }> => {
-    return getJson(`/api/apps/${appId}/files/${path}`);
+  readAppFile: async (appId: string, path: string, runId?: string): Promise<{ path: string; content: string }> => {
+    const query = runId ? `?run_id=${encodeURIComponent(runId)}` : "";
+    return getJson(`/api/apps/${appId}/files/${path}${query}`);
   },
-  writeAppFile: async (appId: string, path: string, content: string): Promise<{ path: string; saved: boolean }> => {
-    return putJson(`/api/apps/${appId}/files/${path}`, { content });
+  writeAppFile: async (appId: string, path: string, content: string, runId?: string): Promise<{ path: string; saved: boolean }> => {
+    const query = runId ? `?run_id=${encodeURIComponent(runId)}` : "";
+    return putJson(`/api/apps/${appId}/files/${path}${query}`, { content });
   },
   createAppEntry: async (
     appId: string,
-    entry: { type: "file" | "directory"; path: string; content?: string }
+    entry: { type: "file" | "directory"; path: string; content?: string },
+    runId?: string,
   ): Promise<{ path: string; created: boolean }> => {
-    return postJson(`/api/apps/${appId}/entries`, entry);
+    const query = runId ? `?run_id=${encodeURIComponent(runId)}` : "";
+    return postJson(`/api/apps/${appId}/entries${query}`, entry);
   },
   renameAppEntry: async (
     appId: string,
     path: string,
-    newPath: string
+    newPath: string,
+    runId?: string,
   ): Promise<{ path: string; renamed: boolean }> => {
-    return patchJson(`/api/apps/${appId}/entries/${path}`, { new_path: newPath });
+    const query = runId ? `?run_id=${encodeURIComponent(runId)}` : "";
+    return patchJson(`/api/apps/${appId}/entries/${path}${query}`, { new_path: newPath });
   },
   deleteAppEntry: async (
     appId: string,
-    path: string
+    path: string,
+    runId?: string,
   ): Promise<{ path: string; deleted: boolean }> => {
-    return deleteJson(`/api/apps/${appId}/entries/${path}`);
+    const query = runId ? `?run_id=${encodeURIComponent(runId)}` : "";
+    return deleteJson(`/api/apps/${appId}/entries/${path}${query}`);
   },
-  downloadAppZip: async (appId: string): Promise<Blob> => {
-    const resp = await fetch(buildUrl(`/api/apps/${appId}/download`));
-    if (!resp.ok) throw new Error("Download failed");
+  downloadAppZip: async (appId: string, runId?: string): Promise<Blob> => {
+    const query = runId ? `?run_id=${encodeURIComponent(runId)}` : "";
+    const resp = await fetch(buildUrl(`/api/apps/${appId}/download${query}`));
+    if (!resp.ok) throw await apiErrorFromResponse(resp);
     return resp.blob();
+  },
+  listAppRevisions: async (appId: string, runId?: string): Promise<{ revisions: any[] }> => {
+    const query = runId ? `?run_id=${encodeURIComponent(runId)}` : "";
+    return getJson(`/api/apps/${appId}/revisions${query}`);
+  },
+  getAppRevision: async (appId: string, revisionId: string, runId?: string): Promise<any> => {
+    const query = runId ? `?run_id=${encodeURIComponent(runId)}` : "";
+    return getJson(`/api/apps/${appId}/revisions/${revisionId}${query}`);
+  },
+  restoreAppRevision: async (appId: string, revisionId: string, runId?: string): Promise<{ restored: boolean; revision_id?: string }> => {
+    const query = runId ? `?run_id=${encodeURIComponent(runId)}` : "";
+    return postJson(`/api/apps/${appId}/revisions/${revisionId}/restore${query}`, {});
+  },
+
+  getPreviewStatus: async (runId: string): Promise<any> => {
+    return getJson(`/api/preview/status/${runId}`);
   },
 
   // === Settings ===
@@ -299,7 +372,7 @@ export interface RunEvent<T = unknown> {
   seq: number;
   run_id: string;
   type: string;
-  ts: number;
+  ts: number | string;
   payload: T;
 }
 
@@ -308,9 +381,11 @@ export class SSEClient {
   private handlers: Record<string, (payload: any, event: RunEvent) => void> = {};
   private seenSeqs = new Set<number>();
 
-  connect(runId: string) {
+  connect(runId: string, afterSeq = 0) {
     this.disconnect();
-    this.es = new EventSource(buildUrl(`/api/runs/${runId}/events`));
+    this.seenSeqs.clear();
+    const query = afterSeq > 0 ? `?after_seq=${afterSeq}` : "";
+    this.es = new EventSource(buildUrl(`/api/runs/${runId}/events${query}`));
 
     this.es.onopen = () => {
       console.log("[SSE] connected");

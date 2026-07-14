@@ -1,15 +1,17 @@
 "use client";
 
 import { useState } from "react";
-import { api, buildPaperPdfUrl } from "@/lib/api";
+import { api, triggerBrowserDownload } from "@/lib/api";
 import { useIsMobile } from "@/lib/useMediaQuery";
 import type { Paper, Run } from "@/lib/store";
+import { useToast } from "@/lib/toast";
 
 interface SidebarProps {
   runs: Run[];
   library: Paper[];
   onNewRun: () => void;
   onSelectRun: (runId: string) => void;
+  currentRunId?: string | null;
   onRunsChanged?: () => void;
   onLibraryChanged?: () => void;
   onOpenPaper?: (paperId: string) => void;
@@ -53,6 +55,7 @@ export function Sidebar({
   library,
   onNewRun,
   onSelectRun,
+  currentRunId,
   onRunsChanged,
   onLibraryChanged,
   onOpenPaper,
@@ -70,6 +73,7 @@ export function Sidebar({
   const [paperMenuFor, setPaperMenuFor] = useState<string | null>(null);
   const [paperRenaming, setPaperRenaming] = useState<string | null>(null);
   const [paperRenameValue, setPaperRenameValue] = useState("");
+  const { toast } = useToast();
 
   const filtered = runs.filter((r) => {
     if (query) {
@@ -94,7 +98,7 @@ export function Sidebar({
       await api.uploadPaper(file);
       onLibraryChanged?.();
     } catch (err) {
-      console.error(err);
+      toast({ title: "Upload failed", description: err instanceof Error ? err.message : String(err), variant: "error" });
     } finally {
       setUploading(false);
       e.target.value = "";
@@ -108,7 +112,7 @@ export function Sidebar({
         await api.updateRun(runId, { title });
         onRunsChanged?.();
       } catch (err) {
-        console.error(err);
+        toast({ title: "Rename failed", description: err instanceof Error ? err.message : String(err), variant: "error" });
       }
     }
     setRenaming(null);
@@ -120,7 +124,7 @@ export function Sidebar({
       await api.archiveRun(runId);
       onRunsChanged?.();
     } catch (err) {
-      console.error(err);
+      toast({ title: "Archive failed", description: err instanceof Error ? err.message : String(err), variant: "error" });
     }
     setMenuFor(null);
   };
@@ -131,7 +135,7 @@ export function Sidebar({
       await api.deleteRun(runId);
       onRunsChanged?.();
     } catch (err) {
-      console.error(err);
+      toast({ title: "Delete failed", description: err instanceof Error ? err.message : String(err), variant: "error" });
     }
     setMenuFor(null);
   };
@@ -141,7 +145,7 @@ export function Sidebar({
       await api.updateRun(run.id, { pinned: !run.pinned });
       onRunsChanged?.();
     } catch (err) {
-      console.error(err);
+      toast({ title: "Pin update failed", description: err instanceof Error ? err.message : String(err), variant: "error" });
     }
     setMenuFor(null);
   };
@@ -153,7 +157,7 @@ export function Sidebar({
         await api.renamePaper(paperId, title);
         onLibraryChanged?.();
       } catch (err) {
-        console.error(err);
+        toast({ title: "Paper rename failed", description: err instanceof Error ? err.message : String(err), variant: "error" });
       }
     }
     setPaperMenuFor(null);
@@ -166,16 +170,17 @@ export function Sidebar({
       await api.deletePaper(paperId);
       onLibraryChanged?.();
     } catch (err) {
-      console.error(err);
+      toast({ title: "Paper delete failed", description: err instanceof Error ? err.message : String(err), variant: "error" });
     }
     setPaperMenuFor(null);
   };
 
   const handlePaperDownload = async (paperId: string) => {
     try {
-      await api.downloadPaperPdf(paperId);
+      const blob = await api.downloadPaperPdf(paperId);
+      triggerBrowserDownload(blob, `${paperId}.pdf`);
     } catch (err) {
-      console.error(err);
+      toast({ title: "Paper download failed", description: err instanceof Error ? err.message : String(err), variant: "error" });
     }
     setPaperMenuFor(null);
   };
@@ -251,6 +256,7 @@ export function Sidebar({
                   <RunRow
                     key={run.id}
                     run={run}
+                    currentRunId={currentRunId}
                     onSelect={onSelectRun}
                     menuOpen={menuFor === run.id}
                     onToggleMenu={() => setMenuFor(menuFor === run.id ? null : run.id)}
@@ -359,6 +365,7 @@ export function Sidebar({
 
 interface RunRowProps {
   run: Run;
+  currentRunId?: string | null;
   onSelect: (id: string) => void;
   menuOpen: boolean;
   onToggleMenu: () => void;
@@ -375,6 +382,7 @@ interface RunRowProps {
 
 export function RunRow({
   run,
+  currentRunId,
   onSelect,
   menuOpen,
   onToggleMenu,
@@ -411,7 +419,10 @@ export function RunRow({
     <li className="group relative">
       <button
         onClick={() => onSelect(run.id)}
-        className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent"
+        aria-current={currentRunId === run.id ? "page" : undefined}
+        className={`w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent ${
+          currentRunId === run.id ? "bg-accent" : ""
+        }`}
       >
         <div className="font-medium truncate flex items-center gap-1">
           {run.pinned && <span className="text-xs">📌</span>}

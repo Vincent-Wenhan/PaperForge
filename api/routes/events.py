@@ -75,7 +75,9 @@ async def stream_events(
     event_manager = get_event_manager()
     queue = event_manager.register(run_id)
 
-    cursor = after_seq if after_seq is not None else _last_event_id(request)
+    # A browser reconnect may provide a newer Last-Event-ID than the original
+    # query string. Always resume from the furthest durable cursor.
+    cursor = max(after_seq or 0, _last_event_id(request))
 
     async def event_stream() -> AsyncIterator[str]:
         try:
@@ -108,7 +110,7 @@ async def stream_events(
 
                 try:
                     event = await asyncio.wait_for(queue.get(), timeout=15.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     yield ": ping\n\n"
                     continue
 

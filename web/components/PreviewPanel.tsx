@@ -13,6 +13,8 @@ import { ConsoleLogs } from "./ConsoleLogs";
 import { VerificationReportView } from "./VerificationReportView";
 import { ArtifactCard } from "./ArtifactCard";
 import { EmptyState } from "./Skeleton";
+import { useTheme } from "@/lib/useTheme";
+import { useToast } from "@/lib/toast";
 
 const MonacoEditor = dynamic(() => import("@monaco-editor/react").then((m) => m.default), {
   ssr: false,
@@ -41,6 +43,7 @@ interface EditorTab {
   path: string;
   content: string;
   dirty: boolean;
+  saveState?: "saved" | "saving" | "error";
 }
 
 const SANDBOX_STATUS_LABEL: Record<string, string> = {
@@ -51,9 +54,13 @@ const SANDBOX_STATUS_LABEL: Record<string, string> = {
 };
 
 export function PreviewPanel() {
+  const currentRun = useAppStore((s) => s.currentRun);
   const sandbox = useAppStore((s) => s.sandbox);
+  const preview = useAppStore((s) => s.preview);
   const artifacts = useAppStore((s) => s.artifacts);
   const events = useAppStore((s) => s.events);
+  const appArtifactId = artifacts.find((artifact) => artifact.type === "nextjs_app")?.id;
+  const { toast } = useToast();
 
   const [activeTab, setActiveTab] = useState<Tab>("preview");
   const [tree, setTree] = useState<TreeNode[]>([]);
@@ -61,48 +68,77 @@ export function PreviewPanel() {
   const [activeTabPath, setActiveTabPath] = useState<string | null>(null);
 
   useEffect(() => {
+    let active = true;
+    if (appArtifactId) {
+      api.listAppTree(appArtifactId, currentRun?.id)
+        .then((resp) => {
+          if (active) setTree(buildNestedTree(resp.tree || []));
+        })
+        .catch(() => {
+          if (active) {
+            setTree([]);
+            toast({ title: "Workspace unavailable", description: "Could not load the app file tree.", variant: "error" });
+          }
+        });
+      return () => {
+        active = false;
+      };
+    }
     if (!sandbox) {
       setTree([]);
       return;
     }
-    let active = true;
     api.getFileTree(sandbox.id)
       .then((resp) => {
         if (!active) return;
         setTree(buildNestedTree(resp.tree || []));
       })
       .catch(() => {
-        if (active) setTree([]);
+        if (active) {
+          setTree([]);
+          toast({ title: "Workspace unavailable", description: "Could not load the sandbox file tree.", variant: "error" });
+        }
       });
     return () => {
       active = false;
     };
-  }, [sandbox]);
+  }, [appArtifactId, currentRun?.id, sandbox?.id]);
 
   const refreshTree = async () => {
+    if (appArtifactId) {
+      try {
+        const resp = await api.listAppTree(appArtifactId, currentRun?.id);
+        setTree(buildNestedTree(resp.tree || []));
+      } catch (err) {
+      toast({ title: "Refresh failed", description: err instanceof Error ? err.message : String(err), variant: "error" });
+      }
+      return;
+    }
     if (!sandbox?.id) return;
     try {
       const resp = await api.getFileTree(sandbox.id);
       setTree(buildNestedTree(resp.tree || []));
     } catch (err) {
-      console.error("Failed to refresh tree:", err);
+      toast({ title: "Refresh failed", description: err instanceof Error ? err.message : String(err), variant: "error" });
     }
   };
 
   const openFile = async (path: string) => {
-    if (!sandbox) return;
+    if (!sandbox && !appArtifactId) return;
     const existing = tabs.find((t) => t.path === path);
     if (existing) {
       setActiveTabPath(path);
       return;
     }
     try {
-      const resp = await api.readFile(sandbox.id, path);
-      const newTab: EditorTab = { path, content: resp.content, dirty: false };
+      const resp = appArtifactId
+        ? await api.readAppFile(appArtifactId, path, currentRun?.id)
+        : await api.readFile(sandbox!.id, path);
+      const newTab: EditorTab = { path, content: resp.content, dirty: false, saveState: "saved" };
       setTabs((prev) => [...prev, newTab]);
       setActiveTabPath(path);
     } catch (err) {
-      console.error("Failed to open file:", err);
+      toast({ title: "Open file failed", description: err instanceof Error ? err.message : String(err), variant: "error" });
     }
   };
 
@@ -120,19 +156,25 @@ export function PreviewPanel() {
 
   const updateTabContent = (path: string, content: string) => {
     setTabs((prev) =>
-      prev.map((t) => (t.path === path ? { ...t, content, dirty: true } : t)),
+      prev.map((t) => (t.path === path ? { ...t, content, dirty: true, saveState: "saved" } : t)),
     );
   };
 
   const saveFile = async (path: string) => {
-    if (!sandbox) return;
+    if (!sandbox && !appArtifactId) return;
     const tab = tabs.find((t) => t.path === path);
     if (!tab) return;
+    setTabs((prev) => prev.map((t) => (t.path === path ? { ...t, saveState: "saving" } : t)));
     try {
-      await api.writeFile(sandbox.id, path, tab.content);
-      setTabs((prev) => prev.map((t) => (t.path === path ? { ...t, dirty: false } : t)));
+      if (appArtifactId) {
+        await api.writeAppFile(appArtifactId, path, tab.content, currentRun?.id);
+      } else {
+        await api.writeFile(sandbox!.id, path, tab.content);
+      }
+      setTabs((prev) => prev.map((t) => (t.path === path ? { ...t, dirty: false, saveState: "saved" } : t)));
     } catch (err) {
-      console.error("Failed to save file:", err);
+      setTabs((prev) => prev.map((t) => (t.path === path ? { ...t, saveState: "error" } : t)));
+      toast({ title: "Save failed", description: err instanceof Error ? err.message : String(err), variant: "error" });
     }
   };
 
@@ -170,12 +212,14 @@ export function PreviewPanel() {
         <div className="pr-2 text-xs text-muted-foreground">
           {sandbox
             ? `Sandbox: ${SANDBOX_STATUS_LABEL[sandbox.status] || sandbox.status}`
-            : "No sandbox"}
+            : appArtifactId
+              ? "App workspace ready"
+              : "No sandbox"}
         </div>
       </div>
 
       <div className="flex-1 overflow-hidden">
-        {activeTab === "preview" && <PreviewFrame sandbox={sandbox} />}
+        {activeTab === "preview" && <PreviewFrame sandbox={sandbox} preview={preview} />}
         {activeTab === "code" && (
           <CodeEditor
             tree={tree}
@@ -190,10 +234,10 @@ export function PreviewPanel() {
           />
         )}
         {activeTab === "changes" && (
-          <ChangesList artifacts={artifacts} events={events} />
+          <ChangesList appArtifactId={appArtifactId} runId={currentRun?.id} events={events} />
         )}
         {activeTab === "tests" && (
-          <TestsTab artifacts={artifacts} sandbox={sandbox} />
+          <TestsTab artifacts={artifacts} sandbox={sandbox} preview={preview} />
         )}
         {activeTab === "artifacts" && <ArtifactsList artifacts={artifacts} />}
         {activeTab === "logs" && <ConsoleLogs sandboxId={sandbox?.id} />}
@@ -206,11 +250,13 @@ export function PreviewPanel() {
 
 interface PreviewFrameProps {
   sandbox?: any;
+  preview?: any;
 }
 
-function PreviewFrame({ sandbox }: PreviewFrameProps) {
+function PreviewFrame({ sandbox, preview }: PreviewFrameProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [viewport, setViewport] = useState<"desktop" | "tablet" | "mobile">("desktop");
+  const { toast } = useToast();
 
   const handleRefresh = () => {
     if (iframeRef.current) {
@@ -227,9 +273,22 @@ function PreviewFrame({ sandbox }: PreviewFrameProps) {
   const handleRestart = async () => {
     if (!sandbox?.id) return;
     try {
-      await api.restartSandbox(sandbox.id);
+      const next = await api.restartSandbox(sandbox.id);
+      if (next) {
+        useAppStore.getState().setSandbox(next);
+      }
+      useAppStore.getState().setPreview({
+        status: "starting",
+        sandbox_id: next?.id || sandbox.id,
+      });
+      toast({ title: "Preview restarted", variant: "success" });
     } catch (err) {
-      console.error("Failed to restart sandbox:", err);
+      useAppStore.getState().setPreview({
+        status: "degraded",
+        sandbox_id: sandbox.id,
+        error: err instanceof Error ? err.message : "Failed to restart sandbox",
+      });
+      toast({ title: "Restart failed", description: err instanceof Error ? err.message : String(err), variant: "error" });
     }
   };
 
@@ -237,8 +296,16 @@ function PreviewFrame({ sandbox }: PreviewFrameProps) {
     if (!sandbox?.id) return;
     try {
       await api.stopSandbox(sandbox.id);
+      useAppStore.getState().setSandbox({ ...sandbox, status: "stopped" });
+      useAppStore.getState().setPreview({ status: "stopped", sandbox_id: sandbox.id });
+      toast({ title: "Preview stopped", variant: "default" });
     } catch (err) {
-      console.error("Failed to stop sandbox:", err);
+      useAppStore.getState().setPreview({
+        status: "degraded",
+        sandbox_id: sandbox.id,
+        error: err instanceof Error ? err.message : "Failed to stop sandbox",
+      });
+      toast({ title: "Stop failed", description: err instanceof Error ? err.message : String(err), variant: "error" });
     }
   };
 
@@ -249,6 +316,15 @@ function PreviewFrame({ sandbox }: PreviewFrameProps) {
   }[viewport];
 
   if (!sandbox?.id) {
+    if (preview?.status === "degraded" || preview?.status === "error") {
+      return (
+        <EmptyState
+          icon="⚠️"
+          title="Preview unavailable"
+          description={preview.error || "The preview environment is degraded. Restart the sandbox to try again."}
+        />
+      );
+    }
     return (
       <EmptyState
         icon="🚀"
@@ -326,6 +402,7 @@ function CodeEditor({
   onRefreshTree,
 }: CodeEditorProps) {
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
+  const { theme } = useTheme();
 
   const toggleDir = (path: string) => {
     setExpandedDirs((prev) => {
@@ -399,6 +476,17 @@ function CodeEditor({
                 </button>
               </div>
             ))}
+            {activeTab && (
+              <span className="ml-auto shrink-0 px-3 text-xs text-muted-foreground" role="status">
+                {activeTab.saveState === "saving"
+                  ? "Saving..."
+                  : activeTab.saveState === "error"
+                    ? "Save failed"
+                    : activeTab.dirty
+                      ? "Unsaved changes"
+                      : "Saved"}
+              </span>
+            )}
           </div>
         )}
 
@@ -411,7 +499,7 @@ function CodeEditor({
             onMount={(editor) => {
               editor.addCommand(2048 | 49, () => onSaveFile(activeTab.path));
             }}
-            theme="vs-light"
+            theme={theme === "dark" ? "vs-dark" : "vs-light"}
             options={{
               minimap: { enabled: false },
               fontSize: 13,
@@ -531,11 +619,45 @@ function ArtifactsList({ artifacts }: { artifacts: any[] }) {
 // ===== Changes Tab =====
 
 interface ChangesListProps {
-  artifacts: any[];
+  appArtifactId?: string;
+  runId?: string;
   events: any[];
 }
 
-function ChangesList({ artifacts, events }: ChangesListProps) {
+function ChangesList({ appArtifactId, runId, events }: ChangesListProps) {
+  const [revisions, setRevisions] = useState<any[]>([]);
+
+  const reload = () => {
+    if (!appArtifactId) return;
+    api.listAppRevisions(appArtifactId, runId)
+      .then((response) => setRevisions(response.revisions || []))
+      .catch(() => setRevisions([]));
+  };
+
+  useEffect(() => {
+    if (!appArtifactId) {
+      setRevisions([]);
+      return;
+    }
+    reload();
+  }, [appArtifactId, runId]);
+
+  if (revisions.length > 0) {
+    return (
+      <div className="h-full overflow-y-auto p-3 space-y-3">
+        {revisions.map((revision) => (
+          <RevisionRow
+            key={revision.id}
+            revision={revision}
+            appArtifactId={appArtifactId!}
+            runId={runId}
+            onRestored={reload}
+          />
+        ))}
+      </div>
+    );
+  }
+
   const toolEvents = events.filter(
     (e) => e.type === "tool.call" || e.type === "tool.result"
   );
@@ -591,22 +713,107 @@ function ChangesList({ artifacts, events }: ChangesListProps) {
   );
 }
 
+function RevisionRow({
+  revision,
+  appArtifactId,
+  runId,
+  onRestored,
+}: {
+  revision: any;
+  appArtifactId: string;
+  runId?: string;
+  onRestored: () => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [files, setFiles] = useState<any[]>([]);
+  const { toast } = useToast();
+  const loadDiff = async () => {
+    if (expanded) {
+      setExpanded(false);
+      return;
+    }
+    if (files.length === 0) {
+      try {
+        const detail = await api.getAppRevision(appArtifactId, revision.id, runId);
+        setFiles(detail.files || []);
+      } catch (err) {
+        toast({ title: "Could not load changes", description: err instanceof Error ? err.message : String(err), variant: "error" });
+        return;
+      }
+    }
+    setExpanded(true);
+  };
+  const restore = async () => {
+    try {
+      await api.restoreAppRevision(appArtifactId, revision.id, runId);
+      toast({ title: "Checkpoint restored", variant: "success" });
+      onRestored();
+    } catch (err) {
+      toast({ title: "Restore failed", description: err instanceof Error ? err.message : String(err), variant: "error" });
+    }
+  };
+  return (
+    <div className="border border-border rounded p-2 text-xs">
+      <button onClick={loadDiff} className="w-full text-left">
+        <div className="flex items-center justify-between">
+          <span className="font-medium">{revision.source} revision</span>
+          <span className="text-muted-foreground">{revision.changed_files?.length || 0} files</span>
+        </div>
+        <div className="text-muted-foreground mt-1">{revision.created_at}</div>
+      </button>
+      {expanded && (
+        <div className="mt-2 border-t border-border pt-2 space-y-2">
+          <ul className="space-y-1">
+            {files.map((file) => (
+              <li key={file.path} className="font-mono">
+                <span className={file.before == null ? "text-green-600" : file.after == null ? "text-red-600" : "text-amber-600"}>
+                  {file.before == null ? "A" : file.after == null ? "D" : "M"}
+                </span>{" "}{file.path}
+              </li>
+            ))}
+          </ul>
+          <button onClick={restore} className="px-2 py-1 border border-border rounded hover:bg-accent">
+            Restore checkpoint
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ===== Tests Tab =====
 
 interface TestsTabProps {
   artifacts: any[];
   sandbox?: any;
+  preview?: any;
 }
 
-function TestsTab({ artifacts, sandbox }: TestsTabProps) {
+function TestsTab({ artifacts, sandbox, preview }: TestsTabProps) {
   const verification = artifacts.find((a) => a.type === "verification_report");
   const report = verification?.data?.report ?? verification?.data ?? null;
 
-  const checks = [
+  type CheckStatus = "pass" | "fail" | "pending";
+  type VerificationCheck = {
+    id: string;
+    label: string;
+    status: CheckStatus;
+    detail: string;
+  };
+
+  const layerChecks = Array.isArray(report?.layers)
+    ? report.layers.map((layer: any) => ({
+        id: layer.id,
+        label: layer.name || layer.id,
+        status: (layer.status === "passed" ? "pass" : layer.status === "failed" ? "fail" : "pending") as CheckStatus,
+        detail: layer.fallback_reason || layer.reason || layer.status,
+      }))
+    : [];
+  const checks: VerificationCheck[] = layerChecks.length > 0 ? layerChecks : [
     {
       id: "build",
       label: "Build",
-      status: report?.build_succeeded ? "pass" : "fail",
+      status: report ? (report.build_succeeded ? "pass" : "fail") : "pending",
       detail: report?.build_succeeded
         ? "Build succeeded"
         : "Build failed",
@@ -614,7 +821,7 @@ function TestsTab({ artifacts, sandbox }: TestsTabProps) {
     {
       id: "typecheck",
       label: "Type check",
-      status: report?.type_errors?.length === 0 ? "pass" : "fail",
+      status: report ? (report.type_errors?.length === 0 ? "pass" : "fail") : "pending",
       detail: report?.type_errors?.length
         ? `${report.type_errors.length} type error(s)`
         : "No type errors",
@@ -622,7 +829,7 @@ function TestsTab({ artifacts, sandbox }: TestsTabProps) {
     {
       id: "lint",
       label: "Lint",
-      status: report?.lint_errors?.length === 0 ? "pass" : "fail",
+      status: report ? (report.lint_errors?.length === 0 ? "pass" : "fail") : "pending",
       detail: report?.lint_errors?.length
         ? `${report.lint_errors.length} lint error(s)`
         : "No lint errors",
@@ -630,8 +837,10 @@ function TestsTab({ artifacts, sandbox }: TestsTabProps) {
     {
       id: "preview",
       label: "Preview",
-      status: sandbox?.status === "running" ? "pass" : "fail",
-      detail: sandbox?.status === "running"
+      status: preview?.status === "running" ? "pass" : preview?.status === "degraded" ? "fail" : "pending",
+      detail: preview?.status === "degraded"
+        ? preview.error || "Preview environment degraded"
+        : preview?.status === "running"
         ? "Preview server running"
         : "Preview not started",
     },
@@ -656,7 +865,7 @@ function TestsTab({ artifacts, sandbox }: TestsTabProps) {
                 : "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-200"
             }`}
           >
-            {check.status === "pass" ? "PASS" : "FAIL"}
+            {check.status === "pass" ? "PASS" : check.status === "fail" ? "FAIL" : "PENDING"}
           </span>
         </div>
       ))}

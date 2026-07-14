@@ -11,12 +11,10 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from paperforge.config import get_config
-from paperforge.llm.base import LLMClient, Message, ToolCall, ToolDefinition
+from paperforge.llm.base import LLMClient, ToolDefinition
 from paperforge.orchestrator.events import EventEmitter
 from paperforge.schemas.tool_result import ToolResult, ToolStatus
 from paperforge.storage.db import Storage
-
 
 # ===== Tool Definitions =====
 
@@ -88,26 +86,56 @@ TOOL_DEFINITIONS = [
     ),
     ToolDefinition(
         name="verify_app",
-        description="Verify a generated Next.js app builds and matches the PRD.",
+        description="Verify a generated Next.js app builds and matches the PRD. Prefer app_artifact_id.",
         input_schema={
             "type": "object",
             "properties": {
+                "app_artifact_id": {"type": "string"},
                 "app_path": {"type": "string"},
                 "prd_id": {"type": "string"},
             },
-            "required": ["app_path"],
+            "required": [],
+        },
+    ),
+    ToolDefinition(
+        name="build_and_repair",
+        description="Verify an app and apply bounded repairs when build, type, or lint checks fail.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "app_artifact_id": {"type": "string"},
+                "app_path": {"type": "string"},
+                "prd_id": {"type": "string"},
+                "max_attempts": {"type": "integer", "minimum": 1, "maximum": 3},
+            },
+            "required": [],
+        },
+    ),
+    ToolDefinition(
+        name="repair_app",
+        description="Repair a generated app from the latest verification report, then re-run verification.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "app_artifact_id": {"type": "string"},
+                "app_path": {"type": "string"},
+                "prd_id": {"type": "string"},
+                "max_attempts": {"type": "integer", "minimum": 1, "maximum": 3},
+            },
+            "required": [],
         },
     ),
     ToolDefinition(
         name="run_in_sandbox",
-        description="Launch a generated app in a Docker sandbox for live preview.",
+        description="Launch a generated app in a Docker sandbox for live preview. Prefer app_artifact_id.",
         input_schema={
             "type": "object",
             "properties": {
+                "app_artifact_id": {"type": "string"},
                 "app_path": {"type": "string"},
                 "run_id": {"type": "string"},
             },
-            "required": ["app_path"],
+            "required": [],
         },
     ),
     ToolDefinition(
@@ -117,6 +145,15 @@ TOOL_DEFINITIONS = [
             "type": "object",
             "properties": {"sandbox_id": {"type": "string"}},
             "required": ["sandbox_id"],
+        },
+    ),
+    ToolDefinition(
+        name="restart_sandbox",
+        description="Restart the latest sandbox for a run or a specified sandbox.",
+        input_schema={
+            "type": "object",
+            "properties": {"sandbox_id": {"type": "string"}},
+            "required": [],
         },
     ),
     ToolDefinition(
@@ -142,11 +179,123 @@ class ToolContext:
         storage: Storage,
         llm: LLMClient,
         emit: EventEmitter,
+        sandbox_manager: Any | None = None,
     ) -> None:
         self.run_id = run_id
         self.storage = storage
         self.llm = llm
         self.emit = emit
+        self._sandbox_manager: Any | None = sandbox_manager
+
+    def get_sandbox_manager(self) -> Any:
+        """Return one manager for all sandbox operations in this run."""
+        if self._sandbox_manager is None:
+            from paperforge.sandbox.docker_runner import DockerSandboxManager
+
+            self._sandbox_manager = DockerSandboxManager(storage=self.storage)
+        return self._sandbox_manager
+
+
+async def _finalize_verification_runtime(
+    ctx: ToolContext,
+    sandbox: dict[str, Any],
+    *,
+    runtime_ok: bool,
+    runtime_error: str | None = None,
+) -> dict[str, Any] | None:
+    """Persist runtime and browser acceptance results on the latest report."""
+    report_rows = ctx.storage.list_artifacts(
+        run_id=ctx.run_id,
+        artifact_type="verification_report",
+    )
+    if not report_rows:
+        return None
+
+    artifact = ctx.storage.get_artifact(report_rows[0]["id"])
+    if not artifact:
+        return None
+    report = artifact.get("data") or {}
+    layers = report.get("layers") or []
+    runtime_layer = next((layer for layer in layers if layer.get("id") == "runtime"), None)
+    if runtime_layer is None:
+        runtime_layer = {"id": "runtime", "name": "Runtime readiness"}
+        layers.append(runtime_layer)
+    runtime_layer.update(
+        {
+            "status": "passed" if runtime_ok else "failed",
+            "preview_url": (
+                f"http://127.0.0.1:{sandbox.get('preview_port')}/"
+                if runtime_ok and sandbox.get("preview_port")
+                else None
+            ),
+            "reason": runtime_error or "Preview server responded successfully.",
+        }
+    )
+    report["layers"] = layers
+    report["runtime_status"] = "passed" if runtime_ok else "failed"
+
+    prd: dict[str, Any] | None = None
+    if report.get("prd_id"):
+        prd_artifact = ctx.storage.get_artifact(report["prd_id"])
+        prd = (prd_artifact or {}).get("data") or None
+
+    smoke: dict[str, Any]
+    if runtime_ok and sandbox.get("preview_port"):
+        from paperforge.agents.browser_smoke import run_browser_smoke
+
+        try:
+            smoke = await run_browser_smoke(
+                f"http://127.0.0.1:{sandbox['preview_port']}/",
+                prd,
+                ctx.storage.reports_dir / "browser_smoke" / ctx.run_id,
+            )
+        except Exception as exc:
+            smoke = {
+                "status": "failed",
+                "checks": [],
+                "console_errors": [],
+                "failed_requests": [],
+                "reason": str(exc),
+            }
+    else:
+        smoke = {
+            "status": "skipped",
+            "checks": [],
+            "console_errors": [],
+            "failed_requests": [],
+            "reason": runtime_error or "Preview was not ready.",
+        }
+
+    acceptance_layer = next(
+        (layer for layer in layers if layer.get("id") == "acceptance"),
+        None,
+    )
+    if acceptance_layer is None:
+        acceptance_layer = {"id": "acceptance", "name": "Product acceptance"}
+        layers.append(acceptance_layer)
+    missing_features = report.get("missing_features") or []
+    if missing_features:
+        acceptance_status = "failed"
+    elif smoke["status"] == "passed":
+        acceptance_status = "passed"
+    elif smoke["status"] == "failed":
+        acceptance_status = "failed"
+    else:
+        acceptance_status = "pending"
+    acceptance_layer.update(
+        {
+            "status": acceptance_status,
+            "browser_smoke": smoke,
+            "missing_features": missing_features,
+        }
+    )
+    report["layers"] = layers
+    report["acceptance_status"] = acceptance_status
+    report["browser_smoke"] = smoke
+    updated = ctx.storage.update_artifact(artifact["id"], data=report)
+    if updated:
+        await ctx.emit.artifact_updated(artifact["id"], report)
+    return report
 
 
 # ===== Dispatcher =====
@@ -163,29 +312,101 @@ async def dispatch_tool(
         "plan_product": handle_plan_product,
         "generate_nextjs_app": handle_generate,
         "verify_app": handle_verify,
+        "build_and_repair": handle_build_and_repair,
+        "repair_app": handle_repair,
         "run_in_sandbox": handle_run_sandbox,
         "stop_sandbox": handle_stop_sandbox,
+        "restart_sandbox": handle_restart_sandbox,
         "finish": handle_finish,
     }
 
     handler = handlers.get(name)
     if not handler:
-        result = ToolResult(ok=False, tool=name, error=f"Unknown tool: {name}")
+        result = ToolResult(
+            ok=False,
+            tool=name,
+            error=f"Unknown tool: {name}",
+            code="unknown_tool",
+        )
         return result.model_dump_json()
 
     try:
         result = await handler(args, ctx)
         if isinstance(result, ToolResult):
             return result.model_dump_json()
-        if isinstance(result, (dict, list)):
+        if isinstance(result, dict | list):
             return json.dumps(result, ensure_ascii=False, default=str)
         return str(result)
     except Exception as e:
-        result = ToolResult(ok=False, tool=name, error=str(e))
+        result = ToolResult(
+            ok=False,
+            tool=name,
+            error=str(e),
+            code="tool_exception",
+            retryable=True,
+        )
         return result.model_dump_json()
 
 
 # ===== Tool Handlers =====
+
+def _resolve_app_path(args: dict[str, Any], ctx: ToolContext) -> str:
+    """Resolve an app artifact to its server-owned workspace path.
+
+    ``app_path`` remains a compatibility input for trusted internal callers;
+    LLM-facing calls should pass ``app_artifact_id`` so ownership is checked.
+    """
+    artifact_id = args.get("app_artifact_id")
+    if artifact_id:
+        artifact = ctx.storage.get_artifact(artifact_id)
+        if not artifact:
+            raise ValueError(f"App artifact not found: {artifact_id}")
+        if artifact.get("type") != "nextjs_app":
+            raise ValueError(f"Artifact is not a Next.js app: {artifact_id}")
+        if artifact.get("run_id") != ctx.run_id:
+            raise PermissionError("App artifact does not belong to this run")
+        metadata = artifact.get("metadata") or {}
+        data = artifact.get("data") or {}
+        app_path = metadata.get("app_path") or data.get("app_path")
+        if not app_path:
+            raise ValueError(f"App artifact has no workspace path: {artifact_id}")
+        resolved = Path(app_path).resolve()
+        try:
+            resolved.relative_to(ctx.storage.apps_dir.resolve())
+        except (ValueError, RuntimeError) as exc:
+            raise PermissionError("App path is outside the server workspace") from exc
+        if resolved == ctx.storage.apps_dir.resolve():
+            raise PermissionError("App path must name a generated app workspace")
+        if not resolved.exists() or not resolved.is_dir():
+            raise FileNotFoundError(f"App path not found: {resolved}")
+        return str(resolved)
+
+    app_path = args.get("app_path")
+    if not app_path:
+        raise ValueError("Either app_artifact_id or app_path must be provided")
+    resolved = Path(app_path).resolve()
+    try:
+        resolved.relative_to(ctx.storage.apps_dir.resolve())
+    except (ValueError, RuntimeError) as exc:
+        raise PermissionError("App path is outside the server workspace") from exc
+    if resolved == ctx.storage.apps_dir.resolve():
+        raise PermissionError("App path must name a generated app workspace")
+    owned = False
+    for artifact in ctx.storage.list_artifacts(run_id=ctx.run_id, artifact_type="nextjs_app"):
+        metadata = artifact.get("metadata") or {}
+        if isinstance(metadata, str):
+            try:
+                metadata = json.loads(metadata)
+            except json.JSONDecodeError:
+                metadata = {}
+        if Path(metadata.get("app_path", "")).resolve() == resolved:
+            owned = True
+            break
+    if not owned:
+        raise PermissionError("App path does not belong to this run")
+    if not resolved.exists() or not resolved.is_dir():
+        raise FileNotFoundError(f"App path not found: {resolved}")
+    return str(resolved)
 
 async def handle_parse_paper(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
     """Parse a PDF and extract a capability card.
@@ -243,6 +464,7 @@ async def handle_parse_paper(args: dict[str, Any], ctx: ToolContext) -> ToolResu
         artifact_id=artifact_id,
         data={"card_id": paper_id, "card": card_data},
         summary=f"Parsed paper '{paper_id}' into capability card.",
+        next_phase="parsed",
     )
 
 
@@ -269,6 +491,7 @@ async def handle_compose(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
             "composition": composition,
         },
         summary=f"Composed {len(card_ids)} capability cards into product candidates.",
+        next_phase="composed",
     )
 
 
@@ -307,6 +530,7 @@ async def handle_plan_product(args: dict[str, Any], ctx: ToolContext) -> ToolRes
         return ToolResult(
             tool="plan_product",
             status=ToolStatus.BLOCKED,
+            code="needs_user_input",
             data={"questions": questions},
             summary="Need more input from user before generating PRD.",
             stop_loop=True,
@@ -335,7 +559,18 @@ async def handle_generate(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
     from paperforge.agents.nextjs_generator import generate_nextjs_app
 
     prd_id = args["prd_id"]
-    output_dir = args.get("output_dir") or str(ctx.storage.apps_dir / f"app_{uuid.uuid4().hex[:6]}")
+    requested_output = args.get("output_dir")
+    if requested_output:
+        requested_path = Path(requested_output).resolve()
+        try:
+            requested_path.relative_to(ctx.storage.apps_dir.resolve())
+        except ValueError as exc:
+            raise ValueError("output_dir must be inside the server app workspace") from exc
+        if requested_path == ctx.storage.apps_dir.resolve():
+            raise ValueError("output_dir must name a child app directory")
+        output_dir = str(requested_path)
+    else:
+        output_dir = str(ctx.storage.apps_dir / f"app_{uuid.uuid4().hex[:6]}")
 
     manifest = await generate_nextjs_app(
         prd_id=prd_id,
@@ -350,6 +585,12 @@ async def handle_generate(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         data=manifest,
         metadata={"app_path": output_dir},
     )
+    revision = ctx.storage.create_workspace_revision(
+        run_id=ctx.run_id,
+        app_id=artifact_id,
+        source="generator",
+        app_path=output_dir,
+    )
     await ctx.emit.artifact_created("nextjs_app", output_dir, artifact_id)
 
     return ToolResult(
@@ -360,8 +601,10 @@ async def handle_generate(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
             "app_id": manifest.get("app_id"),
             "app_path": output_dir,
             "manifest": manifest,
+            "revision_id": revision["id"],
         },
         summary=f"Generated Next.js app at {output_dir}.",
+        next_phase="generated",
     )
 
 
@@ -369,7 +612,7 @@ async def handle_verify(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
     """Verify a generated Next.js app, running the full build/lint/typecheck."""
     from paperforge.agents.verifier import verify_app
 
-    app_path = args["app_path"]
+    app_path = _resolve_app_path(args, ctx)
     prd_id = args.get("prd_id")
 
     report = await verify_app(
@@ -398,49 +641,164 @@ async def handle_verify(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
     )
 
 
+async def handle_build_and_repair(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+    """Run bounded verification/repair and keep failed work recoverable."""
+    from paperforge.agents.verifier import build_and_repair
+
+    app_path = _resolve_app_path(args, ctx)
+    report = await build_and_repair(
+        app_path=app_path,
+        prd_id=args.get("prd_id"),
+        llm=ctx.llm,
+        storage=ctx.storage,
+        max_attempts=min(max(int(args.get("max_attempts", 3)), 1), 3),
+    )
+    artifact_id = ctx.storage.save_artifact(
+        run_id=ctx.run_id,
+        artifact_type="verification_report",
+        data=report,
+        metadata={"app_path": app_path, "workflow": "build_and_repair"},
+    )
+    await ctx.emit.artifact_created(
+        "verification_report",
+        str(ctx.storage.reports_dir),
+        artifact_id,
+    )
+    app_artifact_id = args.get("app_artifact_id")
+    revision_id = None
+    if app_artifact_id:
+        revision = ctx.storage.create_workspace_revision(
+            run_id=ctx.run_id,
+            app_id=app_artifact_id,
+            source="repair",
+            app_path=app_path,
+        )
+        revision_id = revision["id"]
+    ready = bool(report.get("ready_for_preview"))
+    return ToolResult(
+        tool="build_and_repair",
+        status=ToolStatus.SUCCEEDED if ready else ToolStatus.FAILED,
+        artifact_id=artifact_id,
+        data={"report": report, "revision_id": revision_id},
+        summary="Build and repair completed." if ready else "Build and repair needs another iteration.",
+        code=None if ready else "verification_failed",
+        retryable=not ready,
+        next_phase="verified" if ready else None,
+    )
+
+
+async def handle_repair(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+    """Compatibility name used by the product workflow specification."""
+    result = await handle_build_and_repair(args, ctx)
+    return result.model_copy(update={"tool": "repair_app"})
+
+
 async def handle_run_sandbox(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
     """Launch a generated app in a Docker sandbox."""
-    from paperforge.sandbox.docker_runner import DockerSandboxManager
-
-    app_path = args["app_path"]
+    app_path = _resolve_app_path(args, ctx)
     run_id = args.get("run_id", ctx.run_id)
+    if run_id != ctx.run_id:
+        return ToolResult(
+            tool="run_in_sandbox",
+            status=ToolStatus.FAILED,
+            error="Sandbox run_id must match the current run",
+            code="run_ownership_mismatch",
+        )
 
-    manager = DockerSandboxManager(storage=ctx.storage)
+    manager = ctx.get_sandbox_manager()
+    if manager is None:
+        return ToolResult(
+            tool="run_in_sandbox",
+            status=ToolStatus.FAILED,
+            error="Docker sandbox is unavailable",
+            code="sandbox_unavailable",
+            retryable=True,
+        )
     try:
         sandbox = await manager.start(run_id=run_id, app_path=app_path)
+    except FileNotFoundError as exc:
+        await ctx.emit.sandbox_error(str(exc))
+        return ToolResult(
+            tool="run_in_sandbox",
+            status=ToolStatus.FAILED,
+            error=str(exc),
+            code="app_not_found",
+            retryable=False,
+        )
     except Exception as e:
         await ctx.emit.sandbox_error(str(e))
         return ToolResult(
             tool="run_in_sandbox",
             status=ToolStatus.FAILED,
             error=str(e),
+            code="sandbox_start_failed",
+            retryable=True,
         )
 
     if sandbox.get("status") != "running":
+        ctx.storage.update_sandbox(
+            sandbox["id"],
+            preview_status="degraded",
+            error=sandbox.get("error") or "Sandbox failed to start",
+        )
         await ctx.emit.sandbox_error(
             sandbox.get("error") or "Sandbox failed to start"
+        )
+        await _finalize_verification_runtime(
+            ctx,
+            sandbox,
+            runtime_ok=False,
+            runtime_error=sandbox.get("error") or "Sandbox failed to start",
         )
         return ToolResult(
             tool="run_in_sandbox",
             status=ToolStatus.FAILED,
             error=sandbox.get("error") or "Sandbox did not enter running state",
+            code="sandbox_unavailable",
+            data={"sandbox": sandbox, "environment": "docker"},
+            retryable=True,
         )
 
     await ctx.emit.sandbox_started(sandbox["id"], sandbox.get("container_id", ""), sandbox.get("preview_port", 0))
+    ctx.storage.update_sandbox(
+        sandbox["id"],
+        preview_status="starting",
+        error=None,
+    )
 
     # Wait for the Next.js dev server to be ready before emitting preview.ready
     ready = await manager.wait_for_ready(sandbox["id"], timeout=60)
     if not ready:
+        ctx.storage.update_sandbox(
+            sandbox["id"],
+            preview_status="degraded",
+            error="Preview server did not become HTTP-ready within 60 seconds",
+        )
         await ctx.emit.sandbox_error(f"Sandbox {sandbox['id']} failed health check within 60s")
+        await _finalize_verification_runtime(
+            ctx,
+            sandbox,
+            runtime_ok=False,
+            runtime_error="Preview server did not become HTTP-ready within 60 seconds",
+        )
         return ToolResult(
             tool="run_in_sandbox",
             status=ToolStatus.FAILED,
             error="Preview server did not become HTTP-ready within 60 seconds",
+            code="preview_not_ready",
+            data={"sandbox_id": sandbox["id"], "environment": "docker"},
             retryable=True,
         )
 
     preview_url = f"/api/preview/{sandbox['id']}/"
+    ctx.storage.update_sandbox(
+        sandbox["id"],
+        preview_status="running",
+        preview_url=preview_url,
+        error=None,
+    )
     await ctx.emit.preview_ready(sandbox["id"], preview_url)
+    report = await _finalize_verification_runtime(ctx, sandbox, runtime_ok=True)
     return ToolResult(
         tool="run_in_sandbox",
         status=ToolStatus.SUCCEEDED,
@@ -450,6 +808,7 @@ async def handle_run_sandbox(args: dict[str, Any], ctx: ToolContext) -> ToolResu
             "preview_port": sandbox.get("preview_port"),
             "preview_url": preview_url,
             "status": sandbox.get("status"),
+            "verification": report,
         },
         summary=f"Launched sandbox {sandbox['id']} on port {sandbox.get('preview_port')}.",
         next_phase="preview_ready",
@@ -458,16 +817,131 @@ async def handle_run_sandbox(args: dict[str, Any], ctx: ToolContext) -> ToolResu
 
 async def handle_stop_sandbox(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
     """Stop a running sandbox."""
-    from paperforge.sandbox.docker_runner import DockerSandboxManager
-
     sandbox_id = args["sandbox_id"]
-    manager = DockerSandboxManager(storage=ctx.storage)
+    sandbox = ctx.storage.get_sandbox(sandbox_id)
+    if not sandbox or sandbox.get("run_id") != ctx.run_id:
+        return ToolResult(
+            tool="stop_sandbox",
+            status=ToolStatus.FAILED,
+            error="Sandbox does not belong to this run",
+            code="sandbox_not_found",
+        )
+    manager = ctx.get_sandbox_manager()
+    if manager is None:
+        return ToolResult(
+            tool="stop_sandbox",
+            status=ToolStatus.FAILED,
+            error="Docker sandbox is unavailable",
+            code="sandbox_unavailable",
+        )
     await manager.stop(sandbox_id)
     return ToolResult(
         tool="stop_sandbox",
         status=ToolStatus.SUCCEEDED,
         data={"sandbox_id": sandbox_id, "status": "stopped"},
         summary=f"Stopped sandbox {sandbox_id}.",
+    )
+
+
+async def handle_restart_sandbox(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+    """Restart a sandbox and report whether its preview became ready."""
+    manager = ctx.get_sandbox_manager()
+    sandbox_id = args.get("sandbox_id")
+    if not sandbox_id:
+        latest = ctx.storage.get_latest_sandbox_for_run(ctx.run_id)
+        sandbox_id = latest["id"] if latest else None
+    if not sandbox_id:
+        return ToolResult(
+            tool="restart_sandbox",
+            status=ToolStatus.FAILED,
+            error="No sandbox exists for this run",
+            code="sandbox_not_found",
+        )
+
+    existing = ctx.storage.get_sandbox(sandbox_id)
+    if not existing or existing.get("run_id") != ctx.run_id:
+        return ToolResult(
+            tool="restart_sandbox",
+            status=ToolStatus.FAILED,
+            error="Sandbox does not belong to this run",
+            code="sandbox_not_found",
+        )
+    if manager is None:
+        return ToolResult(
+            tool="restart_sandbox",
+            status=ToolStatus.FAILED,
+            error="Docker sandbox is unavailable",
+            code="sandbox_unavailable",
+        )
+
+    try:
+        sandbox = await manager.restart(sandbox_id)
+    except Exception as exc:
+        return ToolResult(
+            tool="restart_sandbox",
+            status=ToolStatus.FAILED,
+            error=str(exc),
+            code="sandbox_restart_failed",
+            retryable=True,
+        )
+
+    if sandbox.get("status") != "running":
+        ctx.storage.update_sandbox(
+            sandbox["id"],
+            preview_status="degraded",
+            error=sandbox.get("error") or "Sandbox did not enter running state",
+        )
+        await _finalize_verification_runtime(
+            ctx,
+            sandbox,
+            runtime_ok=False,
+            runtime_error=sandbox.get("error") or "Sandbox did not enter running state",
+        )
+        return ToolResult(
+            tool="restart_sandbox",
+            status=ToolStatus.FAILED,
+            error=sandbox.get("error") or "Sandbox did not enter running state",
+            code="sandbox_unavailable",
+            data={"sandbox": sandbox},
+            retryable=True,
+        )
+
+    ready = await manager.wait_for_ready(sandbox["id"], timeout=60)
+    if not ready:
+        ctx.storage.update_sandbox(
+            sandbox["id"],
+            preview_status="degraded",
+            error="Preview server did not become HTTP-ready after restart",
+        )
+        await _finalize_verification_runtime(
+            ctx,
+            sandbox,
+            runtime_ok=False,
+            runtime_error="Preview server did not become HTTP-ready after restart",
+        )
+        return ToolResult(
+            tool="restart_sandbox",
+            status=ToolStatus.FAILED,
+            error="Preview server did not become HTTP-ready after restart",
+            code="preview_not_ready",
+            data={"sandbox": sandbox},
+            retryable=True,
+        )
+    preview_url = f"/api/preview/{sandbox['id']}/"
+    ctx.storage.update_sandbox(
+        sandbox["id"],
+        preview_status="running",
+        preview_url=preview_url,
+        error=None,
+    )
+    await ctx.emit.preview_ready(sandbox["id"], preview_url)
+    report = await _finalize_verification_runtime(ctx, sandbox, runtime_ok=True)
+    return ToolResult(
+        tool="restart_sandbox",
+        status=ToolStatus.SUCCEEDED,
+        data={"sandbox": sandbox, "preview_url": preview_url, "verification": report},
+        summary=f"Restarted sandbox {sandbox['id']}.",
+        next_phase="preview_ready",
     )
 
 

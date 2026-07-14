@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
+import json
 import re
-import shutil
-import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, UploadFile
@@ -14,6 +13,7 @@ from pydantic import BaseModel
 from paperforge.storage.db import get_storage
 
 router = APIRouter()
+MAX_PDF_SIZE = 25 * 1024 * 1024
 
 
 class PaperUpdate(BaseModel):
@@ -37,6 +37,14 @@ async def upload_paper(file: UploadFile) -> dict:
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
 
+    payload = await file.read(MAX_PDF_SIZE + 1)
+    if not payload:
+        raise HTTPException(status_code=400, detail="PDF file is empty")
+    if len(payload) > MAX_PDF_SIZE:
+        raise HTTPException(status_code=413, detail="PDF file is too large")
+    if not payload.startswith(b"%PDF-"):
+        raise HTTPException(status_code=400, detail="Uploaded file is not a valid PDF")
+
     storage = get_storage()
     paper_id = _slugify(Path(file.filename).stem)
     if storage.get_paper(paper_id):
@@ -46,8 +54,7 @@ async def upload_paper(file: UploadFile) -> dict:
         paper_id = f"{paper_id}_{suffix}"
 
     pdf_path = storage.library_dir / f"{paper_id}.pdf"
-    with open(pdf_path, "wb") as f:
-        shutil.copyfileobj(file.file, f)
+    pdf_path.write_bytes(payload)
 
     paper = storage.upsert_paper(
         paper_id=paper_id,
@@ -64,7 +71,14 @@ async def get_paper(paper_id: str) -> dict:
     paper = storage.get_paper(paper_id)
     if not paper:
         raise HTTPException(status_code=404, detail="Paper not found")
-    return {"paper": paper}
+    capability_card = None
+    card_path = paper.get("card_path")
+    if card_path and Path(card_path).exists():
+        try:
+            capability_card = json.loads(Path(card_path).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            capability_card = None
+    return {"paper": paper, "capability_card": capability_card}
 
 
 @router.patch("/{paper_id}")

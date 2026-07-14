@@ -74,7 +74,6 @@ async def generate_nextjs_app(
 
     app_id = f"app_{uuid.uuid4().hex[:8]}"
     final_dir = Path(output_dir).resolve()
-    final_dir.mkdir(parents=True, exist_ok=True)
 
     apps_root = storage.apps_dir.resolve()
     try:
@@ -83,6 +82,9 @@ async def generate_nextjs_app(
         raise ValueError(
             f"output_dir must be inside {apps_root}, got {final_dir}"
         ) from exc
+    if final_dir == apps_root:
+        raise ValueError("output_dir must name a child app directory")
+    final_dir.mkdir(parents=True, exist_ok=True)
 
     # Step 1: copy template scaffolding into a temp dir under apps_root.
     if not TEMPLATE_DIR.exists():

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
   Panel,
@@ -8,7 +8,8 @@ import {
   PanelResizeHandle,
 } from "react-resizable-panels";
 import { api } from "@/lib/api";
-import { useAppStore, type Run } from "@/lib/store";
+import { useAppStore } from "@/lib/store";
+import { useRunSession } from "@/lib/useRunSession";
 import { useIsMobile, useIsTablet } from "@/lib/useMediaQuery";
 import { Sidebar } from "@/components/Sidebar";
 import { ChatPanel } from "@/components/ChatPanel";
@@ -24,24 +25,13 @@ export default function RunWorkspacePage() {
   const isTablet = useIsTablet();
   const [runs, setRuns] = useState<any[]>([]);
   const [library, setLibrary] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [activePanel, setActivePanel] = useState<"chat" | "preview">("chat");
-
-  const setCurrentRun = useAppStore((s) => s.setCurrentRun);
-  const setSandbox = useAppStore((s) => s.setSandbox);
-  const setArtifacts = useAppStore((s) => s.setArtifacts);
-  const setPendingApprovals = useAppStore((s) => s.setPendingApprovals);
-
-  const loadRuns = useCallback(() => {
-    api.listRuns().then(setRuns).catch(console.error);
-  }, []);
-  const loadLibrary = useCallback(() => {
-    api.listLibrary().then((resp) => setLibrary(resp.papers || [])).catch(console.error);
-  }, []);
+  const session = useRunSession(params.id);
+  const currentRun = useAppStore((s) => s.currentRun);
+  const currentRunId = useAppStore((s) => s.currentRun?.id);
 
   useEffect(() => {
     Promise.all([api.listRuns(), api.listLibrary()])
@@ -52,53 +42,19 @@ export default function RunWorkspacePage() {
       .catch(console.error);
   }, []);
 
-  useEffect(() => {
-    if (!params.id) return;
-    setLoading(true);
-    setError(null);
-    Promise.all([
-      api.getRun(params.id),
-      api.listArtifacts(params.id, true),
-      api.listApprovals(params.id),
-    ])
-      .then(([run, arts, approvals]) => {
-        setCurrentRun(run as Run);
-        setArtifacts(arts);
-        const pending = approvals.filter((a) => a.status === "pending");
-        setPendingApprovals(pending);
-        setLoading(false);
-      })
-      .catch((err) => {
-        setError(err.message || "Failed to load run");
-        setLoading(false);
-      });
-  }, [params.id, setCurrentRun, setArtifacts, setPendingApprovals]);
+  const loading = session.loading;
+  const error = session.error?.userMessage || null;
 
   useEffect(() => {
-    if (!params.id) return;
-    api.listSandboxes()
-      .then((sandboxes) => {
-        const runSb = sandboxes.filter((s) => s.run_id === params.id);
-        if (runSb.length > 0) {
-          const latest = runSb.sort((a, b) =>
-            String(b.started_at).localeCompare(String(a.started_at))
-          )[0];
-          setSandbox(latest);
-        } else {
-          setSandbox(null);
-        }
-      })
-      .catch(() => setSandbox(null));
-  }, [params.id, setSandbox]);
-
-  useEffect(() => {
-    if (!params.id) return;
-    api.getLatestSandboxForRun(params.id)
-      .then((sb) => {
-        if (sb) setSandbox(sb);
-      })
-      .catch(() => {});
-  }, [params.id, setSandbox]);
+    if (!currentRun) return;
+    setRuns((prev) => {
+      const index = prev.findIndex((run) => run.id === currentRun.id);
+      if (index < 0) return [currentRun, ...prev];
+      const next = [...prev];
+      next[index] = { ...next[index], ...currentRun };
+      return next;
+    });
+  }, [currentRun]);
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
@@ -126,48 +82,16 @@ export default function RunWorkspacePage() {
     return (
       <>
         <div className="flex h-screen w-screen flex-col overflow-hidden">
-          <GlobalHeader onToggleCommandPalette={() => setPaletteOpen(true)} />
+           <GlobalHeader
+             onToggleCommandPalette={() => setPaletteOpen(true)}
+             currentRun={currentRun}
+             connectionStatus={session.error ? "error" : "connecting"}
+           />
           <div className="flex flex-1 overflow-hidden">
             <SidebarSkeleton />
             <div className="flex-1 p-4 space-y-4">
               <SkeletonMessage />
               <SkeletonMessage />
-            </div>
-          </div>
-        </div>
-        <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
-      </>
-    );
-  }
-
-  if (error) {
-    return (
-      <>
-        <div className="flex h-screen w-screen flex-col overflow-hidden">
-          <GlobalHeader onToggleCommandPalette={() => setPaletteOpen(true)} />
-          <div className="flex flex-1 overflow-hidden">
-            <Sidebar
-              runs={runs}
-              library={library}
-              onNewRun={handleNewRun}
-              onSelectRun={handleSelectRun}
-            />
-            <div className="flex-1 flex flex-col items-center justify-center gap-3 text-muted-foreground">
-              <p className="text-destructive">{error}</p>
-              <div className="flex gap-2">
-                <button
-                  onClick={handleNewRun}
-                  className="px-3 py-1.5 bg-primary text-primary-foreground rounded text-sm"
-                >
-                  New Run
-                </button>
-                <button
-                  onClick={() => router.push("/")}
-                  className="px-3 py-1.5 border rounded text-sm"
-                >
-                  Back to home
-                </button>
-              </div>
             </div>
           </div>
         </div>
@@ -182,7 +106,11 @@ export default function RunWorkspacePage() {
   return (
     <>
       <div className="flex h-screen w-screen flex-col overflow-hidden">
-        <GlobalHeader onToggleCommandPalette={() => setPaletteOpen(true)} />
+         <GlobalHeader
+           onToggleCommandPalette={() => setPaletteOpen(true)}
+           currentRun={currentRun}
+           connectionStatus={session.error ? "error" : session.loading ? "connecting" : "connected"}
+         />
         <div className="flex flex-1 overflow-hidden">
           {isMobile && mobileSidebarOpen ? (
             <Sidebar
@@ -190,6 +118,7 @@ export default function RunWorkspacePage() {
               library={library}
               onNewRun={handleNewRun}
               onSelectRun={handleSelectRun}
+              currentRunId={currentRunId}
               onCloseMobile={() => setMobileSidebarOpen(false)}
               onOpenPaper={(paperId) => router.push(`/library/${paperId}`)}
               onAttachPaper={(paper) => {
@@ -208,6 +137,7 @@ export default function RunWorkspacePage() {
               library={library}
               onNewRun={handleNewRun}
               onSelectRun={handleSelectRun}
+              currentRunId={currentRunId}
               collapsed={sidebarCollapsed}
               onToggleCollapse={() =>
                 setSidebarCollapsed((v) => !v)
@@ -229,6 +159,15 @@ export default function RunWorkspacePage() {
 
           {showSinglePanel ? (
             <div className="flex-1 flex flex-col overflow-hidden">
+              {error && (
+                <div className="flex items-center justify-between gap-3 border-b border-destructive/30 bg-destructive/10 px-3 py-2 text-xs" role="alert">
+                  <span className="text-destructive">{error}</span>
+                  <div className="flex gap-2">
+                    <button onClick={session.retry} className="underline">Retry</button>
+                    <button onClick={() => router.push("/")} className="underline">Back home</button>
+                  </div>
+                </div>
+              )}
               <div className="flex border-b border-border bg-muted/30" role="tablist">
                 <button
                   role="tab"
@@ -260,15 +199,29 @@ export default function RunWorkspacePage() {
               </div>
             </div>
           ) : (
-            <PanelGroup direction="horizontal" autoSaveId="paperforge-layout">
-              <Panel defaultSize={42} minSize={28}>
-                <ChatPanel />
-              </Panel>
-              <PanelResizeHandle className="w-px bg-border hover:bg-primary/40 transition-colors" />
-              <Panel defaultSize={58} minSize={30}>
-                <PreviewPanel />
-              </Panel>
-            </PanelGroup>
+            <>
+              {error && (
+                <div
+                  className="flex items-center justify-between gap-3 border-b border-destructive/30 bg-destructive/10 px-3 py-2 text-xs"
+                  role="alert"
+                >
+                  <span className="text-destructive">{error}</span>
+                  <div className="flex gap-2">
+                    <button onClick={session.retry} className="underline">Retry</button>
+                    <button onClick={() => router.push("/")} className="underline">Back home</button>
+                  </div>
+                </div>
+              )}
+              <PanelGroup direction="horizontal" autoSaveId="paperforge-layout">
+                <Panel defaultSize={42} minSize={28}>
+                  <ChatPanel />
+                </Panel>
+                <PanelResizeHandle className="w-px bg-border hover:bg-primary/40 transition-colors" />
+                <Panel defaultSize={58} minSize={30}>
+                  <PreviewPanel />
+                </Panel>
+              </PanelGroup>
+            </>
           )}
         </div>
       </div>

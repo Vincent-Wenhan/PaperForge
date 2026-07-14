@@ -118,7 +118,7 @@ export function Composer() {
       setIsRunning(false);
       toast({ title: "Run cancelled", variant: "default" });
     } catch (err) {
-      console.error(err);
+      toast({ title: "Cancel failed", description: err instanceof Error ? err.message : String(err), variant: "error" });
     }
   };
 

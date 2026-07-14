@@ -6,6 +6,7 @@ Implements the agentic loop: LLM → tool → LLM, until LLM stops calling tools
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import uuid
@@ -30,7 +31,13 @@ LLM_RETRY_BASE_DELAY = 1.0  # seconds
 APPROVAL_TIMEOUT = 300  # 5 minutes
 
 # Tools that require explicit user approval before execution (HITL).
-DANGEROUS_TOOLS = {"generate_nextjs_app", "run_in_sandbox"}
+DANGEROUS_TOOLS = {
+    "generate_nextjs_app",
+    "run_in_sandbox",
+    "restart_sandbox",
+    "build_and_repair",
+    "repair_app",
+}
 
 
 class RunPhase(str, Enum):
@@ -53,9 +60,34 @@ ALLOWED_TOOLS: dict[RunPhase, set[str]] = {
     RunPhase.PARSED: {"compose_capabilities", "plan_product", "finish"},
     RunPhase.COMPOSED: {"plan_product", "finish"},
     RunPhase.PLANNED: {"generate_nextjs_app", "finish"},
-    RunPhase.GENERATED: {"verify_app", "finish"},
-    RunPhase.VERIFIED: {"run_in_sandbox", "finish"},
-    RunPhase.PREVIEW_READY: {"finish"},
+    RunPhase.GENERATED: {
+        "verify_app",
+        "build_and_repair",
+        "repair_app",
+        "finish",
+    },
+    RunPhase.VERIFIED: {
+        "verify_app",
+        "build_and_repair",
+        "repair_app",
+        "run_in_sandbox",
+        "restart_sandbox",
+        "stop_sandbox",
+        "finish",
+    },
+    RunPhase.PREVIEW_READY: {
+        "parse_paper",
+        "compose_capabilities",
+        "plan_product",
+        "generate_nextjs_app",
+        "verify_app",
+        "build_and_repair",
+        "repair_app",
+        "run_in_sandbox",
+        "restart_sandbox",
+        "stop_sandbox",
+        "finish",
+    },
     RunPhase.DONE: set(),
     RunPhase.ERROR: set(),
 }
@@ -80,12 +112,28 @@ class Orchestrator:
         self,
         llm: LLMClient | None = None,
         storage: Storage | None = None,
+        sandbox_manager: Any | None = None,
     ) -> None:
         self.llm = llm or get_llm_client()
         self.storage = storage or get_storage()
+        self.sandbox_manager = sandbox_manager
         self.phase: RunPhase = RunPhase.INIT
+        self.task_id: str | None = None
 
-    async def run(self, run_id: str, user_message: str) -> None:
+    def _update_task(self, *, status: str | None = None, phase: str | None = None) -> None:
+        if self.task_id:
+            self.storage.update_task(
+                task_id=self.task_id,
+                status=status,
+                phase=phase,
+            )
+
+    async def run(
+        self,
+        run_id: str,
+        user_message: str,
+        task_id: str | None = None,
+    ) -> None:
         """Run the orchestrator loop for a single user message."""
         cfg = get_config()
         event_manager = get_event_manager()
@@ -93,7 +141,11 @@ class Orchestrator:
 
         # Track previous status/phase so we only emit when they actually change.
         prev_status = self.storage.get_run_status(run_id) or "active"
-        prev_phase = self.storage.get_run_phase(run_id) or "init"
+
+        # Cancelled and completed runs are terminal checkpoints. A later
+        # worker invocation must not silently resume their LLM workflow.
+        if prev_status in {"cancelled", "done"}:
+            return
 
         # Persist run status as running
         self.storage.update_run_status(run_id, "running")
@@ -106,6 +158,19 @@ class Orchestrator:
             self.phase = RunPhase(stored_phase)
         except ValueError:
             self.phase = RunPhase.INIT
+
+        self.task_id = task_id
+        if self.task_id is None:
+            task = self.storage.create_task(
+                run_id=run_id,
+                title=user_message.strip()[:120] or "Productization task",
+                goal=user_message,
+                status="running",
+                phase=self.phase.value,
+            )
+            self.task_id = task["id"]
+        else:
+            self._update_task(status="running", phase=self.phase.value)
 
         await emit.run_started()
 
@@ -143,6 +208,7 @@ class Orchestrator:
             storage=self.storage,
             llm=self.llm,
             emit=emit,
+            sandbox_manager=self.sandbox_manager,
         )
 
         # Main loop
@@ -158,25 +224,35 @@ class Orchestrator:
                     messages=messages,
                     tools=TOOL_DEFINITIONS,
                     emit=emit,
+                    run_id=run_id,
                 )
                 if response is None:
                     # LLM failed; mark run as error so it doesn't stay "running".
                     self.phase = RunPhase.ERROR
                     self.storage.update_run_phase(run_id, self.phase.value)
                     self.storage.update_run_status(run_id, "error")
+                    self._update_task(status="failed", phase=self.phase.value)
                     return  # error already emitted
 
                 if response.tool_calls:
                     # Save assistant message with tool_calls
-                    self.storage.add_message(
-                        run_id=run_id,
-                        role="assistant",
-                        content=response.content or "",
-                        tool_calls=[
-                            {"id": tc.id, "name": tc.name, "args": tc.args}
-                            for tc in response.tool_calls
-                        ],
-                    )
+                    tool_calls_data = [
+                        {"id": tc.id, "name": tc.name, "args": tc.args}
+                        for tc in response.tool_calls
+                    ]
+                    if response.message_id:
+                        self.storage.complete_message(
+                            response.message_id,
+                            response.content or "",
+                            tool_calls_data,
+                        )
+                    else:
+                        self.storage.add_message(
+                            run_id=run_id,
+                            role="assistant",
+                            content=response.content or "",
+                            tool_calls=tool_calls_data,
+                        )
                     messages.append(
                         Message(
                             role="assistant",
@@ -186,6 +262,7 @@ class Orchestrator:
                     )
 
                     stop_loop = False
+                    stopped_result: ToolResult | None = None
                     # Execute each tool call
                     for call in response.tool_calls:
                         await emit.tool_call(call)
@@ -199,6 +276,13 @@ class Orchestrator:
                             content=result_str,
                             tool_call_id=call.id,
                             name=call.name,
+                        )
+                        messages.append(
+                            Message(
+                                role="tool",
+                                content=result_str,
+                                tool_call_id=call.id,
+                            )
                         )
 
                         await emit.tool_result(call.name, result_str, call.id)
@@ -221,17 +305,44 @@ class Orchestrator:
                             old_phase = self.phase
                             self.phase = new_phase
                             self.storage.update_run_phase(run_id, self.phase.value)
+                            self._update_task(phase=self.phase.value)
                             await emit.task_phase_changed(
                                 phase=self.phase.value,
                                 previous_phase=old_phase.value,
+                                task_id=self.task_id,
                             )
+                            await emit.run_updated(phase=self.phase.value)
 
                         if tool_result.stop_loop:
                             stop_loop = True
+                            stopped_result = tool_result
                             break
 
                     if stop_loop:
-                        self.storage.update_run_status(run_id, "active")
+                        waiting_for_user = (
+                            stopped_result is not None
+                            and stopped_result.code == "needs_user_input"
+                        )
+                        terminal_status = (
+                            "done"
+                            if self.phase == RunPhase.DONE
+                            else "waiting_user"
+                            if waiting_for_user
+                            else "active"
+                        )
+                        previous = self.storage.get_run_status(run_id) or "running"
+                        self.storage.update_run_status(run_id, terminal_status)
+                        self._update_task(
+                            status="completed"
+                            if terminal_status == "done"
+                            else "waiting_user"
+                            if waiting_for_user
+                            else "active",
+                            phase=self.phase.value,
+                        )
+                        if previous != terminal_status:
+                            await emit.run_status_changed(terminal_status, previous)
+                        await emit.run_updated(status=terminal_status, phase=self.phase.value)
                         await emit.run_finished()
                         return
 
@@ -243,12 +354,15 @@ class Orchestrator:
                 # → message.completed). Here we persist the final message and
                 # keep the run active so the user can continue the conversation.
                 final_content = response.content or ""
-                self.storage.add_message(
-                    run_id=run_id,
-                    role="assistant",
-                    content=final_content,
-                )
+                if not response.message_id:
+                    self.storage.add_message(
+                        run_id=run_id,
+                        role="assistant",
+                        content=final_content,
+                    )
                 self.storage.update_run_status(run_id, "active")
+                self._update_task(status="completed", phase=self.phase.value)
+                await emit.run_updated(status="active", phase=self.phase.value)
                 await emit.run_finished()
                 return
 
@@ -258,13 +372,25 @@ class Orchestrator:
             self.phase = RunPhase.ERROR
             self.storage.update_run_phase(run_id, self.phase.value)
             self.storage.update_run_status(run_id, "error")
+            self._update_task(status="failed", phase=self.phase.value)
+            await emit.run_updated(status="error", phase=self.phase.value)
 
+        except asyncio.CancelledError:
+            previous = self.storage.get_run_status(run_id) or "running"
+            self.storage.update_run_status(run_id, "cancelled")
+            self._update_task(status="cancelled", phase=self.phase.value)
+            with contextlib.suppress(Exception):
+                await emit.run_status_changed("cancelled", previous)
+                await emit.run_updated(status="cancelled", phase=self.phase.value)
+            raise
         except Exception as e:
             logger.exception(f"Orchestrator error: {e}")
             await emit.run_error(str(e))
             self.phase = RunPhase.ERROR
             self.storage.update_run_phase(run_id, self.phase.value)
             self.storage.update_run_status(run_id, "error")
+            self._update_task(status="failed", phase=self.phase.value)
+            await emit.run_updated(status="error", phase=self.phase.value)
 
     async def _execute_tool_call(
         self,
@@ -276,13 +402,17 @@ class Orchestrator:
         """Execute a single tool call, applying phase gate and HITL approval."""
         # Phase gate: reject tools not allowed in the current phase.
         if call.name not in ALLOWED_TOOLS.get(self.phase, set()):
-            return json.dumps({
-                "ok": False,
-                "tool": call.name,
-                "error": f"Tool '{call.name}' is not allowed in phase '{self.phase.value}'.",
-                "allowed_tools": sorted(ALLOWED_TOOLS.get(self.phase, set())),
-                "current_phase": self.phase.value,
-            }, ensure_ascii=False)
+            return ToolResult(
+                tool=call.name,
+                status=ToolStatus.BLOCKED,
+                error=f"Tool '{call.name}' is not allowed in phase '{self.phase.value}'.",
+                code="phase_prerequisite",
+                data={
+                    "allowed_tools": sorted(ALLOWED_TOOLS.get(self.phase, set())),
+                    "current_phase": self.phase.value,
+                },
+                retryable=True,
+            ).model_dump_json()
 
         # HITL: dangerous tools require user approval
         if call.name in DANGEROUS_TOOLS:
@@ -294,7 +424,7 @@ class Orchestrator:
             approval_id = approval["id"]
 
             registry = get_approval_registry()
-            wait_event = registry.register(approval_id)
+            registry.register(approval_id)
 
             await emit.approval_requested(
                 approval_id=approval_id,
@@ -302,17 +432,22 @@ class Orchestrator:
                 args=call.args,
             )
 
-            try:
-                await asyncio.wait_for(wait_event.wait(), timeout=APPROVAL_TIMEOUT)
-            except asyncio.TimeoutError:
+            approved = await registry.wait_for_resolution(
+                approval_id,
+                self.storage,
+                timeout=APPROVAL_TIMEOUT,
+            )
+            if approved is None:
+                self.storage.expire_approval(approval_id)
                 registry.cleanup(approval_id)
-                return json.dumps({
-                    "ok": False,
-                    "tool": call.name,
-                    "error": f"Approval timed out after {APPROVAL_TIMEOUT}s.",
-                }, ensure_ascii=False)
+                return ToolResult(
+                    tool=call.name,
+                    status=ToolStatus.BLOCKED,
+                    error=f"Approval timed out after {APPROVAL_TIMEOUT}s.",
+                    code="approval_timeout",
+                    retryable=True,
+                ).model_dump_json()
 
-            approved = registry.get_result(approval_id) or False
             registry.cleanup(approval_id)
 
             await emit.approval_resolved(
@@ -322,11 +457,13 @@ class Orchestrator:
             )
 
             if not approved:
-                return json.dumps({
-                    "ok": False,
-                    "tool": call.name,
-                    "error": f"Tool {call.name} was rejected by the user.",
-                }, ensure_ascii=False)
+                return ToolResult(
+                    tool=call.name,
+                    status=ToolStatus.BLOCKED,
+                    error=f"Tool {call.name} was rejected by the user.",
+                    code="approval_rejected",
+                    retryable=False,
+                ).model_dump_json()
 
         # Dispatch tool
         return await dispatch_tool(call.name, call.args, ctx)
@@ -337,12 +474,13 @@ class Orchestrator:
         messages: list[Message],
         tools: list[Any],
         emit: EventEmitter,
+        run_id: str,
     ) -> Any:
         """Call LLM with exponential backoff retry. Returns None if all retries failed."""
         last_error: Exception | None = None
         for attempt in range(1, LLM_MAX_RETRIES + 1):
             try:
-                return await self._stream_llm(model, messages, tools, emit)
+                return await self._stream_llm(model, messages, tools, emit, run_id)
             except Exception as e:
                 last_error = e
                 logger.warning(f"LLM call attempt {attempt}/{LLM_MAX_RETRIES} failed: {e}")
@@ -360,6 +498,7 @@ class Orchestrator:
         messages: list[Message],
         tools: list[Any],
         emit: EventEmitter,
+        run_id: str,
     ) -> Any:
         """Stream LLM output, emitting message.lifecycle events.
 
@@ -383,7 +522,9 @@ class Orchestrator:
         tool_calls: list[ToolCall] = []
         finish_reason: str | None = None
 
-        # Emit message.started to signal the start of a new assistant message.
+        # Persist the public ID before emitting the first lifecycle event so a
+        # refresh can always reconcile the stream with one durable row.
+        self.storage.create_streaming_message(run_id, message_id)
         await emit.message_started(message_id)
 
         try:
@@ -394,20 +535,35 @@ class Orchestrator:
             ):
                 if chunk.content:
                     content_parts.append(chunk.content)
+                    self.storage.append_message_delta(message_id, chunk.content)
                     # Emit each text chunk as message.delta with the same message_id.
                     await emit.message_delta(message_id, chunk.content)
                 if chunk.tool_calls:
                     tool_calls.extend(chunk.tool_calls)
                 if chunk.finish_reason:
                     finish_reason = chunk.finish_reason
+        except asyncio.CancelledError:
+            self.storage.fail_message(message_id, "Message stream cancelled")
+            with contextlib.suppress(Exception):
+                await emit.message_failed(message_id, "Message stream cancelled")
+            raise
         except Exception as e:
             # Emit message.failed to signal the message was not completed.
+            self.storage.fail_message(message_id, str(e))
             await emit.message_failed(message_id, str(e))
             raise
 
         final_content = "".join(content_parts) if content_parts else ""
 
         # Emit message.completed to signal the message is done streaming.
+        self.storage.complete_message(
+            message_id,
+            final_content,
+            [
+                {"id": tc.id, "name": tc.name, "args": tc.args}
+                for tc in tool_calls
+            ] or None,
+        )
         await emit.message_completed(message_id, final_content)
 
         # Build a ChatResponse-like return so the main loop can handle uniformly.
@@ -416,4 +572,5 @@ class Orchestrator:
             content=final_content or None,
             tool_calls=tool_calls,
             finish_reason=finish_reason,
+            message_id=message_id,
         )

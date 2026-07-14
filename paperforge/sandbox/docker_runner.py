@@ -71,7 +71,13 @@ class DockerSandboxManager:
             Sandbox dict with id, container_id, preview_port, etc.
         """
         app_path = Path(app_path).resolve()
-        if not app_path.exists():
+        try:
+            app_path.relative_to(self.storage.apps_dir.resolve())
+        except (ValueError, RuntimeError) as exc:
+            raise PermissionError("Sandbox app path is outside the server workspace") from exc
+        if app_path == self.storage.apps_dir.resolve():
+            raise PermissionError("Sandbox app path must name a generated app workspace")
+        if not app_path.exists() or not app_path.is_dir():
             raise FileNotFoundError(f"App path not found: {app_path}")
 
         cfg = get_config()
@@ -98,6 +104,10 @@ class DockerSandboxManager:
             "app_path": str(app_path),
             "preview_port": preview_port,
             "status": "pending",
+            "preview_status": "starting",
+            "preview_url": None,
+            "error": None,
+            "environment": "docker",
         }
 
         # Save initial sandbox record
@@ -109,8 +119,12 @@ class DockerSandboxManager:
             self.storage.update_sandbox(
                 sandbox_id,
                 status="error",
+                preview_status="degraded",
+                error="Docker is not available",
             )
             sandbox_record["status"] = "error"
+            sandbox_record["preview_status"] = "degraded"
+            sandbox_record["error"] = "Docker is not available"
             return sandbox_record
 
         try:
@@ -140,6 +154,7 @@ class DockerSandboxManager:
                 sandbox_id,
                 container_id=container_id,
                 status="running",
+                preview_status="starting",
                 started_at=time.strftime("%Y-%m-%dT%H:%M:%S"),
             )
 
@@ -155,7 +170,14 @@ class DockerSandboxManager:
         except Exception as e:
             logger.error(f"Failed to start sandbox {sandbox_id}: {e}")
             self.storage.update_sandbox(sandbox_id, status="error")
+            self.storage.update_sandbox(
+                sandbox_id,
+                preview_status="degraded",
+                error=str(e),
+            )
             sandbox_record["status"] = "error"
+            sandbox_record["preview_status"] = "degraded"
+            sandbox_record["error"] = str(e)
             return sandbox_record
 
     async def stop(self, sandbox_id: str) -> dict[str, Any]:
@@ -177,6 +199,8 @@ class DockerSandboxManager:
         self.storage.update_sandbox(
             sandbox_id,
             status="stopped",
+            preview_status="stopped",
+            preview_url=None,
             stopped_at=time.strftime("%Y-%m-%dT%H:%M:%S"),
         )
 

@@ -6,6 +6,7 @@ import { PrdView } from "./PrdView";
 import { VerificationReportView } from "./VerificationReportView";
 import { api } from "@/lib/api";
 import { useAppStore } from "@/lib/store";
+import { useToast } from "@/lib/toast";
 
 interface ArtifactCardProps {
   type: string;
@@ -27,6 +28,7 @@ export function ArtifactCard({
   const [expanded, setExpanded] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const addAttachment = useAppStore((s) => s.addAttachment);
+  const { toast } = useToast();
 
   const label = type.replace(/_/g, " ");
 
@@ -38,7 +40,7 @@ export function ArtifactCard({
       await api.renameArtifact(artifactId, display);
       onRenamed?.();
     } catch (err) {
-      console.error(err);
+      toast({ title: "Rename failed", description: err instanceof Error ? err.message : String(err), variant: "error" });
     }
   };
 
@@ -46,14 +48,10 @@ export function ArtifactCard({
     setMenuOpen(false);
     try {
       const blob = await api.downloadArtifact(artifactId);
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${artifactId}.json`;
-      a.click();
-      URL.revokeObjectURL(url);
+      const { triggerBrowserDownload } = await import("@/lib/api");
+      triggerBrowserDownload(blob, `${artifactId}.json`);
     } catch (err) {
-      console.error(err);
+      toast({ title: "Download failed", description: err instanceof Error ? err.message : String(err), variant: "error" });
     }
   };
 
@@ -64,7 +62,7 @@ export function ArtifactCard({
       await api.deleteArtifact(artifactId);
       onDeleted?.();
     } catch (err) {
-      console.error(err);
+      toast({ title: "Delete failed", description: err instanceof Error ? err.message : String(err), variant: "error" });
     }
   };
 

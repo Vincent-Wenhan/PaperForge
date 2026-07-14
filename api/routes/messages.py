@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import logging
-import uuid
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
+from api.deps import get_sandbox_manager_dep
+from paperforge.orchestrator.events import EventEmitter, get_event_manager
 from paperforge.orchestrator.loop import Orchestrator
 from paperforge.orchestrator.tasks import get_run_task_manager
 from paperforge.storage.db import get_storage
@@ -37,7 +38,7 @@ def _derive_title(content: str, max_len: int = 50) -> str:
 
 
 @router.post("/{run_id}/messages")
-async def send_message(run_id: str, req: MessageCreate) -> dict:
+async def send_message(run_id: str, req: MessageCreate, request: Request) -> dict:
     """Send a user message to the run. Triggers the orchestrator asynchronously.
 
     `paper_ids` attach library papers as explicit context so the LLM never
@@ -58,6 +59,20 @@ async def send_message(run_id: str, req: MessageCreate) -> dict:
             detail="A task is already running for this run. Cancel it first.",
         )
 
+    # A completed/cancelled run can start a fresh productization task. Reset the
+    # aggregate phase before the new task is scheduled.
+    if run["status"] in {"done", "cancelled", "error"} or run.get("phase") == "done":
+        storage.update_run_phase(run_id, "init")
+        storage.update_run_status(run_id, "active")
+
+    task = storage.create_task(
+        run_id=run_id,
+        title=req.content.strip()[:120] or "Productization task",
+        goal=req.content,
+        status="queued",
+        phase=storage.get_run_phase(run_id),
+    )
+
     # API layer owns user message persistence; orchestrator must not duplicate it.
     message = storage.add_message(
         run_id=run_id,
@@ -72,14 +87,26 @@ async def send_message(run_id: str, req: MessageCreate) -> dict:
     current_title = run.get("title") or ""
     if current_title in ("", "Untitled Run", "New Run"):
         new_title = _derive_title(req.content)
-        storage.update_run(run_id=run_id, title=new_title)
+        updated_run = storage.update_run(run_id=run_id, title=new_title)
+        await EventEmitter(run_id, get_event_manager()).run_updated(
+            title=updated_run.get("title") if updated_run else new_title,
+        )
 
     # Attach any new papers to this run as explicit context (doc 4.3/4.4).
     for paper_id in req.paper_ids:
         storage.attach_paper_to_run(run_id, paper_id)
 
-    orchestrator = Orchestrator()
-    task_manager.start(run_id, orchestrator.run(run_id=run_id, user_message=req.content))
+    orchestrator = Orchestrator(
+        sandbox_manager=get_sandbox_manager_dep(request),
+    )
+    task_manager.start(
+        run_id,
+        orchestrator.run(
+            run_id=run_id,
+            user_message=req.content,
+            task_id=task["id"],
+        ),
+    )
 
     return {
         "status": "queued",

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Coroutine
+from collections.abc import Coroutine
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +36,31 @@ class RunTaskManager:
             task.cancel()
             return True
         return False
+
+    async def cancel_and_wait(self, run_id: str, timeout: float = 5.0) -> bool:
+        """Cancel a run and wait briefly for its coroutine to drain.
+
+        The synchronous ``cancel`` method remains for compatibility with
+        older callers. API cancellation uses this bounded variant so a task
+        cannot continue mutating a run after its status is persisted.
+        """
+        task = self.tasks.get(run_id)
+        if task is None or task.done():
+            return False
+
+        task.cancel()
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
+        except asyncio.CancelledError:
+            pass
+        except TimeoutError:
+            logger.warning("Timed out waiting for run task %s to cancel", run_id)
+        except Exception:
+            logger.exception("Run task %s failed while cancelling", run_id)
+        finally:
+            if task.done() and self.tasks.get(run_id) is task:
+                self.tasks.pop(run_id, None)
+        return True
 
     def is_running(self, run_id: str) -> bool:
         """Check if a run has an active task."""

@@ -12,7 +12,10 @@ interface Settings {
   generator_model?: string;
   verifier_model?: string;
   docker_available?: boolean;
-  sandbox_base_port?: number;
+  sandbox_image?: string;
+  sandbox_mem_limit?: string;
+  sandbox_cpu_quota?: number;
+  max_sandboxes?: number;
   max_iterations?: number;
   llm_max_retries?: number;
 }
@@ -49,7 +52,10 @@ export default function SettingsPage() {
 
   return (
     <div className="min-h-screen p-6 max-w-2xl mx-auto">
-      <h1 className="text-2xl font-semibold mb-6">Settings</h1>
+      <h1 className="text-2xl font-semibold mb-2">Runtime Configuration</h1>
+      <p className="text-sm text-muted-foreground mb-6">
+        Read-only values currently used by the API and orchestrator.
+      </p>
 
       <section className="mb-8">
         <h2 className="text-lg font-medium mb-3">LLM Provider</h2>
@@ -71,10 +77,10 @@ export default function SettingsPage() {
             label="Docker Available"
             value={settings.docker_available ? "Yes" : "No"}
           />
-          <SettingRow
-            label="Base Port"
-            value={settings.sandbox_base_port?.toString()}
-          />
+          <SettingRow label="Sandbox Image" value={settings.sandbox_image} />
+          <SettingRow label="Memory Limit" value={settings.sandbox_mem_limit} />
+          <SettingRow label="CPU Quota" value={settings.sandbox_cpu_quota?.toString()} />
+          <SettingRow label="Max Sandboxes" value={settings.max_sandboxes?.toString()} />
         </dl>
       </section>
 

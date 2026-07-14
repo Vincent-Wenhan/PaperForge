@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { api } from "@/lib/api";
 import type { Approval } from "@/lib/store";
+import { useToast } from "@/lib/toast";
 
 interface Props {
   approval: Approval;
@@ -33,6 +34,7 @@ export function ApprovalCard({ approval, onResolved }: Props) {
   );
   const [busy, setBusy] = useState(false);
   const [showPlan, setShowPlan] = useState(false);
+  const { toast } = useToast();
 
   const handle = async (approved: boolean) => {
     if (busy || resolved) return;
@@ -42,7 +44,7 @@ export function ApprovalCard({ approval, onResolved }: Props) {
       setResolved(approved ? "approved" : "rejected");
       onResolved?.(approval.approval_id, approved);
     } catch (err) {
-      console.error(err);
+      toast({ title: "Approval update failed", description: err instanceof Error ? err.message : String(err), variant: "error" });
     } finally {
       setBusy(false);
     }

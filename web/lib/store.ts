@@ -1,9 +1,11 @@
 "use client";
 
 import { create } from "zustand";
+import type { PreviewState, Task } from "./contracts";
 
 export interface Message {
   id?: string;
+  public_id?: string;
   run_id?: string;
   role: "user" | "assistant" | "tool";
   content: string;
@@ -19,6 +21,7 @@ export interface Run {
   id: string;
   title: string;
   status: string;
+  preview_status?: "idle" | "starting" | "running" | "degraded" | "stopped" | "error";
   phase?: string;
   pinned?: boolean;
   archived_at?: string | null;
@@ -44,6 +47,9 @@ export interface Sandbox {
   app_path?: string;
   preview_port?: number;
   status: string;
+  environment?: string;
+  preview_url?: string | null;
+  error?: string | null;
   started_at?: string;
   stopped_at?: string;
 }
@@ -53,15 +59,20 @@ export interface Event {
   type: string;
   data: any;
   run_id: string;
-  ts?: number;
+  ts?: number | string;
   seq?: number;
 }
 
 export interface Approval {
   approval_id: string;
+  id?: string;
+  run_id?: string;
   tool: string;
+  tool_name?: string;
   args: Record<string, any>;
-  status: "pending" | "approved" | "rejected";
+  status: "pending" | "approved" | "rejected" | "expired";
+  created_at?: string;
+  resolved_at?: string | null;
 }
 
 export interface Artifact {
@@ -87,6 +98,9 @@ interface AppState {
   messages: Message[];
   events: Event[];
   sandbox: Sandbox | null;
+  tasks: Task[];
+  preview: PreviewState | null;
+  sessionError: string | null;
   pendingApprovals: Approval[];
   artifacts: Artifact[];
   attachments: Attachment[];
@@ -99,6 +113,10 @@ interface AppState {
   setCurrentRun: (run: Run | null) => void;
   updateCurrentRun: (patch: Partial<Run>) => void;
   setSandbox: (sb: Sandbox | null) => void;
+  setTasks: (tasks: Task[]) => void;
+  upsertTask: (task: Task) => void;
+  setPreview: (preview: PreviewState | null) => void;
+  setSessionError: (error: string | null) => void;
   setPendingApprovals: (approvals: Approval[]) => void;
   addMessage: (msg: Message) => void;
   upsertMessage: (msg: Message) => void;
@@ -114,6 +132,7 @@ interface AppState {
   resolvePendingApproval: (approvalId: string, approved: boolean) => void;
   setArtifacts: (artifacts: Artifact[]) => void;
   addArtifact: (artifact: Artifact) => void;
+  updateArtifact: (artifact: Partial<Artifact> & Pick<Artifact, "id">) => void;
   updateRunStatus: (status: string) => void;
   setActiveTab: (tab: "preview" | "files" | "artifacts" | "console" | "verification") => void;
   toggleSidebar: () => void;
@@ -130,6 +149,9 @@ export const useAppStore = create<AppState>((set) => ({
   messages: [],
   events: [],
   sandbox: null,
+  tasks: [],
+  preview: null,
+  sessionError: null,
   pendingApprovals: [],
   artifacts: [],
   attachments: [],
@@ -146,15 +168,30 @@ export const useAppStore = create<AppState>((set) => ({
       events: [],
       pendingApprovals: [],
       artifacts: [],
+      sandbox: null,
+      tasks: [],
+      preview: null,
       attachments: [],
       isRunning: false,
       lastSeq: 0,
+      sessionError: null,
     }),
   updateCurrentRun: (patch) =>
     set((s) =>
       s.currentRun ? { currentRun: { ...s.currentRun, ...patch } } : {},
     ),
   setSandbox: (sb) => set({ sandbox: sb }),
+  setTasks: (tasks) => set({ tasks }),
+  upsertTask: (task) =>
+    set((s) => {
+      const index = s.tasks.findIndex((item) => item.id === task.id);
+      if (index < 0) return { tasks: [...s.tasks, task] };
+      const tasks = [...s.tasks];
+      tasks[index] = { ...tasks[index], ...task };
+      return { tasks };
+    }),
+  setPreview: (preview) => set({ preview }),
+  setSessionError: (error) => set({ sessionError: error }),
   setPendingApprovals: (approvals) => set({ pendingApprovals: approvals }),
   addMessage: (msg) => set((s) => ({ messages: [...s.messages, msg] })),
   upsertMessage: (msg) =>
@@ -285,6 +322,12 @@ export const useAppStore = create<AppState>((set) => ({
         ? s
         : { artifacts: [...s.artifacts, artifact] }
     ),
+  updateArtifact: (artifact) =>
+    set((s) => ({
+      artifacts: s.artifacts.map((item) =>
+        item.id === artifact.id ? { ...item, ...artifact } : item,
+      ),
+    })),
   updateRunStatus: (status) =>
     set((s) => (s.currentRun ? { currentRun: { ...s.currentRun, status } } : {})),
   setActiveTab: (tab) => set({ activeTab: tab }),

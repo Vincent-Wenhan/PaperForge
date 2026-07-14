@@ -59,7 +59,7 @@ class ToolDefinition:
 class ChatResponse:
     """Response from a non-streaming chat call."""
 
-    __slots__ = ("content", "tool_calls", "role", "finish_reason", "raw")
+    __slots__ = ("content", "tool_calls", "role", "finish_reason", "raw", "message_id")
 
     def __init__(
         self,
@@ -68,12 +68,14 @@ class ChatResponse:
         role: str = "assistant",
         finish_reason: str | None = None,
         raw: Any = None,
+        message_id: str | None = None,
     ) -> None:
         self.content = content
         self.tool_calls = tool_calls or []
         self.role = role
         self.finish_reason = finish_reason
         self.raw = raw
+        self.message_id = message_id
 
 
 class Chunk:

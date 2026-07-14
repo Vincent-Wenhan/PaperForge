@@ -8,6 +8,13 @@ from pydantic import BaseModel, Field
 class VerificationReport(BaseModel):
     app_id: str
     prd_id: str | None = None
+    layers: list[dict] = Field(default_factory=list)
+    build_environment: str = "local"
+    build_degraded: bool = False
+    build_fallback_reason: str | None = None
+    runtime_status: str = "pending"
+    acceptance_status: str = "pending"
+    browser_smoke: dict = Field(default_factory=dict)
 
     build_succeeded: bool = False
     build_errors: list[str] = Field(default_factory=list)

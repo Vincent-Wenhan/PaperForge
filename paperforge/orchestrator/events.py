@@ -97,6 +97,12 @@ class EventEmitter:
             {"type": artifact_type, "path": path, "artifact_id": artifact_id},
         )
 
+    async def artifact_updated(self, artifact_id: str, data: dict[str, Any]) -> None:
+        await self.emit(
+            "artifact.updated",
+            {"artifact_id": artifact_id, "data": data},
+        )
+
     async def run_started(self) -> None:
         await self.emit("run.started", {"run_id": self.run_id})
 
@@ -176,6 +182,10 @@ class EventEmitter:
                 "previous_status": previous_status,
             },
         )
+
+    async def run_updated(self, **data: Any) -> None:
+        """Broadcast a durable run metadata update (title/phase/status)."""
+        await self.emit("run.updated", {"run_id": self.run_id, **data})
 
 
 class EventManager:

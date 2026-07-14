@@ -8,6 +8,7 @@ The API endpoint resolves the approval and signals the waiting orchestrator.
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 
 class ApprovalRegistry:
@@ -33,6 +34,43 @@ class ApprovalRegistry:
 
     def get_result(self, approval_id: str) -> bool | None:
         return self._results.get(approval_id)
+
+    async def wait_for_resolution(
+        self,
+        approval_id: str,
+        storage: Any,
+        timeout: float,
+        poll_interval: float = 0.25,
+    ) -> bool | None:
+        """Wait on fast in-memory signals while treating SQLite as truth.
+
+        The database check makes approval waits recoverable when the API
+        resolves an approval after a worker restart or before the registry
+        has finished registering its in-memory event.
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        event = self._pending.get(approval_id)
+
+        while True:
+            row = storage.get_approval(approval_id)
+            if row is None:
+                return False
+            if row["status"] != "pending":
+                return row["status"] == "approved"
+
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                return None
+
+            wait_for = min(poll_interval, remaining)
+            if event is None:
+                await asyncio.sleep(wait_for)
+                continue
+            try:
+                await asyncio.wait_for(asyncio.shield(event.wait()), timeout=wait_for)
+            except TimeoutError:
+                pass
 
     def cleanup(self, approval_id: str) -> None:
         self._pending.pop(approval_id, None)

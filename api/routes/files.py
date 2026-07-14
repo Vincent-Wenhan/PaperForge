@@ -48,18 +48,27 @@ def _resolve_safe(sandbox: dict, file_path: str) -> Path:
     try:
         full_path.relative_to(base)
     except (ValueError, RuntimeError):
-        raise HTTPException(status_code=403, detail="Path outside sandbox")
+        raise HTTPException(status_code=403, detail="Path outside sandbox") from None
 
     if any(part in BLOCKED_PARTS for part in full_path.parts):
         raise HTTPException(status_code=403, detail="Blocked path segment")
 
+    return full_path
+
+
+def _resolve_safe_file(sandbox: dict, file_path: str) -> Path:
+    full_path = _resolve_safe(sandbox, file_path)
     if full_path.suffix.lower() not in ALLOWED_EXTS:
         raise HTTPException(
             status_code=403,
             detail=f"Unsupported file type: {full_path.suffix or '(none)'}",
         )
-
     return full_path
+
+
+def _ensure_content_size(content: str) -> None:
+    if len(content.encode("utf-8")) > MAX_FILE_SIZE:
+        raise HTTPException(status_code=413, detail="File too large")
 
 
 @router.get("/sandboxes/{sandbox_id}/files/{file_path:path}")
@@ -69,7 +78,7 @@ async def read_file(sandbox_id: str, file_path: str) -> dict:
     if not sandbox:
         raise HTTPException(status_code=404, detail="Sandbox not found")
 
-    full_path = _resolve_safe(sandbox, file_path)
+    full_path = _resolve_safe_file(sandbox, file_path)
 
     if not full_path.exists() or not full_path.is_file():
         raise HTTPException(status_code=404, detail="File not found")
@@ -87,10 +96,8 @@ async def write_file(sandbox_id: str, file_path: str, req: FileWrite) -> dict:
     if not sandbox:
         raise HTTPException(status_code=404, detail="Sandbox not found")
 
-    full_path = _resolve_safe(sandbox, file_path)
-
-    if full_path.exists() and full_path.stat().st_size > MAX_FILE_SIZE:
-        raise HTTPException(status_code=413, detail="File too large")
+    full_path = _resolve_safe_file(sandbox, file_path)
+    _ensure_content_size(req.content)
 
     full_path.parent.mkdir(parents=True, exist_ok=True)
     full_path.write_text(req.content, encoding="utf-8")
@@ -104,11 +111,22 @@ async def create_entry(sandbox_id: str, req: FileCreate) -> dict:
     if not sandbox:
         raise HTTPException(status_code=404, detail="Sandbox not found")
 
+    if req.type not in {"file", "directory"}:
+        raise HTTPException(status_code=400, detail="Entry type must be file or directory")
+
     full_path = _resolve_safe(sandbox, req.path)
+    if full_path.exists():
+        raise HTTPException(status_code=409, detail="Entry already exists")
 
     if req.type == "directory":
-        full_path.mkdir(parents=True, exist_ok=True)
+        full_path.mkdir(parents=True, exist_ok=False)
     else:
+        if full_path.suffix.lower() not in ALLOWED_EXTS:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Unsupported file type: {full_path.suffix or '(none)'}",
+            )
+        _ensure_content_size(req.content)
         full_path.parent.mkdir(parents=True, exist_ok=True)
         full_path.write_text(req.content, encoding="utf-8")
 
@@ -131,6 +149,11 @@ async def rename_entry(
         raise HTTPException(status_code=404, detail="Source not found")
 
     new_path = _resolve_safe(sandbox, req.new_path)
+    if src.is_file() and new_path.suffix.lower() not in ALLOWED_EXTS:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Unsupported file type: {new_path.suffix or '(none)'}",
+        )
     if new_path.exists():
         raise HTTPException(status_code=409, detail="Target already exists")
 
@@ -231,7 +254,7 @@ async def download_single_file(sandbox_id: str, file_path: str) -> StreamingResp
     if not sandbox:
         raise HTTPException(status_code=404, detail="Sandbox not found")
 
-    full_path = _resolve_safe(sandbox, file_path)
+    full_path = _resolve_safe_file(sandbox, file_path)
     if not full_path.exists() or not full_path.is_file():
         raise HTTPException(status_code=404, detail="File not found")
 

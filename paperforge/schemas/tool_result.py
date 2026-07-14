@@ -30,6 +30,7 @@ class ToolResult(BaseModel):
     data: dict[str, Any] = Field(default_factory=dict)
     summary: str = ""
     error: str | None = None
+    code: str | None = None
     retryable: bool = False
     next_phase: str | None = None
     stop_loop: bool = False

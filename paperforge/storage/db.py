@@ -48,6 +48,10 @@ CREATE TABLE IF NOT EXISTS sandboxes (
     app_path TEXT NOT NULL,
     preview_port INTEGER,
     status TEXT NOT NULL DEFAULT 'pending',
+    preview_status TEXT NOT NULL DEFAULT 'idle',
+    preview_url TEXT,
+    error TEXT,
+    environment TEXT NOT NULL DEFAULT 'docker',
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     started_at TIMESTAMP,
     stopped_at TIMESTAMP
@@ -114,6 +118,17 @@ CREATE TABLE IF NOT EXISTS tasks (
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     completed_at TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS workspace_revisions (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    app_id TEXT NOT NULL,
+    parent_revision_id TEXT,
+    source TEXT NOT NULL,
+    changed_files TEXT NOT NULL,
+    snapshot_path TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 SCHEMA_SQL_INDEXES = """
@@ -130,6 +145,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_run_events_run_seq
     ON run_events(run_id, seq);
 CREATE INDEX IF NOT EXISTS idx_tasks_run ON tasks(run_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+CREATE INDEX IF NOT EXISTS idx_workspace_revisions_app
+    ON workspace_revisions(app_id, created_at DESC);
 """
 
 # Kept for compatibility; new init uses SCHEMA_SQL_TABLES + SCHEMA_SQL_INDEXES.
@@ -148,6 +165,7 @@ class Storage:
         self.prds_dir = self.data_dir / "prds"
         self.reports_dir = self.data_dir / "verification_reports"
         self.uploads_dir = self.data_dir / "uploads"
+        self.workspace_revisions_dir = self.data_dir / "workspace_revisions"
 
         for d in [
             self.data_dir,
@@ -157,6 +175,7 @@ class Storage:
             self.prds_dir,
             self.reports_dir,
             self.uploads_dir,
+            self.workspace_revisions_dir,
         ]:
             d.mkdir(parents=True, exist_ok=True)
 
@@ -188,6 +207,22 @@ class Storage:
             self._ensure_column(conn, "messages", "public_id", "TEXT")
             self._ensure_column(conn, "messages", "status", "TEXT NOT NULL DEFAULT 'completed'")
             self._ensure_column(conn, "messages", "parts", "TEXT")
+            self._ensure_column(conn, "sandboxes", "preview_status", "TEXT NOT NULL DEFAULT 'idle'")
+            self._ensure_column(conn, "sandboxes", "preview_url", "TEXT")
+            self._ensure_column(conn, "sandboxes", "error", "TEXT")
+            self._ensure_column(conn, "sandboxes", "environment", "TEXT NOT NULL DEFAULT 'docker'")
+            conn.execute(
+                "UPDATE sandboxes SET preview_status = 'starting' "
+                "WHERE preview_status = 'idle' AND status IN ('pending', 'starting', 'running')"
+            )
+            conn.execute(
+                "UPDATE sandboxes SET preview_status = 'stopped' "
+                "WHERE preview_status = 'idle' AND status = 'stopped'"
+            )
+            conn.execute(
+                "UPDATE sandboxes SET preview_status = 'degraded' "
+                "WHERE preview_status = 'idle' AND status IN ('error', 'failed')"
+            )
             # Older databases predate public_id. Backfill deterministically
             # before creating the unique index used by new writes.
             conn.execute(
@@ -349,11 +384,91 @@ class Storage:
                     json.dumps(parts, ensure_ascii=False) if parts else None,
                 ),
             )
+            now = datetime.utcnow().isoformat()
+            conn.execute(
+                "UPDATE runs SET last_message_at = ?, updated_at = ? WHERE id = ?",
+                (now, now, run_id),
+            )
             row = conn.execute(
                 "SELECT * FROM messages WHERE id = ?",
                 (cur.lastrowid,),
             ).fetchone()
         return dict(row)
+
+    def update_message(
+        self,
+        public_id: str,
+        *,
+        content: str | None = None,
+        status: str | None = None,
+        tool_calls: list[dict] | None = None,
+        parts: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any] | None:
+        """Update a durable message by its public streaming ID."""
+        sets: list[str] = []
+        params: list[Any] = []
+        if content is not None:
+            sets.append("content = ?")
+            params.append(content)
+        if status is not None:
+            sets.append("status = ?")
+            params.append(status)
+        if tool_calls is not None:
+            sets.append("tool_calls = ?")
+            params.append(json.dumps(tool_calls, ensure_ascii=False))
+        if parts is not None:
+            sets.append("parts = ?")
+            params.append(json.dumps(parts, ensure_ascii=False))
+        if not sets:
+            with self._conn() as conn:
+                row = conn.execute(
+                    "SELECT * FROM messages WHERE public_id = ?", (public_id,)
+                ).fetchone()
+            return dict(row) if row else None
+
+        params.append(public_id)
+        with self._lock, self._conn() as conn:
+            conn.execute(
+                f"UPDATE messages SET {', '.join(sets)} WHERE public_id = ?",
+                params,
+            )
+            row = conn.execute(
+                "SELECT * FROM messages WHERE public_id = ?", (public_id,)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def create_streaming_message(self, run_id: str, public_id: str) -> dict[str, Any]:
+        """Create the assistant row before the first SSE delta is emitted."""
+        return self.add_message(
+            run_id=run_id,
+            role="assistant",
+            content="",
+            public_id=public_id,
+            status="streaming",
+        )
+
+    def append_message_delta(self, public_id: str, delta: str) -> None:
+        with self._lock, self._conn() as conn:
+            conn.execute(
+                "UPDATE messages SET content = COALESCE(content, '') || ? WHERE public_id = ?",
+                (delta, public_id),
+            )
+
+    def complete_message(
+        self,
+        public_id: str,
+        content: str,
+        tool_calls: list[dict] | None = None,
+    ) -> dict[str, Any] | None:
+        return self.update_message(
+            public_id,
+            content=content,
+            status="completed",
+            tool_calls=tool_calls,
+        )
+
+    def fail_message(self, public_id: str, error: str) -> dict[str, Any] | None:
+        return self.update_message(public_id, content=error, status="failed")
 
     def list_messages(self, run_id: str) -> list[dict[str, Any]]:
         with self._conn() as conn:
@@ -381,13 +496,40 @@ class Storage:
         container_id: str | None = None,
         preview_port: int | None = None,
         status: str = "pending",
+        preview_status: str = "idle",
+        preview_url: str | None = None,
+        error: str | None = None,
+        environment: str = "docker",
     ) -> dict[str, Any]:
+        if preview_status == "idle":
+            preview_status = {
+                "running": "running",
+                "pending": "starting",
+                "starting": "starting",
+                "error": "degraded",
+                "failed": "degraded",
+                "stopped": "stopped",
+            }.get(status, "idle")
         now = datetime.utcnow().isoformat()
         with self._lock, self._conn() as conn:
             conn.execute(
-                """INSERT INTO sandboxes (id, run_id, container_id, app_path, preview_port, status, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (sandbox_id, run_id, container_id, app_path, preview_port, status, now),
+                """INSERT INTO sandboxes
+                   (id, run_id, container_id, app_path, preview_port, status,
+                    preview_status, preview_url, error, environment, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    sandbox_id,
+                    run_id,
+                    container_id,
+                    app_path,
+                    preview_port,
+                    status,
+                    preview_status,
+                    preview_url,
+                    error,
+                    environment,
+                    now,
+                ),
             )
         return {
             "id": sandbox_id,
@@ -396,6 +538,10 @@ class Storage:
             "app_path": app_path,
             "preview_port": preview_port,
             "status": status,
+            "preview_status": preview_status,
+            "preview_url": preview_url,
+            "error": error,
+            "environment": environment,
             "created_at": now,
         }
 
@@ -486,12 +632,170 @@ class Storage:
         params.append(datetime.utcnow().isoformat())
         params.append(task_id)
         with self._lock, self._conn() as conn:
+            if status in {"completed", "failed", "cancelled"}:
+                sets.append("completed_at = ?")
+                params.insert(-1, datetime.utcnow().isoformat())
             conn.execute(f"UPDATE tasks SET {', '.join(sets)} WHERE id = ?", params)
         return self.get_task(task_id)
 
     def delete_task(self, task_id: str) -> None:
         with self._lock, self._conn() as conn:
             conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+
+    # ===== Workspace revisions =====
+
+    def _snapshot_workspace(self, app_path: Path) -> dict[str, str]:
+        blocked = {"node_modules", ".next", ".git", "dist", "build", ".cache"}
+        snapshot: dict[str, str] = {}
+        if not app_path.exists():
+            return snapshot
+        for path in app_path.rglob("*"):
+            if not path.is_file():
+                continue
+            rel = path.relative_to(app_path).parts
+            if any(part in blocked for part in rel) or path.stat().st_size > 1_000_000:
+                continue
+            try:
+                snapshot["/".join(rel)] = path.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                continue
+        return snapshot
+
+    def create_workspace_revision(
+        self,
+        run_id: str,
+        app_id: str,
+        source: str,
+        app_path: str | Path,
+        parent_revision_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Persist a bounded source snapshot and its changed-file list."""
+        current = self._snapshot_workspace(Path(app_path).resolve())
+        if parent_revision_id is None:
+            previous = self.list_workspace_revisions(app_id)
+            parent_revision_id = previous[0]["id"] if previous else None
+        parent_snapshot: dict[str, str] = {}
+        if parent_revision_id:
+            parent = self.get_workspace_revision(parent_revision_id, include_snapshot=True)
+            parent_snapshot = (parent or {}).get("snapshot") or {}
+
+        changed_files = sorted(
+            path
+            for path in set(current) | set(parent_snapshot)
+            if current.get(path) != parent_snapshot.get(path)
+        )
+        revision_id = f"rev_{uuid.uuid4().hex[:10]}"
+        snapshot_path = self.workspace_revisions_dir / f"{revision_id}.json"
+        snapshot_path.write_text(
+            json.dumps(current, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        now = datetime.utcnow().isoformat()
+        with self._lock, self._conn() as conn:
+            conn.execute(
+                """INSERT INTO workspace_revisions
+                   (id, run_id, app_id, parent_revision_id, source,
+                    changed_files, snapshot_path, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    revision_id,
+                    run_id,
+                    app_id,
+                    parent_revision_id,
+                    source,
+                    json.dumps(changed_files, ensure_ascii=False),
+                    str(snapshot_path),
+                    now,
+                ),
+            )
+        return {
+            "id": revision_id,
+            "revision_id": revision_id,
+            "run_id": run_id,
+            "app_id": app_id,
+            "parent_revision_id": parent_revision_id,
+            "source": source,
+            "changed_files": changed_files,
+            "created_at": now,
+        }
+
+    def list_workspace_revisions(self, app_id: str) -> list[dict[str, Any]]:
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM workspace_revisions WHERE app_id = "
+                "? ORDER BY created_at DESC",
+                (app_id,),
+            ).fetchall()
+        return [self._decode_workspace_revision(dict(row)) for row in rows]
+
+    def get_workspace_revision(
+        self,
+        revision_id: str,
+        *,
+        include_snapshot: bool = False,
+    ) -> dict[str, Any] | None:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM workspace_revisions WHERE id = ?",
+                (revision_id,),
+            ).fetchone()
+        if not row:
+            return None
+        revision = self._decode_workspace_revision(dict(row))
+        if include_snapshot:
+            path = Path(revision["snapshot_path"])
+            if path.exists():
+                try:
+                    revision["snapshot"] = json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    revision["snapshot"] = {}
+        return revision
+
+    def restore_workspace_revision(
+        self,
+        revision_id: str,
+        app_path: str | Path,
+    ) -> dict[str, Any] | None:
+        """Restore a stored workspace snapshot to its app directory.
+
+        The caller is responsible for validating artifact/run ownership. This
+        method only applies the bounded snapshot and never touches blocked
+        dependency/build directories.
+        """
+        revision = self.get_workspace_revision(revision_id, include_snapshot=True)
+        if not revision:
+            return None
+        snapshot = revision.get("snapshot") or {}
+        base = Path(app_path).resolve()
+        blocked = {"node_modules", ".next", ".git", "dist", "build", ".cache"}
+
+        for path in base.rglob("*"):
+            if not path.is_file():
+                continue
+            relative = path.relative_to(base).parts
+            if any(part in blocked for part in relative):
+                continue
+            relative_key = "/".join(relative)
+            if relative_key not in snapshot:
+                path.unlink()
+
+        for relative_key, content in snapshot.items():
+            target = (base / relative_key).resolve()
+            try:
+                target.relative_to(base)
+            except (ValueError, RuntimeError) as exc:
+                raise ValueError("Workspace snapshot contains an unsafe path") from exc
+            if any(part in blocked for part in target.relative_to(base).parts):
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(str(content), encoding="utf-8")
+        return revision
+
+    @staticmethod
+    def _decode_workspace_revision(row: dict[str, Any]) -> dict[str, Any]:
+        row["revision_id"] = row["id"]
+        row["changed_files"] = json.loads(row.get("changed_files") or "[]")
+        return row
 
     def list_sandboxes(self, status: str | None = None) -> list[dict[str, Any]]:
         query = "SELECT * FROM sandboxes"
@@ -632,6 +936,40 @@ class Storage:
             d["metadata"] = json.loads(d.get("metadata") or "{}")
             return d
 
+    def update_artifact(
+        self,
+        artifact_id: str,
+        data: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        """Update an artifact payload and/or metadata in place.
+
+        Verification reports are created before a sandbox starts and receive
+        runtime/acceptance results afterwards. Keeping the same artifact ID
+        makes the report durable and lets the UI refresh it without creating
+        duplicate report cards.
+        """
+        artifact = self.get_artifact(artifact_id)
+        if not artifact:
+            return None
+
+        path = Path(artifact["path"])
+        now = datetime.utcnow().isoformat()
+        next_metadata = artifact.get("metadata") or {}
+        if metadata is not None:
+            next_metadata = {**next_metadata, **metadata}
+        if data is not None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        with self._lock, self._conn() as conn:
+            conn.execute(
+                "UPDATE artifacts SET metadata = ?, version = version + 1, updated_at = ? "
+                "WHERE id = ?",
+                (json.dumps(next_metadata, ensure_ascii=False), now, artifact_id),
+            )
+        return self.get_artifact(artifact_id)
+
     def list_artifacts(
         self, run_id: str | None = None, artifact_type: str | None = None
     ) -> list[dict[str, Any]]:
@@ -708,6 +1046,17 @@ class Storage:
             )
             if cur.rowcount == 0:
                 return None
+        return self.get_approval(approval_id)
+
+    def expire_approval(self, approval_id: str) -> dict[str, Any] | None:
+        """Expire an unresolved approval after its bounded wait window."""
+        now = datetime.utcnow().isoformat()
+        with self._lock, self._conn() as conn:
+            conn.execute(
+                "UPDATE approvals SET status = 'expired', resolved_at = ? "
+                "WHERE id = ? AND status = 'pending'",
+                (now, approval_id),
+            )
         return self.get_approval(approval_id)
 
     def list_approvals(

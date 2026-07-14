@@ -8,6 +8,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from paperforge.orchestrator.events import EventEmitter, get_event_manager
 from paperforge.orchestrator.tasks import get_run_task_manager
 from paperforge.storage.db import get_storage
 
@@ -72,14 +73,43 @@ def _to_artifact(storage: Any, row: dict[str, Any]) -> dict[str, Any]:
 def _to_approval(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "approval_id": row["id"],
-        "id": row["id"],
         "run_id": row["run_id"],
         "tool": row["tool_name"],
-        "tool_name": row["tool_name"],
         "args": row.get("args") or {},
         "status": row["status"],
         "created_at": row["created_at"],
         "resolved_at": row.get("resolved_at"),
+}
+
+
+def _to_preview(sandbox: dict[str, Any] | None) -> dict[str, Any]:
+    if sandbox is None:
+        return {"status": "idle", "sandbox_id": None}
+    status = sandbox.get("status")
+    preview_status = sandbox.get("preview_status")
+    if preview_status == "idle" and status in {"pending", "starting", "running"}:
+        preview_status = "starting"
+    elif preview_status == "idle" and status == "stopped":
+        preview_status = "stopped"
+    elif preview_status == "idle" and status in {"error", "failed"}:
+        preview_status = "degraded"
+    elif preview_status not in {"idle", "starting", "running", "degraded", "stopped", "error"}:
+        preview_status = (
+            "starting"
+            if status in {"pending", "starting", "running"}
+            else "degraded"
+            if status in {"error", "failed"}
+            else "stopped"
+        )
+    return {
+        "status": preview_status,
+        "sandbox_id": sandbox.get("id"),
+        "preview_url": (
+            sandbox.get("preview_url") or f"/api/preview/{sandbox['id']}/"
+            if preview_status == "running"
+            else None
+        ),
+        "error": sandbox.get("error"),
     }
 
 
@@ -141,6 +171,10 @@ async def update_run(run_id: str, req: RunUpdate) -> Run:
     )
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
+    await EventEmitter(run_id, get_event_manager()).run_updated(
+        title=run.get("title"),
+        pinned=bool(run.get("pinned", 0)),
+    )
     return _to_run(run)
 
 
@@ -150,6 +184,9 @@ async def archive_run(run_id: str) -> Run:
     run = storage.archive_run(run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
+    await EventEmitter(run_id, get_event_manager()).run_updated(
+        archived_at=run.get("archived_at"),
+    )
     return _to_run(run)
 
 
@@ -159,6 +196,9 @@ async def restore_run(run_id: str) -> Run:
     run = storage.restore_run(run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
+    await EventEmitter(run_id, get_event_manager()).run_updated(
+        archived_at=run.get("archived_at"),
+    )
     return _to_run(run)
 
 
@@ -170,7 +210,7 @@ async def delete_run(run_id: str) -> dict:
         raise HTTPException(status_code=404, detail="Run not found")
 
     task_manager = get_run_task_manager()
-    task_manager.cancel(run_id)
+    await task_manager.cancel_and_wait(run_id)
     storage.delete_run(run_id)
     return {"status": "deleted", "run_id": run_id}
 
@@ -181,10 +221,20 @@ async def cancel_run(run_id: str) -> dict:
     run = storage.get_run(run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
-    task_manager = get_run_task_manager()
-    cancelled = task_manager.cancel(run_id)
-    if not cancelled:
+    if run["status"] in {"cancelled", "done"}:
         raise HTTPException(status_code=409, detail="Run is not active")
+
+    task_manager = get_run_task_manager()
+    cancelled = await task_manager.cancel_and_wait(run_id)
+    if not cancelled and run["status"] != "running":
+        raise HTTPException(status_code=409, detail="Run is not active")
+
+    previous_status = run["status"]
+    storage.update_run_status(run_id, "cancelled")
+    event_manager = get_event_manager()
+    emitter = EventEmitter(run_id=run_id, manager=event_manager)
+    await emitter.run_status_changed("cancelled", previous_status)
+    await emitter.run_finished()
     return {"status": "cancelled", "run_id": run_id}
 
 
@@ -261,6 +311,7 @@ async def get_run_state(run_id: str) -> dict:
         "messages": messages,
         "artifacts": artifacts,
         "sandbox": sandbox,
+        "preview": _to_preview(sandbox),
         "pending_approvals": approvals,
         "approvals": all_approvals,
         "tasks": tasks,

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { api } from "@/lib/api";
+import { api, triggerBrowserDownload } from "@/lib/api";
 import { Sidebar } from "@/components/Sidebar";
 import { CapabilityCardView } from "@/components/CapabilityCardView";
 import type { Paper, Run } from "@/lib/store";
@@ -28,6 +28,7 @@ export default function PaperDetailPage() {
   const [papers, setPapers] = useState<Paper[]>([]);
   const [data, setData] = useState<PaperDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [downloading, setDownloading] = useState(false);
 
   const loadAll = useCallback(() => {
     Promise.all([api.listRuns(), api.listLibrary()])
@@ -61,6 +62,19 @@ export default function PaperDetailPage() {
     const run = await api.createRun("New Run");
     setRuns((prev) => [run, ...prev]);
     router.push(`/runs/${run.id}`);
+  };
+
+  const handleDownload = async () => {
+    if (!params.paperId) return;
+    setDownloading(true);
+    try {
+      const blob = await api.downloadPaperPdf(params.paperId);
+      triggerBrowserDownload(blob, `${params.paperId}.pdf`);
+    } catch (err: any) {
+      setError(err.message || "Failed to download PDF");
+    } finally {
+      setDownloading(false);
+    }
   };
 
   if (error) {
@@ -193,10 +207,11 @@ export default function PaperDetailPage() {
 
           <section className="flex gap-2">
             <button
-              onClick={() => router.push(`/library/${paper.paper_id}/pdf`)}
+              onClick={handleDownload}
+              disabled={downloading}
               className="px-3 py-1.5 text-sm border border-border rounded hover:bg-accent"
             >
-              Download PDF
+              {downloading ? "Downloading..." : "Download PDF"}
             </button>
           </section>
         </div>

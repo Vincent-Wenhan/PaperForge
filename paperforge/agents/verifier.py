@@ -12,8 +12,8 @@ from pathlib import Path
 from typing import Any
 
 from paperforge.llm.base import LLMClient, Message
-from paperforge.schemas.verification import VerificationReport
 from paperforge.sandbox.build_runner import BuildRunner
+from paperforge.schemas.verification import VerificationReport
 from paperforge.storage.db import Storage
 
 logger = logging.getLogger(__name__)
@@ -46,8 +46,8 @@ async def verify_app(
     L1 Workspace integrity (files, secrets, dangerous APIs)
     L2 Static quality (TypeScript via tsc --noEmit, ESLint via next lint)
     L3 Build (npm ci + next build, prefers Docker if available)
-    L4 Runtime readiness is deferred to run_in_sandbox
-    L5 Product acceptance is delegated to a future acceptance-test runner
+    L4 Runtime readiness is checked after the preview sandbox becomes ready.
+    L5 Product acceptance is checked by the bounded browser smoke runner.
 
     Returns a verification report dict.
     """
@@ -74,19 +74,20 @@ async def verify_app(
         build_errors.append("Missing app/page.tsx")
 
     # L3: Real build via unified BuildRunner.
+    build_result = None
     try:
         runner = BuildRunner(mode="docker")
-        result = await runner.run(app_path)
+        build_result = await runner.run(app_path)
     except Exception:
         runner = BuildRunner(mode="local")
-        result = await runner.run(app_path)
+        build_result = await runner.run(app_path)
 
-    if result.ok:
+    if build_result.ok:
         build_succeeded = True
     else:
         build_succeeded = False
-    build_errors.extend(result.errors)
-    build_warnings.extend(result.warnings)
+    build_errors.extend(build_result.errors)
+    build_warnings.extend(build_result.warnings)
 
     # L2: Static quality (only run if structure check passed)
     if has_package_json:
@@ -130,7 +131,7 @@ async def verify_app(
         if not keywords:
             continue
         found = False
-        for file_path, content in files:
+        for _file_path, content in files:
             content_lower = content.lower()
             if any(k in content_lower for k in keywords):
                 found = True
@@ -142,6 +143,14 @@ async def verify_app(
 
     total = len(prd_features) or 1
     prd_coverage = covered / total
+    has_acceptance_criteria = bool(prd.get("acceptance_criteria"))
+    acceptance_status = (
+        "failed"
+        if missing_features
+        else "pending"
+        if prd_id and has_acceptance_criteria
+        else "passed"
+    )
 
     # L1c: Mock/Real boundary
     mock_files = [f for f in files if "mock" in f[0].lower()]
@@ -191,9 +200,57 @@ async def verify_app(
     if not recommendations:
         recommendations.append("App looks good. Ready for preview.")
 
+    layers = [
+        {
+            "id": "workspace",
+            "name": "Workspace integrity",
+            "status": "passed" if has_package_json and has_app_dir and has_page else "failed",
+            "errors": list(build_errors),
+            "security_issues": list(security_issues),
+        },
+        {
+            "id": "static",
+            "name": "Static quality",
+            "status": "passed" if not type_errors and not lint_errors else "failed",
+            "type_errors": list(type_errors),
+            "lint_errors": list(lint_errors),
+        },
+        {
+            "id": "build",
+            "name": "Build",
+            "status": "passed" if build_succeeded else "failed",
+            "environment": build_result.environment,
+            "degraded": build_result.degraded,
+            "fallback_reason": build_result.fallback_reason,
+        },
+        {
+            "id": "runtime",
+            "name": "Runtime readiness",
+            "status": "pending",
+            "reason": "Checked after run_in_sandbox reports an HTTP-ready preview.",
+        },
+        {
+            "id": "acceptance",
+            "name": "Product acceptance",
+            "status": acceptance_status,
+            "prd_coverage": prd_coverage,
+            "missing_features": list(missing_features),
+            "reason": "Browser smoke runs after the preview is ready."
+            if prd_id
+            else "No PRD acceptance criteria supplied.",
+        },
+    ]
+
     report = {
         "app_id": app_id,
         "prd_id": prd_id,
+        "layers": layers,
+        "build_environment": build_result.environment,
+        "build_degraded": build_result.degraded,
+        "build_fallback_reason": build_result.fallback_reason,
+        "runtime_status": "pending",
+        "acceptance_status": acceptance_status,
+        "browser_smoke": {},
         "build_succeeded": build_succeeded,
         "build_errors": build_errors,
         "build_warnings": build_warnings,
@@ -385,7 +442,7 @@ async def _exec(
         )
         try:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             proc.kill()
             await proc.wait()
             return False, "", f"Command timed out after {timeout}s"

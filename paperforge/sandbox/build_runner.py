@@ -36,6 +36,8 @@ class BuildResult:
     stdout: str = ""
     stderr: str = ""
     environment: str = "local"
+    degraded: bool = False
+    fallback_reason: str | None = None
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     install_succeeded: bool = False
@@ -132,11 +134,13 @@ class BuildRunner:
             logger.warning("Docker SDK not available, falling back to local build")
             self.mode = "local"
             result.environment = "local"
+            result.degraded = True
+            result.fallback_reason = "docker_sdk_unavailable"
             return await self._run_local(app_path, result, install_timeout, build_timeout)
 
         cfg = get_config()
 
-        def make_client() -> "docker.DockerClient":
+        def make_client() -> docker.DockerClient:
             client = docker.from_env()
             client.ping()
             return client
@@ -147,6 +151,8 @@ class BuildRunner:
             logger.warning(f"Docker not available ({e}), falling back to local build")
             self.mode = "local"
             result.environment = "local"
+            result.degraded = True
+            result.fallback_reason = f"docker_unavailable: {e}"
             return await self._run_local(app_path, result, install_timeout, build_timeout)
 
         container_name = f"paperforge-build-{uuid.uuid4().hex[:12]}"
@@ -220,7 +226,7 @@ class BuildRunner:
             )
             try:
                 stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 proc.kill()
                 await proc.wait()
                 return False, "", f"Command timed out after {timeout}s"

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from typing import Any, Literal
+
+from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel, Field
 
 from paperforge.orchestrator.approvals import get_approval_registry
 from paperforge.storage.db import get_storage
@@ -17,23 +19,19 @@ class ApprovalResolve(BaseModel):
 
 class ApprovalView(BaseModel):
     approval_id: str
-    id: str
     run_id: str
     tool: str
-    tool_name: str
-    args: dict
-    status: str
-    created_at: str
+    args: dict[str, Any] = Field(default_factory=dict)
+    status: Literal["pending", "approved", "rejected", "expired"]
+    created_at: str | None = None
     resolved_at: str | None = None
 
 
 def _to_approval(row: dict) -> ApprovalView:
     return ApprovalView(
         approval_id=row["id"],
-        id=row["id"],
         run_id=row["run_id"],
         tool=row["tool_name"],
-        tool_name=row["tool_name"],
         args=row.get("args") or {},
         status=row["status"],
         created_at=row["created_at"],
@@ -43,11 +41,13 @@ def _to_approval(row: dict) -> ApprovalView:
 
 @router.get("", response_model=list[ApprovalView])
 async def list_approvals(
-    run_id: str | None = None,
-    status: str | None = None,
+    run_id: str | None = Query(default=None),
+    status: Literal["pending", "approved", "rejected", "expired"] | None = Query(default=None),
 ) -> list[ApprovalView]:
     """List durable approvals for hydration and refresh recovery."""
     storage = get_storage()
+    if run_id is not None and storage.get_run(run_id) is None:
+        raise HTTPException(status_code=404, detail="Run not found")
     return [
         _to_approval(row)
         for row in storage.list_approvals(run_id=run_id, status=status)
