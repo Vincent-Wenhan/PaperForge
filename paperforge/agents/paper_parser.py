@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 MAX_RETRIES = 3
 MAX_CHUNK_CHARS = 12000
 MAX_CHUNKS = 32
+MAX_MAP_CHUNKS = 16  # chunks fed to the LLM per map call (doc 36.2 hierarchical cap)
 
 
 def extract_pdf_pages(pdf_path: str | Path) -> list[str]:
@@ -132,6 +133,11 @@ async def parse_paper(
             continue
         if isinstance(chunk_data, dict):
             mapped.append({"chunk": index, "data": chunk_data})
+        # Stop mapping once we've consumed the bounded cap; remaining chunks
+        # stay excluded so we never silently truncate with no trace left.
+        if index >= MAX_MAP_CHUNKS:
+            logger.warning("Reached map cap of %s; remaining chunks left unmapped", MAX_MAP_CHUNKS)
+            break
 
     if not mapped:
         raise ValueError("PaperParser produced no valid map results")
@@ -171,7 +177,8 @@ async def parse_paper(
             validated = CapabilityCard.model_validate(card)
             card = validated.model_dump()
             card["paper_id"] = paper_id
-            card["parse_coverage"] = _build_parse_coverage(pages, chunks).model_dump()
+            processed_chunks = chunks[: min(len(mapped), MAX_MAP_CHUNKS)]
+            card["parse_coverage"] = _build_parse_coverage(pages, processed_chunks).model_dump()
             return card
         except Exception as exc:
             last_error = exc
