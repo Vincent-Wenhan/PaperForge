@@ -628,7 +628,7 @@ class Storage:
         phase: str = "init",
     ) -> dict[str, Any]:
         now = datetime.utcnow().isoformat()
-        task_id = f"task_{uuid.uuid4().hex[:8]}"
+        task_id = f"task_{uuid.uuid4().hex}"
         with self._lock, self._conn() as conn:
             conn.execute(
                 """INSERT INTO tasks (id, run_id, title, goal, status, phase, created_at, updated_at)
@@ -713,7 +713,7 @@ class Storage:
         summary: str | None = None,
         metadata: dict | None = None,
     ) -> dict[str, Any]:
-        step_id = f"step_{uuid.uuid4().hex[:10]}"
+        step_id = f"step_{uuid.uuid4().hex}"
         with self._lock, self._conn() as conn:
             conn.execute(
                 """INSERT INTO steps
@@ -1102,7 +1102,7 @@ class Storage:
         data: dict[str, Any],
         metadata: dict[str, Any] | None = None,
     ) -> str:
-        artifact_id = f"{artifact_type}_{uuid.uuid4().hex[:8]}"
+        artifact_id = f"{artifact_type}_{uuid.uuid4().hex}"
         path = self._artifact_path(artifact_type, artifact_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")

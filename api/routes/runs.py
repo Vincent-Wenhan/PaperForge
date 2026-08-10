@@ -122,7 +122,7 @@ def _to_task(row: dict[str, Any]) -> dict[str, Any]:
 @router.post("", response_model=Run)
 async def create_run(req: RunCreate) -> Run:
     storage = get_storage()
-    run_id = f"run_{uuid.uuid4().hex[:8]}"
+    run_id = f"run_{uuid.uuid4().hex}"
     # Default title is "New Run" so the auto-title logic in messages.py
     # can detect first-message and rename. User-supplied titles win.
     title = req.title or "New Run"

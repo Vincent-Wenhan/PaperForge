@@ -9,7 +9,8 @@
     "lint": "next lint",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "api:types": "openapi-typescript http://localhost:8000/openapi.json -o lib/api/schema.d.ts"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.6.0",

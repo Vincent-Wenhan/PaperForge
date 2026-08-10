@@ -369,16 +369,64 @@ export const api = {
   },
 };
 
-export interface RunEvent<T = unknown> {
+export interface RunEventBase<Type extends string, Payload = unknown> {
   version: 1;
   id: string;
   seq: number;
   run_id: string;
   task_id?: string | null;
-  type: string;
+  type: Type;
   ts: number | string;
-  payload: T;
+  payload: Payload;
 }
+
+export interface MessageDeltaPayload {
+  message_id: string;
+  delta: string;
+  text?: string;
+}
+
+export interface StepStartedPayload {
+  step_id: string;
+  task_id?: string;
+  kind: string;
+  title: string;
+}
+
+export interface StepProgressPayload {
+  step_id: string;
+  percent?: number;
+  detail?: string;
+}
+
+export interface StepCompletedPayload {
+  step_id: string;
+  summary?: string;
+}
+
+export interface StepFailedPayload {
+  step_id: string;
+  error?: string;
+}
+
+export interface SandboxLogDeltaPayload {
+  sandbox_id?: string;
+  offset?: number;
+  stream?: "stdout" | "stderr";
+  text: string;
+}
+
+export type KnownRunEvent =
+  | RunEventBase<"message.delta", MessageDeltaPayload>
+  | RunEventBase<"message.completed", { message_id: string; content?: string }>
+  | RunEventBase<"step.started", StepStartedPayload>
+  | RunEventBase<"step.progress", StepProgressPayload>
+  | RunEventBase<"step.completed", StepCompletedPayload>
+  | RunEventBase<"step.failed", StepFailedPayload>
+  | RunEventBase<"sandbox.log.delta", SandboxLogDeltaPayload>
+  | RunEventBase<string>;
+
+export type RunEvent = KnownRunEvent;
 
 export class SSEClient {
   private es: EventSource | null = null;

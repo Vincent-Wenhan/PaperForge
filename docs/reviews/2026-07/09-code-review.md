@@ -1,3 +1,13 @@
+> Status: Historical review
+> Reviewed: 2026-07-12
+>
+> Some recommendations have already been implemented.
+>
+> Current architecture:
+> - architecture/realtime-protocol.md
+> - architecture/task-workspace-model.md
+> - architecture/generation-pipeline.md
+
 # PaperForge 代码审查与修改方案
 
 > 审查对象：`https://github.com/Vincent-Wenhan/PaperForge`  

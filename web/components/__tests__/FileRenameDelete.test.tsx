@@ -53,8 +53,8 @@ describe("File rename/delete confirmation", () => {
     const promptSpy = vi.spyOn(window, "prompt").mockReturnValue("renamed.ts");
     render(<PreviewPanel />);
     // Call api.renameEntry directly to verify mock wiring
-    await api.renameEntry("sb_1", "old.ts");
-    expect(api.renameEntry).toHaveBeenCalledWith("sb_1", "old.ts");
+    await api.renameEntry("sb_1", "old.ts", "renamed.ts");
+    expect(api.renameEntry).toHaveBeenCalledWith("sb_1", "old.ts", "renamed.ts");
     expect(promptSpy).not.toHaveBeenCalled(); // prompt is inside component, not api
     promptSpy.mockRestore();
   });

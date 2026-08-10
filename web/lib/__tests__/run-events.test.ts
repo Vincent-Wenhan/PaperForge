@@ -114,4 +114,33 @@ describe("run event reducer", () => {
     expect(inferWorkbenchMode("preview.ready", "closed", true)).toBe("closed");
     expect(inferWorkbenchMode("message.delta", "open", false)).toBe("open");
   });
+
+  it("ignores unknown future events without rehydrating (doc 23.7)", () => {
+    useAppStore.setState({ lastSeq: 10 });
+    const result = applyRunEvent({
+      version: 1,
+      id: "evt_11",
+      seq: 11,
+      run_id: "run_1",
+      type: "future.event",
+      ts: Date.now(),
+      payload: {},
+    });
+    expect(result).toBe("unknown");
+    expect(useAppStore.getState().lastSeq).toBe(11);
+  });
+
+  it("detects a real sequence gap (doc 23.8)", () => {
+    useAppStore.setState({ lastSeq: 10 });
+    const result = applyRunEvent({
+      version: 1,
+      id: "evt_12",
+      seq: 12,
+      run_id: "run_1",
+      type: "message.delta",
+      ts: Date.now(),
+      payload: { message_id: "msg_1", delta: "x" },
+    });
+    expect(result).toBe("gap");
+  });
 });

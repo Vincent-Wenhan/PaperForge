@@ -9,6 +9,7 @@ const run: Run = {
   status: "active",
   phase: "init",
   created_at: new Date().toISOString(),
+  updated_at: new Date().toISOString(),
   pinned: false,
 };
 

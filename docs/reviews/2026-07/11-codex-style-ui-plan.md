@@ -1,3 +1,13 @@
+> Status: Historical review
+> Reviewed: 2026-07-12
+>
+> Some recommendations have already been implemented.
+>
+> Current architecture:
+> - architecture/realtime-protocol.md
+> - architecture/task-workspace-model.md
+> - architecture/generation-pipeline.md
+
 # PaperForge ChatGPT / Codex 风格 UI 与交互改造实施计划
 
 > 审查范围：PaperForge `main` 分支当前前端、后端 API、Storage、Orchestrator、SSE、文件与 Artifact 相关代码，以及用户提供的当前运行截图。  

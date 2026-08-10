@@ -21,7 +21,7 @@ export function inferWorkbenchMode(
 }
 
 function eventData(event: RunEvent): any {
-  return event.payload ?? (event as any).data ?? {};
+  return event.payload ?? (event as { data?: any }).data ?? {};
 }
 
 function toStoreEvent(event: RunEvent, data: any): Event {
