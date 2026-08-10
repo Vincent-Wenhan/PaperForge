@@ -20,26 +20,30 @@ def _resolve_route(criterion: dict[str, Any]) -> str:
     return criterion.get("route") or "/"
 
 
-def _verify_expected(page, locator: Any, expected: Any, timeout_ms: int) -> None:
+async def _verify_expected(page, locator: Any, expected: Any) -> None:
     if expected is None:
         return
     if expected is True:
         if locator is None:
             raise RuntimeError("Expected visible element but selector is absent.")
-        if not locator.is_visible():
+        if not await locator.is_visible():
             raise RuntimeError("Expected element to be visible.")
         return
     if expected is False:
-        if locator is not None and locator.is_visible():
+        if locator is not None and await locator.is_visible():
             raise RuntimeError("Expected element not to be visible.")
         return
     if isinstance(expected, str):
         if locator is not None:
-            actual = locator.inner_text()
+            tag = await locator.evaluate("(el) => el.tagName")
+            if tag == "INPUT" or (await locator.evaluate("(el) => el.getAttribute('contenteditable')")) is not None:
+                actual = await locator.input_value()
+            else:
+                actual = await locator.inner_text()
             if expected not in actual:
                 raise RuntimeError(f"Expected {expected!r} not found in element.")
         else:
-            html = page.content()
+            html = await page.content()
             if expected not in html:
                 raise RuntimeError(f"Expected {expected!r} not found on page.")
 
@@ -72,7 +76,7 @@ async def _execute_interaction(page, criterion: dict[str, Any], timeout_ms: int)
     else:
         raise RuntimeError(f"Unsupported action: {action}")
 
-    _verify_expected(page, locator, criterion.get("expected"), timeout_ms)
+    await _verify_expected(page, locator, criterion.get("expected"))
 
 
 async def run_browser_smoke(
@@ -172,7 +176,7 @@ async def run_browser_smoke(
                     await locator.wait_for(state="visible", timeout=timeout_ms)
                     text = await locator.inner_text()
                     result["text"] = text
-                    _verify_expected(page, locator, expected, timeout_ms)
+                    await _verify_expected(page, locator, expected)
                 elif kind == "visual":
                     await page.screenshot(path=str(screenshot_path), full_page=True)
                 else:

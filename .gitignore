@@ -64,6 +64,8 @@ next-env.d.ts
 .coverage
 htmlcov/
 .tox/
+playwright-report/
+test-results/
 
 # Logs
 *.log

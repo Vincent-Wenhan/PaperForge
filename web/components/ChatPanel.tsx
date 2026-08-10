@@ -175,7 +175,7 @@ interface RunHeaderProps {
 
 function RunHeader({ title, runId, status, phase, artifactCount }: RunHeaderProps) {
   return (
-    <div className="p-3 border-b border-border">
+    <div className="p-3 border-b border-border" data-testid="task-status">
       <h2 className="font-semibold">{title}</h2>
       <p className="text-xs text-muted-foreground">{runId}</p>
       <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">

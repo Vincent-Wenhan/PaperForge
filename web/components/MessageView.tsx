@@ -36,7 +36,11 @@ function MessageViewImpl({ role, content, streaming, toolCalls }: MessageViewPro
 
   return (
     <div className="flex justify-start" role="article" aria-label="Assistant message">
-      <div className="max-w-[720px] w-full px-1 py-1">
+      <div
+        className="max-w-[720px] w-full px-1 py-1"
+        data-testid={streaming ? "assistant-message-current" : "assistant-message"}
+        data-streaming={streaming ? "true" : "false"}
+      >
         <div className="text-sm prose prose-sm max-w-none">
           <ReactMarkdown>{content || ""}</ReactMarkdown>
           {streaming && <StreamingCaret />}
