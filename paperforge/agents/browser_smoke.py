@@ -2,10 +2,25 @@
 
 from __future__ import annotations
 
+import re
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urljoin
+
+# Dev-server noise that must not pollute product acceptance (doc 25.3).
+IGNORED_REQUEST_PATTERNS = [
+    re.compile(r"/favicon\.ico$"),
+    re.compile(r"/_next/webpack-hmr"),
+]
+
+
+def classify_request_failure(url: str, error: str) -> Literal["ignore", "warning", "error"]:
+    if any(pattern.search(url) for pattern in IGNORED_REQUEST_PATTERNS):
+        return "ignore"
+    if "ERR_ABORTED" in error:
+        return "warning"
+    return "error"
 
 
 def _criteria_list(prd: dict[str, Any] | None) -> list[dict[str, Any]]:
@@ -120,6 +135,7 @@ async def run_browser_smoke(
     trace_path = output_path / f"browser-smoke-{stamp}.zip"
     console_errors: list[str] = []
     failed_requests: list[str] = []
+    failed_request_noise: list[str] = []
     checks: list[dict[str, Any]] = []
 
     async with async_playwright() as playwright:
@@ -127,6 +143,15 @@ async def run_browser_smoke(
         context = await browser.new_context()
         await context.tracing.start(screenshots=True, snapshots=True, sources=True)
         page = await context.new_page()
+
+        def on_request_failed(request: Any) -> None:
+            text = f"{request.method} {request.url}: {request.failure}"
+            level = classify_request_failure(request.url, str(request.failure))
+            if level == "error":
+                failed_requests.append(text)
+            elif level == "warning":
+                failed_request_noise.append(text)
+
         page.on(
             "console",
             lambda message: console_errors.append(message.text)
@@ -135,9 +160,7 @@ async def run_browser_smoke(
         )
         page.on(
             "requestfailed",
-            lambda request: failed_requests.append(
-                f"{request.method} {request.url}: {request.failure}"
-            ),
+            on_request_failed,
         )
 
         try:
@@ -202,6 +225,7 @@ async def run_browser_smoke(
         "checks": checks,
         "console_errors": console_errors,
         "failed_requests": failed_requests,
+        "failed_request_noise": failed_request_noise,
         "screenshot_path": str(screenshot_path) if screenshot_path else None,
         "trace_path": str(trace_path) if trace_path.exists() else None,
     }

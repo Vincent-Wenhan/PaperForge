@@ -8,7 +8,20 @@ from pathlib import Path
 
 import pytest
 
-from paperforge.agents.browser_smoke import run_browser_smoke
+from paperforge.agents.browser_smoke import (
+    classify_request_failure,
+    run_browser_smoke,
+)
+
+
+def test_classify_request_failure_levels():
+    # Dev-server noise is ignored entirely.
+    assert classify_request_failure("http://x/favicon.ico", "net::ERR_FAILED") == "ignore"
+    assert classify_request_failure("http://x/_next/webpack-hmr", "Connection refused") == "ignore"
+    # Aborted requests are warnings, not failures.
+    assert classify_request_failure("http://x/api/data", "net::ERR_ABORTED") == "warning"
+    # Anything else is an error.
+    assert classify_request_failure("http://x/api/data", "net::ERR_CONNECTION_REFUSED") == "error"
 
 
 @pytest.mark.asyncio
