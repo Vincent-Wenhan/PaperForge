@@ -1,7 +1,7 @@
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { flushMessageDeltas } from "../realtime/stream-buffer";
-import { applyRunEvent } from "../run-events";
+import { applyRunEvent, inferWorkbenchMode } from "../run-events";
 import { useAppStore } from "../store";
 
 beforeEach(() => {
@@ -106,5 +106,12 @@ describe("run event reducer", () => {
     expect(step.id).toBe("step_1");
     expect(step.status).toBe("completed");
     expect(step.summary).toBe("done");
+  });
+
+  it("infers workbench mode from preview/artifact events, respecting pinned closed", () => {
+    expect(inferWorkbenchMode("artifact.created", "closed", false)).toBe("peek");
+    expect(inferWorkbenchMode("preview.ready", "peek", false)).toBe("open");
+    expect(inferWorkbenchMode("preview.ready", "closed", true)).toBe("closed");
+    expect(inferWorkbenchMode("message.delta", "open", false)).toBe("open");
   });
 });

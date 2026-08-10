@@ -119,11 +119,15 @@ interface AppState {
   isRunning: boolean;
   activeTab: "preview" | "files" | "artifacts" | "console" | "verification";
   sidebarCollapsed: boolean;
+  workbenchMode: "closed" | "peek" | "open";
+  workbenchPinnedClosed: boolean;
   lastSeq: number;
   composerPrefill: string;
 
   setCurrentRun: (run: Run | null) => void;
   updateCurrentRun: (patch: Partial<Run>) => void;
+  setWorkbenchMode: (mode: "closed" | "peek" | "open") => void;
+  setWorkbenchPinnedClosed: (pinned: boolean) => void;
   setSandbox: (sb: Sandbox | null) => void;
   setTasks: (tasks: Task[]) => void;
   upsertTask: (task: Task) => void;
@@ -173,6 +177,8 @@ export const useAppStore = create<AppState>((set) => ({
   isRunning: false,
   activeTab: "preview",
   sidebarCollapsed: false,
+  workbenchMode: "closed",
+  workbenchPinnedClosed: false,
   lastSeq: 0,
   composerPrefill: "",
 
@@ -196,6 +202,8 @@ export const useAppStore = create<AppState>((set) => ({
     set((s) =>
       s.currentRun ? { currentRun: { ...s.currentRun, ...patch } } : {},
     ),
+  setWorkbenchMode: (mode) => set({ workbenchMode: mode }),
+  setWorkbenchPinnedClosed: (pinned) => set({ workbenchPinnedClosed: pinned }),
   setSandbox: (sb) => set({ sandbox: sb }),
   setTasks: (tasks) => set({ tasks }),
   upsertTask: (task) =>

@@ -5,6 +5,21 @@ import { useAppStore, type Approval, type Event } from "./store";
 
 export type ApplyRunEventResult = "applied" | "duplicate" | "gap" | "unknown";
 
+// ponytail: workbench stays closed while the user pins it closed; otherwise
+// preview.ready opens it and artifact/file events peek it (doc 16.3).
+export function inferWorkbenchMode(
+  eventType: string,
+  current: "closed" | "peek" | "open",
+  pinnedClosed: boolean,
+): "closed" | "peek" | "open" {
+  if (pinnedClosed) return "closed";
+  if (eventType === "preview.ready") return "open";
+  if (eventType === "artifact.created" || eventType === "file.changed") {
+    return current === "closed" ? "peek" : current;
+  }
+  return current;
+}
+
 function eventData(event: RunEvent): any {
   return event.payload ?? (event as any).data ?? {};
 }
@@ -32,6 +47,12 @@ export function applyRunEvent(
   const data = eventData(event);
   store.setLastSeq(event.seq);
   store.addEvent(toStoreEvent(event, data));
+  const nextMode = inferWorkbenchMode(
+    event.type,
+    store.workbenchMode,
+    store.workbenchPinnedClosed,
+  );
+  if (nextMode !== store.workbenchMode) store.setWorkbenchMode(nextMode);
 
   switch (event.type) {
     case "message.started":

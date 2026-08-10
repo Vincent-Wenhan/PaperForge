@@ -2,11 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import {
-  Panel,
-  PanelGroup,
-  PanelResizeHandle,
-} from "react-resizable-panels";
 import { api } from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 import { useRunSession } from "@/lib/useRunSession";
@@ -14,6 +9,7 @@ import { useIsMobile, useIsTablet } from "@/lib/useMediaQuery";
 import { Sidebar } from "@/components/Sidebar";
 import { ChatPanel } from "@/components/ChatPanel";
 import { PreviewPanel } from "@/components/PreviewPanel";
+import { WorkbenchRail } from "@/components/WorkbenchRail";
 import { GlobalHeader } from "@/components/shell/GlobalHeader";
 import { CommandPalette } from "@/components/dialogs/CommandPalette";
 import { SkeletonMessage, SidebarSkeleton } from "@/components/Skeleton";
@@ -32,6 +28,9 @@ export default function RunWorkspacePage() {
   const session = useRunSession(params.id);
   const currentRun = useAppStore((s) => s.currentRun);
   const currentRunId = useAppStore((s) => s.currentRun?.id);
+  const workbenchMode = useAppStore((s) => s.workbenchMode);
+  const setWorkbenchMode = useAppStore((s) => s.setWorkbenchMode);
+  const setWorkbenchPinnedClosed = useAppStore((s) => s.setWorkbenchPinnedClosed);
 
   useEffect(() => {
     Promise.all([api.listRuns(), api.listLibrary()])
@@ -212,15 +211,30 @@ export default function RunWorkspacePage() {
                   </div>
                 </div>
               )}
-              <PanelGroup direction="horizontal" autoSaveId="paperforge-layout">
-                <Panel defaultSize={42} minSize={28}>
+              <div className="flex-1 min-w-0 flex">
+                <div
+                  className={
+                    workbenchMode === "closed"
+                      ? "flex-1 min-w-0"
+                      : "flex-1 min-w-0"
+                  }
+                >
                   <ChatPanel />
-                </Panel>
-                <PanelResizeHandle className="w-px bg-border hover:bg-primary/40 transition-colors" />
-                <Panel defaultSize={58} minSize={30}>
-                  <PreviewPanel />
-                </Panel>
-              </PanelGroup>
+                </div>
+                {workbenchMode !== "closed" && (
+                  <>
+                    <WorkbenchRail
+                      onClose={() => {
+                        setWorkbenchPinnedClosed(true);
+                        setWorkbenchMode("closed");
+                      }}
+                    />
+                    <div className="flex-1 min-w-0" style={{ minWidth: 420 }}>
+                      <PreviewPanel />
+                    </div>
+                  </>
+                )}
+              </div>
             </>
           )}
         </div>
