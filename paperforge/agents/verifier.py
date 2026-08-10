@@ -8,6 +8,7 @@ import logging
 import re
 import shutil
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -541,32 +542,81 @@ def expand_repair_context(
     return selected[:max_files]
 
 
+@dataclass
+class CommandResult:
+    returncode: int
+    stdout: str = ""
+    stderr: str = ""
+    timed_out: bool = False
+
+
+async def run_command_stream(
+    command: list[str],
+    cwd: Path,
+    *,
+    timeout_s: float,
+    on_line: Any = None,
+) -> CommandResult:
+    """Run a command, streaming stdout/stderr to ``on_line`` (doc 26).
+
+    ``timeout_s`` bounds the whole process wait, not each log callback, so a
+    totally silent hung process still times out. Unifies the old ``_exec``
+    (non-streaming) and ``_exec_streaming`` paths.
+    """
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *command,
+            cwd=str(cwd),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+    except FileNotFoundError:
+        return CommandResult(returncode=-1, stderr=f"Command not found: {command[0]}")
+    except Exception as e:  # noqa: BLE001
+        return CommandResult(returncode=-1, stderr=f"Execution error: {e}")
+
+    assert proc.stdout is not None
+    captured: list[str] = []
+
+    async def consume() -> None:
+        async for raw in proc.stdout:
+            text = raw.decode("utf-8", errors="replace")
+            captured.append(text)
+            if on_line:
+                await on_line(text)
+
+    consumer = asyncio.create_task(consume())
+    timed_out = False
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=timeout_s)
+    except asyncio.TimeoutError:
+        timed_out = True
+        proc.kill()
+        try:
+            await proc.wait()
+        except ProcessLookupError:
+            pass
+    finally:
+        await consumer
+
+    return CommandResult(
+        returncode=proc.returncode if proc.returncode is not None else -1,
+        stdout="".join(captured),
+        timed_out=timed_out,
+    )
+
+
 async def _exec(
     cmd: list[str],
     cwd: Path,
     timeout: int,
 ) -> tuple[bool, str, str]:
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            cwd=str(cwd),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        except TimeoutError:
-            proc.kill()
-            await proc.wait()
-            return False, "", f"Command timed out after {timeout}s"
-
-        stdout_text = stdout.decode("utf-8", errors="replace") if stdout else ""
-        stderr_text = stderr.decode("utf-8", errors="replace") if stderr else ""
-        return proc.returncode == 0, stdout_text, stderr_text
-    except FileNotFoundError:
-        return False, "", f"Command not found: {cmd[0]}"
-    except Exception as e:
-        return False, "", f"Execution error: {e}"
+    result = await run_command_stream(cmd, cwd, timeout_s=timeout)
+    ok = result.returncode == 0 and not result.timed_out
+    err = result.stderr
+    if result.timed_out:
+        err = err or f"Command timed out after {timeout}s"
+    return ok, result.stdout, err
 
 
 async def _exec_streaming(
@@ -575,40 +625,9 @@ async def _exec_streaming(
     timeout: int,
     on_line: Any,
 ) -> tuple[bool, str]:
-    """Run a command, streaming each stdout/stderr line to ``on_line`` (doc 19.3).
-
-    Returns ``(ok, combined_text)``. Lines are yielded in-band so a build can
-    surface as ``build.log.delta`` events instead of one big silent wait.
-    """
-    captured: list[str] = []
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            cwd=str(cwd),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
-    except FileNotFoundError:
-        return False, f"Command not found: {cmd[0]}"
-    except Exception as e:
-        return False, f"Execution error: {e}"
-
-    assert proc.stdout is not None
-    try:
-        async for raw in proc.stdout:
-            text = raw.decode("utf-8", errors="replace")
-            captured.append(text)
-            await asyncio.wait_for(on_line(text), timeout=timeout)
-        await asyncio.wait_for(proc.wait(), timeout=timeout)
-    except TimeoutError:
-        proc.kill()
-        try:
-            await proc.wait()
-        except ProcessLookupError:
-            pass
-        return False, "Command timed out"
-
-    return proc.returncode == 0, "".join(captured)
+    """Run a command, streaming each line to ``on_line`` (doc 26)."""
+    result = await run_command_stream(cmd, cwd, timeout_s=timeout, on_line=on_line)
+    return result.returncode == 0 and not result.timed_out, result.stdout
 
 
 async def _run_checks_streaming(
