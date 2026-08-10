@@ -163,6 +163,14 @@ async def test_orchestrator_approval_flow(storage):
     # Set phase to PLANNED so generate_nextjs_app is allowed
     storage.update_run_phase("run_approval", RunPhase.PLANNED.value)
 
+    # Seed the prd resource the resource gate requires before generate_nextjs_app
+    # becomes reachable (allows the approval flow to engage, doc 11).
+    storage.save_artifact(
+        run_id="run_approval",
+        artifact_type="prd",
+        data={"goal": "test"},
+    )
+
     class ApprovalLLM(MockLLMClient):
         def __init__(self):
             super().__init__()

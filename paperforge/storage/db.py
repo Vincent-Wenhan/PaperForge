@@ -116,7 +116,26 @@ CREATE TABLE IF NOT EXISTS tasks (
     phase TEXT NOT NULL DEFAULT 'init',
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    completed_at TIMESTAMP
+    completed_at TIMESTAMP,
+    started_at TIMESTAMP,
+    lease_owner TEXT,
+    lease_until TIMESTAMP,
+    attempt INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS steps (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL,
+    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    title TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'running',
+    detail TEXT,
+    summary TEXT,
+    metadata TEXT,
+    percent REAL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS workspace_revisions (
@@ -211,6 +230,10 @@ class Storage:
             self._ensure_column(conn, "sandboxes", "preview_url", "TEXT")
             self._ensure_column(conn, "sandboxes", "error", "TEXT")
             self._ensure_column(conn, "sandboxes", "environment", "TEXT NOT NULL DEFAULT 'docker'")
+            self._ensure_column(conn, "tasks", "started_at", "TIMESTAMP")
+            self._ensure_column(conn, "tasks", "lease_owner", "TEXT")
+            self._ensure_column(conn, "tasks", "lease_until", "TIMESTAMP")
+            self._ensure_column(conn, "tasks", "attempt", "INTEGER NOT NULL DEFAULT 0")
             conn.execute(
                 "UPDATE sandboxes SET preview_status = 'starting' "
                 "WHERE preview_status = 'idle' AND status IN ('pending', 'starting', 'running')"
@@ -653,6 +676,151 @@ class Storage:
     def delete_task(self, task_id: str) -> None:
         with self._lock, self._conn() as conn:
             conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+
+    # ===== Steps =====
+
+    def create_step(
+        self,
+        *,
+        task_id: str,
+        run_id: str,
+        kind: str,
+        title: str,
+        status: str = "running",
+        detail: str | None = None,
+        summary: str | None = None,
+        metadata: dict | None = None,
+    ) -> dict[str, Any]:
+        step_id = f"step_{uuid.uuid4().hex[:10]}"
+        with self._lock, self._conn() as conn:
+            conn.execute(
+                """INSERT INTO steps
+                   (id, task_id, run_id, kind, title, status, detail, summary, metadata)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    step_id,
+                    task_id,
+                    run_id,
+                    kind,
+                    title,
+                    status,
+                    detail,
+                    summary,
+                    json.dumps(metadata) if metadata is not None else None,
+                ),
+            )
+        return {
+            "id": step_id,
+            "task_id": task_id,
+            "run_id": run_id,
+            "kind": kind,
+            "title": title,
+            "status": status,
+            "detail": detail,
+            "summary": summary,
+            "metadata": metadata,
+        }
+
+    def list_steps(self, run_id: str) -> list[dict[str, Any]]:
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM steps WHERE run_id = ? ORDER BY created_at ASC",
+                (run_id,),
+            ).fetchall()
+        return [self._decode_step(dict(r)) for r in rows]
+
+    def claim_next_task(self, worker_id: str, lease_until: str) -> dict[str, Any] | None:
+        """Atomically claim the oldest queued task under a worker lease (doc 21.2)."""
+        with self._lock, self._conn() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                row = conn.execute(
+                    """SELECT * FROM tasks
+                       WHERE status = 'queued'
+                       ORDER BY created_at ASC
+                       LIMIT 1"""
+                ).fetchone()
+                if not row:
+                    conn.execute("COMMIT")
+                    return None
+                conn.execute(
+                    """UPDATE tasks
+                       SET status = 'running',
+                           lease_owner = ?,
+                           lease_until = ?,
+                           started_at = COALESCE(started_at, CURRENT_TIMESTAMP),
+                           attempt = attempt + 1
+                       WHERE id = ?""",
+                    (worker_id, lease_until, row["id"]),
+                )
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+        return dict(row)
+
+    def list_expired_leases(self, now: str | None = None) -> list[dict[str, Any]]:
+        """Return running tasks whose lease has expired (stuck across restart)."""
+        cutoff = now or self._now()
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM tasks WHERE status = 'running' AND lease_until < ?",
+                (cutoff,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def reconcile_stale_tasks(self) -> int:
+        """Requeue running tasks with expired leases so they can be retried."""
+        stale = self.list_expired_leases()
+        for task in stale:
+            self.update_task(task_id=task["id"], status="queued")
+        return len(stale)
+
+    @staticmethod
+    def _now() -> str:
+        return datetime.utcnow().isoformat()
+
+    @staticmethod
+    def _decode_step(d: dict[str, Any]) -> dict[str, Any]:
+        if d.get("metadata"):
+            try:
+                d["metadata"] = json.loads(d["metadata"])
+            except (json.JSONDecodeError, TypeError):
+                pass
+        return d
+
+    def update_step(
+        self,
+        step_id: str,
+        *,
+        status: str | None = None,
+        detail: str | None = None,
+        summary: str | None = None,
+        percent: float | None = None,
+    ) -> dict[str, Any] | None:
+        sets: list[str] = []
+        params: list[Any] = []
+        if status is not None:
+            sets.append("status = ?"), params.append(status)
+        if detail is not None:
+            sets.append("detail = ?"), params.append(detail)
+        if summary is not None:
+            sets.append("summary = ?"), params.append(summary)
+        if percent is not None:
+            sets.append("percent = ?"), params.append(percent)
+        if not sets:
+            return None
+        params.append(step_id)
+        with self._lock, self._conn() as conn:
+            conn.execute(f"UPDATE steps SET {', '.join(sets)} WHERE id = ?", params)
+            row = conn.execute("SELECT * FROM steps WHERE id = ?", (step_id,)).fetchone()
+        return self._decode_step(dict(row)) if row else None
+
+    def complete_step(self, step_id: str, *, summary: str | None = None) -> dict[str, Any] | None:
+        return self.update_step(step_id, status="completed", summary=summary)
+
+    def fail_step(self, step_id: str, *, error: str | None = None) -> dict[str, Any] | None:
+        return self.update_step(step_id, status="failed", detail=error)
 
     # ===== Workspace revisions =====
 

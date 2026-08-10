@@ -20,6 +20,11 @@ from paperforge.orchestrator.approvals import get_approval_registry
 from paperforge.orchestrator.events import EventEmitter, get_event_manager
 from paperforge.orchestrator.stream_writer import StreamWriter
 from paperforge.orchestrator.tools import TOOL_DEFINITIONS, ToolContext, dispatch_tool
+from paperforge.orchestrator.workspace import (
+    available_resources,
+    check_tool_prerequisites,
+    load_workspace_state,
+)
 from paperforge.prompts import load_prompt
 from paperforge.schemas.tool_result import ToolResult, ToolStatus
 from paperforge.storage.db import Storage, get_storage
@@ -400,8 +405,24 @@ class Orchestrator:
         emit: EventEmitter,
         run_id: str,
     ) -> str:
-        """Execute a single tool call, applying phase gate and HITL approval."""
-        # Phase gate: reject tools not allowed in the current phase.
+        """Execute a single tool call, applying resource gate and HITL approval."""
+        # Resource gate: reject tools whose prerequisites aren't present, so
+        # permission reflects real resources (doc 11) not an arbitrary phase.
+        workspace_state = load_workspace_state(self.storage, run_id)
+        allowed, missing = check_tool_prerequisites(call.name, workspace_state)
+        if call.name in ALLOWED_TOOLS.get(self.phase, set()) and not allowed:
+            return ToolResult(
+                tool=call.name,
+                status=ToolStatus.BLOCKED,
+                error=f"Missing required resources: {', '.join(missing)}",
+                code="resource_prerequisite",
+                data={
+                    "missing": missing,
+                    "available": sorted(available_resources(workspace_state)),
+                },
+                retryable=True,
+            ).model_dump_json()
+
         if call.name not in ALLOWED_TOOLS.get(self.phase, set()):
             return ToolResult(
                 tool=call.name,

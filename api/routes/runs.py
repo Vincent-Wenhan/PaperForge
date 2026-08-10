@@ -304,6 +304,7 @@ async def get_run_state(run_id: str) -> dict:
         for row in storage.list_approvals(run_id=run_id)
     ]
     tasks = [_to_task(row) for row in storage.list_tasks(run_id)]
+    steps = storage.list_steps(run_id)
     event_cursor = storage.get_max_event_seq(run_id)
 
     return {
@@ -315,6 +316,7 @@ async def get_run_state(run_id: str) -> dict:
         "pending_approvals": approvals,
         "approvals": all_approvals,
         "tasks": tasks,
+        "steps": steps,
         "event_cursor": event_cursor,
     }
 
