@@ -59,11 +59,11 @@ async def test_message_stream_started_delta_completed(storage: Storage):
     queue = mgr.register("run_ms")
 
     class StreamLLM(MockLLMClient):
-        async def stream(self, *, model, messages, tools):
-            from paperforge.llm.base import Chunk
+        async def stream_events(self, model, messages, tools=None):
+            from paperforge.llm.base import ProviderStreamEvent
             for piece in ["Hello", " world", "!"]:
-                yield Chunk(content=piece)
-            yield Chunk(content=None, finish_reason="stop")
+                yield ProviderStreamEvent(kind="text_delta", text=piece)
+            yield ProviderStreamEvent(kind="done", finish_reason="stop")
 
     orc = Orchestrator(llm=StreamLLM(), storage=storage)
     await orc.run(run_id="run_ms", user_message="Hello")

@@ -492,10 +492,94 @@ class Orchestrator:
 
         Emits in order:
         - message.started (with message_id)
-        - message.delta (with message_id + delta) per chunk
+        - message.delta (with message_id + delta) per text chunk
         - message.completed (with message_id + content) on success
         - message.failed (with message_id + error) on failure
+
+        Consumes `ProviderStreamEvent` (doc 9/11) so the orchestrator never
+        depends on a provider-specific delta shape. Falls back to `stream()`
+        chunks or plain `chat()` if the provider lacks a native event stream.
         """
+        stream_events = getattr(self.llm, "stream_events", None)
+        if stream_events is None:
+            return await self._stream_chunks_with_fallback(
+                model=model, messages=messages, tools=tools,
+                emit=emit, run_id=run_id,
+            )
+
+        message_id = f"msg_{uuid.uuid4().hex[:12]}"
+        tool_calls: list[ToolCall] = []
+        finish_reason: str | None = None
+
+        # Persist the public ID before emitting the first lifecycle event so a
+        # refresh can always reconcile the stream with one durable row.
+        self.storage.create_streaming_message(run_id, message_id)
+        await emit.message_started(message_id)
+
+        writer = StreamWriter(
+            run_id=run_id,
+            message_id=message_id,
+            storage=self.storage,
+            emit=emit,
+        )
+
+        metrics = get_metrics()
+        provider_started = time.monotonic()
+        provider_first_delta: float | None = None
+
+        try:
+            async for ev in stream_events(model=model, messages=messages, tools=tools):
+                if ev.kind == "text_delta":
+                    if provider_first_delta is None:
+                        provider_first_delta = time.monotonic()
+                        metrics.record_duration(
+                            "provider_ttft_ms",
+                            provider_first_delta - provider_started,
+                        )
+                    await writer.push_text(ev.text or "")
+                elif ev.kind == "tool_done":
+                    tool_calls.append(
+                        ToolCall(
+                            id=ev.tool_call_id or "",
+                            name=ev.tool_name or "",
+                            args=ev.arguments or {},
+                        )
+                    )
+                elif ev.kind == "done":
+                    finish_reason = ev.finish_reason or finish_reason
+        except asyncio.CancelledError:
+            self.storage.fail_message(message_id, "Message stream cancelled")
+            with contextlib.suppress(Exception):
+                await emit.message_failed(message_id, "Message stream cancelled")
+            raise
+        except Exception as e:
+            # Emit message.failed to signal the message was not completed.
+            self.storage.fail_message(message_id, str(e))
+            await emit.message_failed(message_id, str(e))
+            raise
+
+        # flush remaining buffer, complete the durable message, emit completed.
+        final_content = await writer.finish(tool_calls)
+
+        # Build a ChatResponse-like return so the main loop can handle uniformly.
+        from paperforge.llm.base import ChatResponse
+        return ChatResponse(
+            content=final_content or None,
+            tool_calls=tool_calls,
+            finish_reason=finish_reason,
+            message_id=message_id,
+        )
+
+    async def _stream_chunks_with_fallback(
+        self,
+        model: str,
+        messages: list[Message],
+        tools: list[Any],
+        emit: EventEmitter,
+        run_id: str,
+    ) -> Any:
+        """Legacy stream() chunk path used only when no ProviderStreamEvent
+        stream exists. Accumulates provider chunks the same way it always did."""
         stream_fn = getattr(self.llm, "stream", None)
         if stream_fn is None:
             # Provider doesn't support streaming; use regular chat.
@@ -505,8 +589,6 @@ class Orchestrator:
         tool_calls: list[ToolCall] = []
         finish_reason: str | None = None
 
-        # Persist the public ID before emitting the first lifecycle event so a
-        # refresh can always reconcile the stream with one durable row.
         self.storage.create_streaming_message(run_id, message_id)
         await emit.message_started(message_id)
 
