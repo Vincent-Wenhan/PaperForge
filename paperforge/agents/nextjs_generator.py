@@ -1,18 +1,21 @@
-"""NextjsGenerator: PRD → Next.js app files.
+"""NextjsGenerator: PRD → multi-file Next.js app (Generation V2).
 
-Strategy (template-based):
-1. Copy a pre-baked Next.js template (paperforge/templates/nextjs_lightweight)
-   to a temporary directory under storage.apps_dir.
-2. Call LLM with generator prompt + PRD JSON. The LLM only generates the
-   business files: app/page.tsx, lib/mock-api.ts, lib/real-api.ts.
-3. Validate against AppManifest schema. The schema enforces:
-   - Only files in BUSINESS_FILES may be generated.
-   - Path traversal (``..`` parts, absolute paths) is rejected.
-   - Only dependencies in ALLOWED_DEPENDENCIES may be declared.
-4. Write LLM-generated business files to the temp dir.
-5. Atomically rename the temp dir to the final output_dir, replacing any
-   previous attempt. Never partially overwrite the destination.
-6. Always pin npm scripts to SAFE_SCRIPTS; ignore model-returned scripts.
+Strategy (template-based, doc 9.6):
+1. Copy a pre-baked Next.js template to a temp dir under apps_root.
+2. Call LLM with generator prompt + PRD JSON. The LLM returns a JSON object
+   with a ``plan`` (WorkspacePlan naming every route/component/file) plus the
+   full ``files`` list and manifest fields. Generation is bounded to the
+   SafeWorkspacePolicy writable roots (app/components/hooks/lib/types/public),
+   so multi-file generation is allowed while traversal is still rejected.
+3. Validate the whole manifest against AppManifest schema (paths normalized
+   through SafeWorkspacePolicy, deps limited to ALLOWED_DEPENDENCIES).
+4. Write each generated file, grouping them into per-logical-edit revisions:
+   one revision per file (plus a single combined revision after the full
+   write) so the workspace can be rolled back or replayed per edit.
+5. Merge template package.json with allowed deps, always pinning scripts to
+   SAFE_SCRIPTS.
+6. Atomically rename the temp dir to the final output_dir, never partially
+   overwriting the destination.
 """
 
 from __future__ import annotations
@@ -29,6 +32,7 @@ from typing import Any
 from paperforge.llm.base import LLMClient, Message
 from paperforge.prompts import load_prompt
 from paperforge.schemas.app_manifest import AppManifest
+from paperforge.schemas.workspace_plan import WorkspacePlan
 from paperforge.storage.db import Storage
 
 logger = logging.getLogger(__name__)
@@ -135,6 +139,11 @@ async def generate_nextjs_app(
             manifest_dict["app_id"] = app_id
             manifest_dict["prd_id"] = prd_id
 
+            # The Generation V2 plan survives AppManifest validation (which
+            # would otherwise drop the unknown ``plan`` field), so capture it
+            # from the raw model output first.
+            plan_data = manifest_dict.get("plan") or {}
+
             try:
                 validated = AppManifest.model_validate(manifest_dict)
                 manifest_dict = validated.model_dump()
@@ -147,8 +156,23 @@ async def generate_nextjs_app(
         else:
             raise ValueError(f"NextjsGenerator failed after {MAX_RETRIES} retries: {last_error}")
 
-        # Step 3: write LLM-generated business files. AppFile.path is already
-        # validated against BUSINESS_FILES, so no path traversal is possible.
+        # Parse the Generation V2 plan (if present) so callers can use it for
+        # per-logical-edit revisions and dependency-ordered verification. It is
+        # optional — the legacy flat manifest remains fully supported.
+        try:
+            plan = WorkspacePlan.model_validate(plan_data)
+            if not plan.app_name or plan.app_name == "generated-app":
+                plan.app_name = manifest_dict.get("app_id", "generated-app")
+            manifest_dict["plan"] = plan.model_dump()
+        except Exception as e:
+            logger.debug(f"WorkspacePlan not returned by model, using defaults: {e}")
+            plan = WorkspacePlan(app_name=manifest_dict.get("app_id", "generated-app"))
+            manifest_dict["plan"] = plan.model_dump()
+
+        # Step 3: write each generated file. AppFile.path is already validated
+        # against SafeWorkspacePolicy, so no path traversal is possible. Each
+        # file is one logical edit, captured as a workspace revision so the app
+        # can be rolled back or replayed per edit (doc 9.6).
         for f in validated.files:
             target = (temp_dir / f.path).resolve()
             try:

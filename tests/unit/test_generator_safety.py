@@ -157,3 +157,48 @@ async def test_generator_writes_business_files_only(storage: Storage):
     assert (output_dir / "app" / "page.tsx").exists()
     assert (output_dir / "lib" / "mock-api.ts").exists()
     assert (output_dir / "lib" / "real-api.ts").exists()
+
+
+@pytest.mark.asyncio
+async def test_generator_v2_accepts_plan_and_multifile(storage: Storage, tmp_path: Path):
+    """Generation V2: a returned ``plan`` is captured and multi-root files are written."""
+    prd_id = _make_prd(storage)
+    output_dir = storage.apps_dir / "app_v2"
+
+    good_manifest = {
+        "app_id": "app_1",
+        "prd_id": prd_id,
+        "plan": {
+            "app_name": "V2 App",
+            "routes": [{"path": "app/page.tsx", "purpose": "home"}],
+            "components": [{"path": "components/ItemCard.tsx", "purpose": "list item"}],
+            "files": [
+                {"path": "lib/mock-api.ts", "kind": "adapter", "purpose": "mock data", "depends_on": []},
+                {"path": "app/page.tsx", "kind": "route", "purpose": "home", "depends_on": ["components"]},
+            ],
+            "dependencies": {"next": "^14.0.0"},
+            "acceptance_test_ids": [],
+        },
+        "files": [
+            {"path": "app/page.tsx", "content": "export default function Page() { return <div>Hi</div>; }"},
+            {"path": "components/ItemCard.tsx", "content": "export function ItemCard() { return <div>card</div>; }"},
+            {"path": "lib/mock-api.ts", "content": "export const mock = {};"},
+            {"path": "lib/real-api.ts", "content": "export const real = {};"},
+        ],
+    }
+    llm = FakeLLM(json.dumps(good_manifest))
+
+    manifest = await generate_nextjs_app(
+        prd_id=prd_id,
+        output_dir=output_dir,
+        llm=llm,
+        storage=storage,
+    )
+
+    # Both the route (app/) and the component (components/) roots are written.
+    assert (output_dir / "app" / "page.tsx").exists()
+    assert (output_dir / "components" / "ItemCard.tsx").exists()
+    assert (output_dir / "lib" / "mock-api.ts").exists()
+    # The Generation V2 plan is preserved in the returned manifest.
+    assert manifest["plan"]["app_name"] == "V2 App"
+    assert len(manifest["plan"]["files"]) == 2
