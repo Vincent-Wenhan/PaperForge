@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from pathlib import Path
 
 import pytest
@@ -42,6 +43,27 @@ def isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 def storage(isolated_env):
     from paperforge.storage.db import get_storage
     return get_storage()
+
+
+@pytest.fixture
+def workspace_artifact(storage, tmp_path):
+    """A run with a generated nextjs_app artifact (workspace resource)."""
+    run = storage.create_run(f"run_{uuid.uuid4().hex[:8]}", title="Workspace run")
+    app_path = tmp_path / "apps" / "app_1"
+    app_path.mkdir(parents=True)
+    artifact_id = storage.save_artifact(
+        run_id=run["id"],
+        artifact_type="nextjs_app",
+        data={"app_id": "app_1"},
+        metadata={"app_path": str(app_path)},
+    )
+    storage.create_workspace_revision(
+        run_id=run["id"],
+        app_id=artifact_id,
+        source="generator",
+        app_path=str(app_path),
+    )
+    return type("WorkspaceArtifact", (), {"run_id": run["id"], "app_path": app_path, "artifact_id": artifact_id})()
 
 
 @pytest.fixture

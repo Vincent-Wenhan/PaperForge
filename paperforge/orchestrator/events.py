@@ -41,11 +41,21 @@ class Event:
 
 
 class EventEmitter:
-    """Emitter for a single run. Holds a reference to the manager."""
+    """Emitter for a single run. Holds a reference to the manager.
 
-    def __init__(self, run_id: str, manager: EventManager) -> None:
+    A default ``task_id`` can be bound at construction time so the
+    convenience wrappers below attach the current task unless overridden.
+    """
+
+    def __init__(
+        self,
+        run_id: str,
+        manager: EventManager,
+        task_id: str | None = None,
+    ) -> None:
         self.run_id = run_id
         self.manager = manager
+        self.task_id = task_id
 
     async def emit(
         self,
@@ -53,11 +63,12 @@ class EventEmitter:
         data: Any = None,
         task_id: str | None = None,
     ) -> Event:
+        resolved_task_id = task_id if task_id is not None else self.task_id
         event = Event(
             type=event_type,
             data=data,
             run_id=self.run_id,
-            task_id=task_id,
+            task_id=resolved_task_id,
         )
         await self.manager.broadcast(event)
         return event

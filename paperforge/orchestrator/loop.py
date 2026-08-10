@@ -158,7 +158,8 @@ class Orchestrator:
         """Run the orchestrator loop for a single user message."""
         cfg = get_config()
         event_manager = get_event_manager()
-        emit = EventEmitter(run_id=run_id, manager=event_manager)
+        self.task_id = task_id
+        emit = EventEmitter(run_id=run_id, manager=event_manager, task_id=self.task_id)
 
         # Track previous status/phase so we only emit when they actually change.
         prev_status = self.storage.get_run_status(run_id) or "active"
@@ -180,7 +181,6 @@ class Orchestrator:
         except ValueError:
             self.phase = RunPhase.INIT
 
-        self.task_id = task_id
         if self.task_id is None:
             task = self.storage.create_task(
                 run_id=run_id,

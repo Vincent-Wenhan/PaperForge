@@ -124,15 +124,36 @@ def load_workspace_state(storage, run_id: str) -> WorkspaceState:
     artifacts = storage.list_artifacts(run_id) if hasattr(storage, "list_artifacts") else []
     for art in artifacts:
         atype = art.get("type", "")
+        metadata = art.get("metadata") or {}
+        if isinstance(metadata, str):
+            try:
+                import json as _json
+
+                metadata = _json.loads(metadata)
+            except Exception:
+                metadata = {}
         if atype == "composition":
-            state.composition_id = atype.get("id") if isinstance(atype, dict) else art["id"]
+            state.composition_id = art["id"]
         if atype == "prd":
             state.prd_id = art["id"]
-        if atype in {"app", "workspace"}:
-            state.workspace_path = art.get("path")
+        if atype in {"app", "workspace", "nextjs_app"}:
+            state.workspace_path = (
+                metadata.get("app_path")
+                or metadata.get("workspace_path")
+                or art.get("path")
+            )
             state.app_id = art["id"]
         if atype in {"verification_report", "verification"}:
             state.verification_report_id = art["id"]
+
+    latest_sandbox = (
+        storage.get_latest_sandbox_for_run(run_id)
+        if hasattr(storage, "get_latest_sandbox_for_run")
+        else None
+    )
+    if latest_sandbox and (latest_sandbox.get("status") != "stopped"):
+        state.sandbox_id = latest_sandbox["id"]
+        state.preview_url = latest_sandbox.get("preview_url")
 
     return state
 
