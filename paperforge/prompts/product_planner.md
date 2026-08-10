@@ -11,6 +11,11 @@ You will receive:
 
 ## Output Schema (JSON)
 
+PRD V2 (doc 8.2): features are a flat list with stable `id` and `priority`.
+Every `must`-priority feature MUST have at least one executable acceptance
+criterion in `acceptance_criteria` (with `test_kind`, `route`, `selector`,
+`action`, `expected`).
+
 ```json
 {
   "needs_more_input": false,
@@ -23,21 +28,36 @@ You will receive:
     "target_users": ["string"],
     "user_jobs": ["string — JTBD: what job does this product do for users?"],
     "value_proposition": "string",
-    "must_have": [
-      {"name": "string", "description": "string", "acceptance_criteria": ["string"]}
-    ],
-    "should_have": [
-      {"name": "string", "description": "string", "acceptance_criteria": ["string"]}
-    ],
-    "could_have": [
-      {"name": "string", "description": "string", "acceptance_criteria": ["string"]}
+    "features": [
+      {
+        "id": "string — stable, unique, e.g. feature_upload",
+        "name": "string",
+        "description": "string",
+        "priority": "must | should | could",
+        "user_value": "string",
+        "acceptance_notes": ["string"]
+      }
     ],
     "wont_have": ["string — explicitly out of scope"],
     "mock_strategy": "string — how will we mock the AI/model capability?",
     "data_strategy": "string — where does the data come from?",
     "performance_targets": {"response_time": "<2s", "throughput": "100 req/s"},
     "ui_style": "minimal | dashboard | playful | data-heavy",
-    "key_screens": ["string — describe each key screen"]
+    "key_screens": ["string — describe each key screen"],
+    "acceptance_criteria": [
+      {
+        "id": "string — stable, e.g. ac_upload_1",
+        "feature_id": "string — must match a feature.id above",
+        "priority": "must | should | could",
+        "description": "string — what is verified",
+        "test_kind": "route | text | interaction | api | visual",
+        "route": "/",
+        "selector": "[data-testid='...']" ,
+        "action": "none | click | fill | upload | select",
+        "input_value": "string or null",
+        "expected": "string or boolean or number or null"
+      }
+    ]
   }
 }
 ```
@@ -74,10 +94,11 @@ You will receive:
 
 ## PRD Rules
 
-1. **MoSCoW prioritization**: be ruthless about what's Must vs Should vs Could.
+1. **MoSCoW prioritization**: be ruthless about what's Must vs Should vs Could. Every `must` feature needs at least one executable acceptance criterion.
 2. **MVP focus**: the Must list should be demoable in a few hours of code.
 3. **Mock clarity**: `mock_strategy` must be specific enough that a developer can implement it without further questions.
 4. **UI consistency**: pick a `ui_style` and stick with it across all `key_screens`.
+5. **Executable criteria**: each acceptance criterion references an existing `feature.id`; interactive elements referenced by a criterion MUST expose the exact `[data-testid]` the criterion's `selector` requires. Do not replace the selector with a CSS class or text-only locator.
 
 ## Example (needs_more_input=true)
 
@@ -106,23 +127,51 @@ You will receive:
     "target_users": ["small business owners", "social media managers"],
     "user_jobs": ["Write engaging captions without spending time brainstorming"],
     "value_proposition": "Save 30 minutes per post with AI-generated captions",
-    "must_have": [
+    "features": [
       {
+        "id": "feature_upload",
         "name": "Image upload",
         "description": "Upload product image",
-        "acceptance_criteria": ["PNG/JPG up to 5MB", "Preview before processing"]
+        "priority": "must",
+        "acceptance_notes": ["PNG/JPG up to 5MB", "Preview before processing"]
       },
       {
+        "id": "feature_caption",
         "name": "Caption generation",
         "description": "Generate 3 caption variants",
-        "acceptance_criteria": ["150 chars max each", "Tone selectable"]
+        "priority": "must",
+        "acceptance_notes": ["150 chars max each", "Tone selectable"]
+      },
+      {
+        "id": "feature_hashtag",
+        "name": "Hashtag suggestions",
+        "description": "Suggest 5-10 hashtags",
+        "priority": "should"
       }
     ],
-    "should_have": [
-      {"name": "Hashtag suggestions", "description": "Suggest 5-10 hashtags"}
-    ],
-    "could_have": [
-      {"name": "Brand voice memory", "description": "Remember past tone preferences"}
+    "acceptance_criteria": [
+      {
+        "id": "ac_upload_1",
+        "feature_id": "feature_upload",
+        "priority": "must",
+        "description": "Image upload control is visible",
+        "test_kind": "interaction",
+        "route": "/",
+        "selector": "[data-testid='image-upload']",
+        "action": "none",
+        "expected": true
+      },
+      {
+        "id": "ac_caption_1",
+        "feature_id": "feature_caption",
+        "priority": "must",
+        "description": "Generate button produces caption output",
+        "test_kind": "interaction",
+        "route": "/",
+        "selector": "[data-testid='generate-captions']",
+        "action": "click",
+        "expected": true
+      }
     ],
     "wont_have": ["Multi-image carousels", "Direct social media posting"],
     "mock_strategy": "Return captions from a curated list based on detected image category",

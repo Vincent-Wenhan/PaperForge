@@ -7,7 +7,6 @@ from pydantic import ValidationError
 
 from paperforge.schemas.app_manifest import (
     ALLOWED_DEPENDENCIES,
-    BUSINESS_FILES,
     AppFile,
     AppManifest,
 )
@@ -23,10 +22,11 @@ class TestAppFileValidation:
             AppFile(path="../app/page.tsx", content="x")
         assert "Path traversal" in str(exc_info.value)
 
-    def test_rejects_non_business_file(self) -> None:
+    def test_rejects_non_writable_root(self) -> None:
         with pytest.raises(ValidationError) as exc_info:
             AppFile(path="app/evil.tsx", content="x")
-        assert "LLM may only generate" in str(exc_info.value)
+            AppFile(path="script/evil.ts", content="x")
+        assert "not writable" in str(exc_info.value) or "Root" in str(exc_info.value)
 
     def test_normalizes_backslash_and_leading_slash(self) -> None:
         f = AppFile(path="\\lib\\mock-api.ts", content="x")
@@ -34,9 +34,8 @@ class TestAppFileValidation:
 
     def test_rejects_oversized_content(self) -> None:
         with pytest.raises(ValidationError) as exc_info:
-            AppFile(path="app/page.tsx", content="x" * 400_000)
+            AppFile(path="app/page.tsx", content="x" * 400_001)
         assert "too large" in str(exc_info.value)
-
 
 class TestAppManifestValidation:
     def test_accepts_valid_manifest(self) -> None:
@@ -66,10 +65,14 @@ class TestAppManifestValidation:
             )
         assert "Duplicate generated file path" in str(exc_info.value)
 
-    def test_business_files_constant(self) -> None:
-        assert "app/page.tsx" in BUSINESS_FILES
-        assert "lib/mock-api.ts" in BUSINESS_FILES
-        assert "lib/real-api.ts" in BUSINESS_FILES
+    def test_business_policy_roots(self) -> None:
+        # The exact 3-file allowlist is retired; the safe-policy writable roots
+        # still accept the canonical Next.js app entrypoint.
+        from paperforge.schemas.workspace_policy import SafeWorkspacePolicy
+
+        policy = SafeWorkspacePolicy()
+        assert policy.normalize("app/page.tsx") == "app/page.tsx"
+        assert policy.normalize("lib/mock-api.ts") == "lib/mock-api.ts"
 
     def test_allowed_dependencies_includes_core(self) -> None:
         assert "next" in ALLOWED_DEPENDENCIES

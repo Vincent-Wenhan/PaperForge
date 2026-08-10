@@ -119,9 +119,13 @@ async def verify_app(
             prd = artifact.get("data") or {}
 
     prd_features = []
-    for key in ("must_have", "should_have", "could_have"):
-        for f in prd.get(key, []):
-            prd_features.append(f.get("name", ""))
+    # PRD V2: flat `features` list (doc 8.2). Fall back to legacy priority lists.
+    if prd.get("features"):
+        prd_features = [f.get("name", "") for f in prd["features"]]
+    else:
+        for key in ("must_have", "should_have", "could_have"):
+            for f in prd.get(key, []):
+                prd_features.append(f.get("name", ""))
 
     missing_features: list[str] = []
     extra_features: list[str] = []
@@ -365,7 +369,9 @@ async def _apply_repair_patch(
     """
     from paperforge.config import get_config
     from paperforge.prompts import load_prompt
-    from paperforge.schemas.app_manifest import BUSINESS_FILES
+    from paperforge.schemas.workspace_policy import SafeWorkspacePolicy
+
+    policy = SafeWorkspacePolicy()
 
     # Collect the most actionable errors. Type errors and build errors
     # are the ones the LLM can usually fix in a single pass.
@@ -377,11 +383,13 @@ async def _apply_repair_patch(
         return False
 
     files = collect_files(app_path)
-    relevant_files = [
-        {"path": p, "content": c}
-        for p, c in files
-        if p in BUSINESS_FILES
-    ]
+    relevant_files = []
+    for p, c in files:
+        try:
+            policy.normalize(p)
+        except ValueError:
+            continue
+        relevant_files.append({"path": p, "content": c})
     if not relevant_files:
         return False
 
@@ -413,9 +421,10 @@ async def _apply_repair_patch(
 
     for entry in patched_files:
         rel_path = entry.get("path") or ""
-        normalized = rel_path.replace("\\", "/").lstrip("/")
-        if normalized not in BUSINESS_FILES:
-            logger.warning(f"Repair patch skips non-allowlist file: {rel_path}")
+        try:
+            normalized = policy.normalize(rel_path)
+        except ValueError:
+            logger.warning(f"Repair patch skips non-writable file: {rel_path}")
             continue
         target = (app_path / normalized).resolve()
         try:
