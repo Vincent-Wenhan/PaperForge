@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 import tempfile
 import uuid
@@ -32,12 +33,24 @@ from typing import Any
 from paperforge.llm.base import LLMClient, Message
 from paperforge.prompts import load_prompt
 from paperforge.schemas.app_manifest import AppManifest
-from paperforge.schemas.workspace_plan import WorkspacePlan
+from paperforge.schemas.workspace_plan import FileSpec, WorkspacePlan
 from paperforge.storage.db import Storage
 
 logger = logging.getLogger(__name__)
 
 MAX_RETRIES = 3
+
+# Generation V3 batch order: types/data first so shared contracts exist before
+# components and routes that import them (doc 19.2).
+GENERATION_ORDER = [
+    "type",
+    "fixture",
+    "adapter",
+    "hook",
+    "component",
+    "route",
+    "api",
+]
 
 TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates" / "nextjs_lightweight"
 
