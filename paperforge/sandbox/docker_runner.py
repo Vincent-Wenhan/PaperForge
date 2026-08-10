@@ -96,6 +96,14 @@ class DockerSandboxManager:
         image = cfg.SANDBOX_IMAGE
         mem_limit = cfg.SANDBOX_MEM_LIMIT
         cpu_quota = cfg.SANDBOX_CPU_QUOTA
+        pids_limit = cfg.SANDBOX_PIDS_LIMIT
+        run_as_user = cfg.SANDBOX_RUN_AS_USER
+
+        # Preview URL uses the configured preview origin, never the main app
+        # origin, so user-generated apps are kept isolated (doc 38).
+        preview_url = (
+            f"{cfg.PREVIEW_ORIGIN.rstrip('/')}:{preview_port}"
+        )
 
         sandbox_record: dict[str, Any] = {
             "id": sandbox_id,
@@ -105,7 +113,7 @@ class DockerSandboxManager:
             "preview_port": preview_port,
             "status": "pending",
             "preview_status": "starting",
-            "preview_url": None,
+            "preview_url": preview_url,
             "error": None,
             "environment": "docker",
         }
@@ -144,7 +152,12 @@ class DockerSandboxManager:
                 detach=True,
                 mem_limit=mem_limit,
                 cpu_quota=cpu_quota,
+                pids_limit=pids_limit,
+                user=run_as_user,
                 name=f"paperforge-{sandbox_id}",
+                security_opt=["no-new-privileges"],
+                read_only=True,
+                tmpfs={"/tmp": "size=64m"},
             )
 
             container.start()

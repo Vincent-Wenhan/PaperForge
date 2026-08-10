@@ -43,6 +43,16 @@ class Settings(BaseSettings):
     SANDBOX_IMAGE: str = "node:20-alpine"
     SANDBOX_MEM_LIMIT: str = "1g"
     SANDBOX_CPU_QUOTA: int = 50000
+    SANDBOX_PIDS_LIMIT: int = 128
+    SANDBOX_RUN_AS_USER: str = "node"
+    # Preview origin for produced apps; must differ from the main app origin
+    # so user apps never share an origin with the host (doc 38).
+    PREVIEW_ORIGIN: str = "http://localhost"
+
+    # Scheduler
+    WORKER_LEASE_SECONDS: int = 300
+    WORKER_HEARTBEAT_SECONDS: int = 30
+    WORKER_ID: str = "worker-default"
 
     # Storage
     DATA_DIR: str = "./data"
@@ -81,6 +91,12 @@ class Config(BaseModel):
     SANDBOX_IMAGE: str
     SANDBOX_MEM_LIMIT: str
     SANDBOX_CPU_QUOTA: int
+    SANDBOX_PIDS_LIMIT: int
+    SANDBOX_RUN_AS_USER: str
+    PREVIEW_ORIGIN: str
+    WORKER_LEASE_SECONDS: int
+    WORKER_HEARTBEAT_SECONDS: int
+    WORKER_ID: str
     DATA_DIR: Path
     DB_PATH: Path
     CORS_ORIGINS: list[str]
@@ -109,6 +125,12 @@ def load_config() -> Config:
         SANDBOX_IMAGE=s.SANDBOX_IMAGE,
         SANDBOX_MEM_LIMIT=s.SANDBOX_MEM_LIMIT,
         SANDBOX_CPU_QUOTA=s.SANDBOX_CPU_QUOTA,
+        SANDBOX_PIDS_LIMIT=s.SANDBOX_PIDS_LIMIT,
+        SANDBOX_RUN_AS_USER=s.SANDBOX_RUN_AS_USER,
+        PREVIEW_ORIGIN=s.PREVIEW_ORIGIN,
+        WORKER_LEASE_SECONDS=s.WORKER_LEASE_SECONDS,
+        WORKER_HEARTBEAT_SECONDS=s.WORKER_HEARTBEAT_SECONDS,
+        WORKER_ID=s.WORKER_ID,
         DATA_DIR=data_dir,
         DB_PATH=db_path,
         CORS_ORIGINS=[o.strip() for o in s.CORS_ORIGINS.split(",") if o.strip()],

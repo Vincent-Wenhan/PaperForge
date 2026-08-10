@@ -729,6 +729,7 @@ class Storage:
         with self._lock, self._conn() as conn:
             conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
 
+
     # ===== Steps =====
 
     def create_step(
@@ -820,6 +821,25 @@ class Storage:
                 raise
         return dict(row)
 
+    def renew_task_lease(
+        self,
+        task_id: str,
+        worker_id: str,
+        lease_until: str,
+    ) -> bool:
+        """Extend the lease for a task still owned by ``worker_id`` (doc 37.2).
+
+        Returns True only if the renewal succeeded (the caller still owns it).
+        """
+        with self._lock, self._conn() as conn:
+            cur = conn.execute(
+                """UPDATE tasks
+                   SET lease_until = ?, updated_at = ?
+                   WHERE id = ? AND lease_owner = ? AND status = 'running'""",
+                (lease_until, self._now(), task_id, worker_id),
+            )
+            return cur.rowcount == 1
+
     def list_expired_leases(self, now: str | None = None) -> list[dict[str, Any]]:
         """Return running tasks whose lease has expired (stuck across restart)."""
         cutoff = now or self._now()
@@ -835,7 +855,15 @@ class Storage:
         stale = self.list_expired_leases()
         for task in stale:
             self.update_task(task_id=task["id"], status="queued")
+            self._clear_lease(task["id"])
         return len(stale)
+
+    def _clear_lease(self, task_id: str) -> None:
+        with self._lock, self._conn() as conn:
+            conn.execute(
+                "UPDATE tasks SET lease_owner = NULL, lease_until = NULL WHERE id = ?",
+                (task_id,),
+            )
 
     @staticmethod
     def _now() -> str:

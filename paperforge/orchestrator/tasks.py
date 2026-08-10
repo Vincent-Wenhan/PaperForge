@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Coroutine
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -120,33 +121,80 @@ class RunQueue:
 
     async def _worker(self, run_id: str) -> None:
         queue = self._queues.get(run_id)
+        storage = self._storage or _default_storage()
         try:
             while queue is not None and not queue.empty():
                 task_id, coro = await queue.get()
-                # DB task is the source of truth; mark this one running so the
-                # scheduler controls status (doc 15.3), not a separate in-memory flag.
-                storage = self._storage or _default_storage()
-                if storage is not None:
-                    storage.update_task(task_id=task_id, status="running")
-                self._manager.start(run_id, coro)
-                task = self._manager.tasks.get(run_id)
-                try:
-                    if task is not None:
-                        await asyncio.shield(task)
-                except asyncio.CancelledError:
-                    pass
-                except Exception:
-                    logger.exception("Task %s for run %s failed", task_id, run_id)
-                finally:
-                    if storage is not None:
-                        task_row = storage.get_task(task_id)
-                        status = task_row["status"] if task_row else "failed"
-                        if status == "running":
-                            storage.update_task(task_id=task_id, status="completed")
-                    queue.task_done()
+                executed = await self._claim_and_run(run_id, task_id, coro, storage)
+                if not executed and storage is not None:
+                    storage.update_task(task_id=task_id, status="queued")
+                queue.task_done()
         finally:
             self._queues.pop(run_id, None)
             self._workers.pop(run_id, None)
+
+    async def _claim_and_run(self, run_id, task_id, coro, storage):
+        """Claim the DB task with a lease, run it while renewing the lease, and
+        release on completion so a restart can reclaim stale running rows."""
+        if storage is None:
+            return False
+        from paperforge.config import get_config
+        from datetime import timedelta
+
+        cfg = get_config()
+        worker_id = cfg.WORKER_ID
+        lease_until = datetime.utcnow() + timedelta(seconds=cfg.WORKER_LEASE_SECONDS)
+        claimed = storage.claim_next_task(
+            worker_id=worker_id,
+            lease_until=lease_until.isoformat(),
+        )
+        if not claimed or claimed["id"] != task_id:
+            return False
+
+        # Renew the lease on a heartbeat while the task runs (doc 37.2).
+        heartbeat = asyncio.create_task(
+            self._heartbeat(
+                task_id,
+                worker_id,
+                interval=cfg.WORKER_HEARTBEAT_SECONDS,
+                lease_seconds=cfg.WORKER_LEASE_SECONDS,
+                storage=storage,
+            )
+        )
+        self._manager.start(run_id, coro)
+        task = self._manager.tasks.get(run_id)
+        try:
+            if task is not None:
+                await asyncio.shield(task)
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.exception("Task %s for run %s failed", task_id, run_id)
+        finally:
+            heartbeat.cancel()
+            try:
+                await heartbeat
+            except (asyncio.CancelledError, Exception):
+                pass
+            if storage is not None:
+                row = storage.get_task(task_id)
+                status = row["status"] if row else "failed"
+                if status == "running":
+                    storage.update_task(task_id=task_id, status="completed")
+        return True
+
+    async def _heartbeat(self, task_id, worker_id, *, interval, lease_seconds, storage):
+        while True:
+            await asyncio.sleep(interval)
+            lease_until = (datetime.utcnow() + timedelta(seconds=lease_seconds)).isoformat()
+            ok = storage.renew_task_lease(
+                task_id=task_id,
+                worker_id=worker_id,
+                lease_until=lease_until,
+            )
+            if not ok:
+                # We lost the lease — stop renewing; the worker will give up.
+                return
 
     def running(self, run_id: str) -> bool:
         return self._manager.is_running(run_id) or bool(self._queues.get(run_id))

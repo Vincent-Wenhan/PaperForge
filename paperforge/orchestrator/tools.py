@@ -289,11 +289,9 @@ async def _finalize_verification_runtime(
     runtime_layer.update(
         {
             "status": "passed" if runtime_ok else "failed",
-            "preview_url": (
-                f"http://127.0.0.1:{sandbox.get('preview_port')}/"
-                if runtime_ok and sandbox.get("preview_port")
-                else None
-            ),
+            "preview_url": _preview_url_for_sandbox(ctx, sandbox.get("id") or "")
+            if runtime_ok and sandbox.get("id")
+            else None,
             "reason": runtime_error or "Preview server responded successfully.",
         }
     )
@@ -898,7 +896,7 @@ async def handle_run_sandbox(args: dict[str, Any], ctx: ToolContext) -> ToolResu
             retryable=True,
         )
 
-    preview_url = f"/api/preview/{sandbox['id']}/"
+    preview_url = _preview_url_for_sandbox(ctx, sandbox["id"])
     ctx.storage.update_sandbox(
         sandbox["id"],
         preview_status="running",
@@ -922,6 +920,17 @@ async def handle_run_sandbox(args: dict[str, Any], ctx: ToolContext) -> ToolResu
         summary=f"Launched sandbox {sandbox['id']} on port {sandbox.get('preview_port')}.",
         next_phase="preview_ready",
     )
+
+
+def _preview_url_for_sandbox(ctx, sandbox_id: str) -> str:
+    """Build the preview URL, preferring an absolute preview origin so a
+    user-generated app never shares an origin with the main app (doc 38)."""
+    from paperforge.config import get_config
+
+    origin = get_config().PREVIEW_ORIGIN.rstrip("/")
+    if origin:
+        return f"{origin}/api/preview/{sandbox_id}/"
+    return f"/api/preview/{sandbox_id}/"
 
 
 async def handle_stop_sandbox(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
@@ -1041,7 +1050,7 @@ async def handle_restart_sandbox(args: dict[str, Any], ctx: ToolContext) -> Tool
             data={"sandbox": sandbox},
             retryable=True,
         )
-    preview_url = f"/api/preview/{sandbox['id']}/"
+    preview_url = _preview_url_for_sandbox(ctx, sandbox["id"])
     ctx.storage.update_sandbox(
         sandbox["id"],
         preview_status="running",
