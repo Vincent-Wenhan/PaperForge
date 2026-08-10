@@ -29,7 +29,7 @@ describe("run event reducer", () => {
   it("applies ordered events once and advances the cursor", () => {
     expect(
       applyRunEvent({
-        version: 1,
+        version: 2,
         id: "evt_1",
         seq: 1,
         run_id: "run_1",
@@ -43,7 +43,7 @@ describe("run event reducer", () => {
 
     expect(
       applyRunEvent({
-        version: 1,
+        version: 2,
         id: "evt_1",
         seq: 1,
         run_id: "run_1",
@@ -60,7 +60,7 @@ describe("run event reducer", () => {
   it("requests hydration when an event cursor has a gap", () => {
     useAppStore.getState().setLastSeq(2);
     const result = applyRunEvent({
-      version: 1,
+      version: 2,
       id: "evt_4",
       seq: 4,
       run_id: "run_1",
@@ -75,7 +75,7 @@ describe("run event reducer", () => {
 
   it("applies step lifecycle events into the steps list", () => {
     applyRunEvent({
-      version: 1,
+      version: 2,
       id: "e1",
       seq: 1,
       run_id: "run_1",
@@ -84,7 +84,7 @@ describe("run event reducer", () => {
       payload: { step_id: "step_1", kind: "codegen", title: "Generating" },
     });
     applyRunEvent({
-      version: 1,
+      version: 2,
       id: "e2",
       seq: 2,
       run_id: "run_1",
@@ -93,7 +93,7 @@ describe("run event reducer", () => {
       payload: { step_id: "step_1", percent: 50 },
     });
     applyRunEvent({
-      version: 1,
+      version: 2,
       id: "e3",
       seq: 3,
       run_id: "run_1",
@@ -118,7 +118,7 @@ describe("run event reducer", () => {
   it("ignores unknown future events without rehydrating (doc 23.7)", () => {
     useAppStore.setState({ lastSeq: 10 });
     const result = applyRunEvent({
-      version: 1,
+      version: 2,
       id: "evt_11",
       seq: 11,
       run_id: "run_1",
@@ -133,7 +133,7 @@ describe("run event reducer", () => {
   it("detects a real sequence gap (doc 23.8)", () => {
     useAppStore.setState({ lastSeq: 10 });
     const result = applyRunEvent({
-      version: 1,
+      version: 2,
       id: "evt_12",
       seq: 12,
       run_id: "run_1",
@@ -146,7 +146,7 @@ describe("run event reducer", () => {
 
   it("streams build log deltas onto the step detail (doc 19.3)", () => {
     applyRunEvent({
-      version: 1,
+      version: 2,
       id: "e1",
       seq: 1,
       run_id: "run_1",
@@ -155,7 +155,7 @@ describe("run event reducer", () => {
       payload: { step_id: "step_b", kind: "build", title: "Building" },
     });
     applyRunEvent({
-      version: 1,
+      version: 2,
       id: "e2",
       seq: 2,
       run_id: "run_1",
@@ -164,7 +164,7 @@ describe("run event reducer", () => {
       payload: { step_id: "step_b", text: "Compiled successfully." },
     });
     applyRunEvent({
-      version: 1,
+      version: 2,
       id: "e3",
       seq: 3,
       run_id: "run_1",

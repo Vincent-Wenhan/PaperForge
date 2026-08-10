@@ -370,7 +370,7 @@ export const api = {
 };
 
 export interface RunEventBase<Type extends string, Payload = unknown> {
-  version: 1;
+  version: 2;
   id: string;
   seq: number;
   run_id: string;

@@ -25,7 +25,7 @@ def _last_event_id(request: Request) -> int:
 
 def _encode_sse(row: dict) -> str:
     envelope = {
-        "version": 1,
+        "version": 2,
         "id": row["id"],
         "seq": row["seq"],
         "run_id": row["run_id"],
