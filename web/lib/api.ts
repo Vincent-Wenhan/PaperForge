@@ -1,5 +1,5 @@
 import type { Run, Message, Paper, Sandbox, Event, Approval, Artifact } from "./store";
-import type { RunSession } from "./contracts";
+import type { RunSession, Task } from "./contracts";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "";
 

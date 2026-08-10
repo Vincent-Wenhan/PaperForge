@@ -212,13 +212,7 @@ export default function RunWorkspacePage() {
                 </div>
               )}
               <div className="flex-1 min-w-0 flex">
-                <div
-                  className={
-                    workbenchMode === "closed"
-                      ? "flex-1 min-w-0"
-                      : "flex-1 min-w-0"
-                  }
-                >
+                <div className="flex-1 min-w-0">
                   <ChatPanel />
                 </div>
                 {workbenchMode !== "closed" && (
@@ -229,7 +223,15 @@ export default function RunWorkspacePage() {
                         setWorkbenchMode("closed");
                       }}
                     />
-                    <div className="flex-1 min-w-0" style={{ minWidth: 420 }}>
+                    <div
+                      className="min-w-0 transition-[width] duration-200"
+                      style={{
+                        width:
+                          workbenchMode === "peek"
+                            ? 360
+                            : "min(56vw, 1040px)",
+                      }}
+                    >
                       <PreviewPanel />
                     </div>
                   </>
