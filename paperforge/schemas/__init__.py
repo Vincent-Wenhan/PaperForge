@@ -6,6 +6,13 @@ from paperforge.schemas.prd import Feature, PRD
 from paperforge.schemas.app_manifest import AppFile, AppManifest
 from paperforge.schemas.verification import VerificationReport
 from paperforge.schemas.tool_result import ToolResult
+from paperforge.schemas.capability_contract import (
+    CapabilityContract,
+    CapabilityInput,
+    CapabilityOutput,
+    ImplementationReference,
+    ParseCoverage,
+)
 
 __all__ = [
     "CapabilityCard",
@@ -19,4 +26,9 @@ __all__ = [
     "AppManifest",
     "VerificationReport",
     "ToolResult",
+    "CapabilityContract",
+    "CapabilityInput",
+    "CapabilityOutput",
+    "ImplementationReference",
+    "ParseCoverage",
 ]

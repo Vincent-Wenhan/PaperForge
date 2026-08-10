@@ -9,6 +9,7 @@ from typing import Any
 
 from paperforge.llm.base import LLMClient, Message
 from paperforge.prompts import load_prompt
+from paperforge.schemas.capability_contract import ParseCoverage
 from paperforge.schemas.paper import CapabilityCard
 
 logger = logging.getLogger(__name__)
@@ -170,6 +171,7 @@ async def parse_paper(
             validated = CapabilityCard.model_validate(card)
             card = validated.model_dump()
             card["paper_id"] = paper_id
+            card["parse_coverage"] = _build_parse_coverage(pages, chunks).model_dump()
             return card
         except Exception as exc:
             last_error = exc
@@ -183,3 +185,33 @@ async def parse_paper(
             )
 
     raise ValueError(f"PaperParser failed after {MAX_RETRIES} retries: {last_error}")
+
+
+def _build_parse_coverage(pages: list[str], chunks: list[str]) -> ParseCoverage:
+    """Reconstruct which PDF pages are covered by the processed chunks (doc 20.2).
+
+    Each chunk carries ``[[Page N]]`` markers. Pages whose text appears in at
+    least one kept chunk are ``processed``; the rest are ``omitted`` so we never
+    silently truncate a paper. If chunking truncated the pages, coverage is
+    marked incomplete.
+    """
+    total_pages = len(pages)
+    marker_pattern = "[[Page "
+    processed: set[int] = set()
+    for chunk in chunks:
+        for marker in [c for c in chunk.split("[[") if c.startswith("Page ")]:
+            try:
+                num = int(marker[len("Page "):].split("]]")[0])
+            except ValueError:
+                continue
+            if 1 <= num <= total_pages:
+                processed.add(num)
+    processed_pages = sorted(processed)
+    omitted_pages = [p for p in range(1, total_pages + 1) if p not in processed]
+    complete = not omitted_pages
+    return ParseCoverage(
+        total_pages=total_pages,
+        processed_pages=processed_pages,
+        omitted_pages=omitted_pages,
+        complete=complete,
+    )

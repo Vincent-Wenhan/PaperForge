@@ -66,3 +66,21 @@ async def test_parse_paper_uses_map_reduce_over_page_chunks(monkeypatch, tmp_pat
     assert any("[[Page 1]]" in message.content for message in llm.calls[0])
     assert any("[[Page 2]]" in message.content for message in llm.calls[1])
     assert any("Mapped" in (message.content or "") for message in llm.calls[2])
+
+    # ParseCoverage is attached so truncated content is never silently dropped.
+    coverage = result["parse_coverage"]
+    assert coverage["total_pages"] == 2
+    assert coverage["processed_pages"] == [1, 2]
+    assert coverage["omitted_pages"] == []
+    assert coverage["complete"] is True
+
+
+def test_parse_coverage_marks_omitted_pages_when_truncated():
+    coverage = paper_parser._build_parse_coverage(
+        pages=["[[Page 1]]\na", "[[Page 2]]\nb", "[[Page 3]]\nc"],
+        chunks=["[[Page 1]]\na", "[[Page 2]]\nb"],
+    ).model_dump()
+    assert coverage["total_pages"] == 3
+    assert coverage["processed_pages"] == [1, 2]
+    assert coverage["omitted_pages"] == [3]
+    assert coverage["complete"] is False
