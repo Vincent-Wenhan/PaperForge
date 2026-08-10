@@ -77,6 +77,23 @@ export function CapabilityCardView({ card }: CapabilityCardViewProps) {
           </ul>
         </div>
       )}
+
+      {card.parse_coverage && (
+        <div className="mt-2">
+          <h4 className="text-xs font-semibold uppercase text-muted-foreground">
+            Understanding
+          </h4>
+          {card.parse_coverage.complete ? (
+            <p className="text-sm">
+              Parsed {card.parse_coverage.total_pages} / {card.parse_coverage.total_pages} pages · Full understanding
+            </p>
+          ) : (
+            <p className="text-sm text-amber-700 dark:text-amber-300">
+              Parsed {card.parse_coverage.processed_pages?.length ?? 0} / {card.parse_coverage.total_pages} pages · Partial understanding
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 }
