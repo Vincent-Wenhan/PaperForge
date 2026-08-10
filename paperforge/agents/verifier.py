@@ -364,8 +364,9 @@ async def _apply_repair_patch(
     """Ask the LLM for a patch that fixes the top errors in the report.
 
     Returns ``True`` if a patch was applied, ``False`` otherwise. The
-    patch is restricted to the same ``BUSINESS_FILES`` allowlist as the
-    generator so a hallucinating model cannot write arbitrary files.
+    patch is restricted to the same writable roots as the generator
+    (SafeWorkspacePolicy) so a hallucinating model cannot write arbitrary
+    files.
     """
     from paperforge.config import get_config
     from paperforge.prompts import load_prompt

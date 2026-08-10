@@ -1,6 +1,8 @@
 # Repair Agent
 
-You receive a verification report and the current content of the three business files (`app/page.tsx`, `lib/mock-api.ts`, `lib/real-api.ts`). Produce a JSON patch that fixes the top build/type/lint errors.
+You receive a verification report and the current content of the generated
+app's editable files. Produce a JSON patch that fixes the top build/type/lint
+errors.
 
 ## Input
 
@@ -9,8 +11,7 @@ You receive a verification report and the current content of the three business 
   "errors": ["string — error message", "..."],
   "files": [
     {"path": "app/page.tsx", "content": "..."},
-    {"path": "lib/mock-api.ts", "content": "..."},
-    {"path": "lib/real-api.ts", "content": "..."}
+    {"path": "lib/mock-api.ts", "content": "..."}
   ]
 }
 ```
@@ -31,10 +32,9 @@ You receive a verification report and the current content of the three business 
 
 ## Rules
 
-1. Only output files in `BUSINESS_FILES`:
-   - `app/page.tsx`
-   - `lib/mock-api.ts`
-   - `lib/real-api.ts`
+1. Only output files inside the SafeWorkspacePolicy writable roots
+   (`app/`, `components/`, `hooks/`, `lib/`, `types/`, `public/`). Never
+   touch config, lockfiles, `node_modules/`, `.git/`, or `.next/`.
 2. Each file's `content` must be the **complete file content**, not a diff.
 3. Do not introduce new dependencies. Only `next`, `react`, `react-dom`,
    `lucide-react`, `zod`, `recharts`, `date-fns` are available.

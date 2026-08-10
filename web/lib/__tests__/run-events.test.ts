@@ -143,4 +143,38 @@ describe("run event reducer", () => {
     });
     expect(result).toBe("gap");
   });
+
+  it("streams build log deltas onto the step detail (doc 19.3)", () => {
+    applyRunEvent({
+      version: 1,
+      id: "e1",
+      seq: 1,
+      run_id: "run_1",
+      type: "step.started",
+      ts: "now",
+      payload: { step_id: "step_b", kind: "build", title: "Building" },
+    });
+    applyRunEvent({
+      version: 1,
+      id: "e2",
+      seq: 2,
+      run_id: "run_1",
+      type: "build.log.delta",
+      ts: "now",
+      payload: { step_id: "step_b", text: "Compiled successfully." },
+    });
+    applyRunEvent({
+      version: 1,
+      id: "e3",
+      seq: 3,
+      run_id: "run_1",
+      type: "build.log.delta",
+      ts: "now",
+      payload: { step_id: "step_b", text: "next build" },
+    });
+
+    const step = useAppStore.getState().steps.find((s) => s.id === "step_b");
+    expect(step?.detail).toBe("Compiled successfully.next build");
+    expect(step?.status).toBe("running");
+  });
 });
