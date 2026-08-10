@@ -465,6 +465,76 @@ async def _exec(
         return False, "", f"Execution error: {e}"
 
 
+async def _exec_streaming(
+    cmd: list[str],
+    cwd: Path,
+    timeout: int,
+    on_line: Any,
+) -> tuple[bool, str]:
+    """Run a command, streaming each stdout/stderr line to ``on_line`` (doc 19.3).
+
+    Returns ``(ok, combined_text)``. Lines are yielded in-band so a build can
+    surface as ``build.log.delta`` events instead of one big silent wait.
+    """
+    captured: list[str] = []
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            cwd=str(cwd),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+    except FileNotFoundError:
+        return False, f"Command not found: {cmd[0]}"
+    except Exception as e:
+        return False, f"Execution error: {e}"
+
+    assert proc.stdout is not None
+    try:
+        async for raw in proc.stdout:
+            text = raw.decode("utf-8", errors="replace")
+            captured.append(text)
+            await asyncio.wait_for(on_line(text), timeout=timeout)
+        await asyncio.wait_for(proc.wait(), timeout=timeout)
+    except TimeoutError:
+        proc.kill()
+        try:
+            await proc.wait()
+        except ProcessLookupError:
+            pass
+        return False, "Command timed out"
+
+    return proc.returncode == 0, "".join(captured)
+
+
+async def _run_checks_streaming(
+    app_path: Path,
+    timeout: int,
+    progress: Any,
+    step_id: str,
+) -> tuple[bool, list[str]]:
+    """Run typecheck + lint, streaming each line through progress.step_progress.
+
+    Returns ``(ok, errors)`` where errors are the filtered actionable lines.
+    """
+    errors: list[str] = []
+
+    async def cb(text: str) -> None:
+        line = text.strip()
+        if not line:
+            return
+        await progress.progress(step_id, detail=line[:400])
+        if "error" in line.lower() or "failed" in line.lower():
+            errors.append(line)
+
+    for cmd in (
+        ["npx", "--no-install", "tsc", "--noEmit"],
+        ["npm", "run", "lint", "--silent"],
+    ):
+        _, _ = await _exec_streaming(cmd, app_path, timeout, cb)
+    return len(errors) == 0, errors
+
+
 def collect_files(root: Path) -> list[tuple[str, str]]:
     """Collect all source files in the app directory."""
     files: list[tuple[str, str]] = []

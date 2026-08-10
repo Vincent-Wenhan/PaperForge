@@ -170,6 +170,10 @@ class EventEmitter:
             task_id=task_id,
         )
 
+    async def build_log_delta(self, step_id: str, text: str) -> None:
+        """Stream a build/lint log line in-band (doc 19.3)."""
+        await self.emit("build.log.delta", {"step_id": step_id, "text": text})
+
     async def run_status_changed(
         self,
         status: str,

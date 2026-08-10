@@ -1,7 +1,7 @@
 import type { RunEvent } from "./api";
 import type { PreviewState, Task } from "./contracts";
 import { enqueueMessageDelta, flushMessageDeltas } from "./realtime/stream-buffer";
-import { useAppStore, type Approval, type Event } from "./store";
+import { useAppStore, type AgentStep, type Approval, type Event } from "./store";
 
 export type ApplyRunEventResult = "applied" | "duplicate" | "gap" | "unknown";
 
@@ -227,6 +227,16 @@ export function applyRunEvent(
       return "applied";
     case "stream.gap":
       return "gap";
+    case "build.log.delta":
+      if (data.text && data.step_id) {
+        const existing = store.steps.find((s) => s.id === data.step_id);
+        store.upsertStep({
+          id: data.step_id,
+          status: (existing?.status as AgentStep["status"]) || "running",
+          detail: (existing?.detail || "") + data.text,
+        });
+      }
+      return "applied";
     case "sandbox.log.delta":
       if (data.text) {
         store.appendSandboxLog({

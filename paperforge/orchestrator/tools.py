@@ -157,6 +157,60 @@ TOOL_DEFINITIONS = [
         },
     ),
     ToolDefinition(
+        name="inspect_workspace",
+        description="Inspect the generated app workspace for a run. Returns the file tree (paths only) so you can decide what to read or patch.",
+        input_schema={
+            "type": "object",
+            "properties": {"app_artifact_id": {"type": "string"}},
+            "required": [],
+        },
+    ),
+    ToolDefinition(
+        name="read_workspace_file",
+        description="Read a single file from the generated app workspace. The path is relative to the app root and must live under a writable root (app, components, hooks, lib, types, public).",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "app_artifact_id": {"type": "string"},
+                "path": {"type": "string"},
+            },
+            "required": ["path"],
+        },
+    ),
+    ToolDefinition(
+        name="apply_workspace_patch",
+        description="Apply a bounded safe patch to the current generated app. Each logical edit should be its own patch so revisions stay granular. Paths are relative to the app root under a writable root.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "app_artifact_id": {"type": "string"},
+                "summary": {"type": "string"},
+                "files": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "path": {"type": "string"},
+                            "operation": {"enum": ["create", "replace", "delete"]},
+                            "content": {"type": "string"},
+                        },
+                        "required": ["path", "operation"],
+                    },
+                },
+            },
+            "required": ["summary", "files"],
+        },
+    ),
+    ToolDefinition(
+        name="run_checks",
+        description="Run typecheck and lint on the generated app and report the result, without a full product re-verification.",
+        input_schema={
+            "type": "object",
+            "properties": {"app_artifact_id": {"type": "string"}},
+            "required": [],
+        },
+    ),
+    ToolDefinition(
         name="finish",
         description="Signal that the orchestration is complete. Provide a final summary.",
         input_schema={
@@ -329,6 +383,10 @@ async def dispatch_tool(
         "run_in_sandbox": handle_run_sandbox,
         "stop_sandbox": handle_stop_sandbox,
         "restart_sandbox": handle_restart_sandbox,
+        "inspect_workspace": handle_inspect_workspace,
+        "read_workspace_file": handle_read_workspace_file,
+        "apply_workspace_patch": handle_apply_workspace_patch,
+        "run_checks": handle_run_checks,
         "finish": handle_finish,
     }
 
@@ -1013,3 +1071,144 @@ async def handle_finish(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         next_phase="done",
         stop_loop=True,
     )
+
+
+def _resolve_workspace_root(args: dict[str, Any], ctx: ToolContext) -> Path:
+    """Resolve the app workspace root, defaulting app_artifact_id to this run's app."""
+    app_path = _resolve_app_path(args, ctx)
+    return Path(app_path)
+
+
+async def handle_inspect_workspace(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+    """List the generated app workspace tree (paths only)."""
+    root = _resolve_workspace_root(args, ctx)
+    from paperforge.agents.verifier import collect_files
+    files = [p for p, _ in collect_files(root)]
+    return ToolResult(
+        tool="inspect_workspace",
+        status=ToolStatus.SUCCEEDED,
+        data={"app_path": str(root), "files": sorted(files)},
+        summary=f"Workspace contains {len(files)} files.",
+    )
+
+
+async def handle_read_workspace_file(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+    """Read a single file from the workspace via the safe policy."""
+    from paperforge.schemas.workspace_policy import SafeWorkspacePolicy
+
+    root = _resolve_workspace_root(args, ctx)
+    rel = args.get("path") or ""
+    try:
+        normalized = SafeWorkspacePolicy().normalize(rel)
+    except ValueError as exc:
+        return ToolResult(
+            tool="read_workspace_file",
+            status=ToolStatus.FAILED,
+            error=str(exc),
+            code="unsafe_path",
+        )
+    target = (root / normalized).resolve()
+    try:
+        target.relative_to(root.resolve())
+    except ValueError:
+        return ToolResult(
+            tool="read_workspace_file",
+            status=ToolStatus.FAILED,
+            error="Path escapes the workspace",
+            code="unsafe_path",
+        )
+    if not target.is_file():
+        return ToolResult(
+            tool="read_workspace_file",
+            status=ToolStatus.FAILED,
+            error=f"No such file: {normalized}",
+            code="not_found",
+        )
+    content = target.read_text(encoding="utf-8")
+    return ToolResult(
+        tool="read_workspace_file",
+        status=ToolStatus.SUCCEEDED,
+        data={"path": normalized, "content": content},
+    )
+
+
+async def handle_apply_workspace_patch(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+    """Apply a bounded safe patch to the workspace, creating a revision."""
+    from paperforge.schemas.workspace_policy import (
+        SafeWorkspacePolicy,
+        WorkspacePatch,
+        apply_workspace_patch,
+    )
+
+    root = _resolve_workspace_root(args, ctx)
+    patch_data = args.get("files") or []
+    if not patch_data:
+        return ToolResult(
+            tool="apply_workspace_patch",
+            status=ToolStatus.FAILED,
+            error="No files in patch",
+            code="empty_patch",
+        )
+    patch = WorkspacePatch(
+        summary=args.get("summary", "Workspace patch"),
+        files=patch_data,
+    )
+    progress = ctx.progress()
+    step_id = await progress.start(kind="codegen", title="Applying workspace patch")
+    try:
+        changed = apply_workspace_patch(root, patch, SafeWorkspacePolicy())
+    except ValueError as exc:
+        await progress.fail(step_id, error=str(exc))
+        return ToolResult(
+            tool="apply_workspace_patch",
+            status=ToolStatus.FAILED,
+            error=str(exc),
+            code="patch_rejected",
+        )
+    await progress.complete(step_id, summary=f"{len(changed)} files changed.")
+
+    artifact_id = _latest_app_artifact_id(ctx)
+    revision_id = None
+    if artifact_id:
+        revision = ctx.storage.create_workspace_revision(
+            run_id=ctx.run_id,
+            app_id=artifact_id,
+            source="patch",
+            app_path=str(root),
+        )
+        revision_id = revision["id"]
+    return ToolResult(
+        tool="apply_workspace_patch",
+        status=ToolStatus.SUCCEEDED,
+        data={"changed": changed, "revision_id": revision_id},
+        summary=f"Applied patch: {len(changed)} files changed.",
+        next_phase="generated",
+    )
+
+
+async def handle_run_checks(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+    """Run typecheck + lint on the workspace and report pass/fail."""
+    root = _resolve_workspace_root(args, ctx)
+    from paperforge.agents.verifier import _run_checks_streaming, TYPECHECK_TIMEOUT
+
+    progress = ctx.progress()
+    step_id = await progress.start(kind="test", title="Running checks")
+    ok, errors = await _run_checks_streaming(
+        root, TYPECHECK_TIMEOUT, progress, step_id
+    )
+    await progress.complete(step_id, summary="Checks pass." if ok else "Checks failed.")
+    return ToolResult(
+        tool="run_checks",
+        status=ToolStatus.SUCCEEDED if ok else ToolStatus.FAILED,
+        data={"ok": ok, "errors": errors[:40]},
+        summary="Typecheck and lint pass." if ok else "Typecheck / lint failed.",
+        retryable=not ok,
+    )
+
+
+def _latest_app_artifact_id(ctx: ToolContext) -> str | None:
+    for artifact in ctx.storage.list_artifacts(
+        run_id=ctx.run_id, artifact_type="nextjs_app"
+    ):
+        return artifact["id"]
+    return None

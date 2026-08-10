@@ -59,6 +59,16 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         produces=frozenset({"workspace"}),
         risk="workspace_write",
     ),
+    "inspect_workspace": ToolSpec(
+        name="inspect_workspace",
+        requires=frozenset({"workspace"}),
+        risk="read",
+    ),
+    "read_workspace_file": ToolSpec(
+        name="read_workspace_file",
+        requires=frozenset({"workspace"}),
+        risk="read",
+    ),
     "apply_workspace_patch": ToolSpec(
         name="apply_workspace_patch",
         requires=frozenset({"workspace"}),
@@ -77,7 +87,6 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         risk="sandbox_exec",
     ),
 }
-
 
 def available_resources(state: WorkspaceState) -> set[str]:
     resources: set[str] = set()
