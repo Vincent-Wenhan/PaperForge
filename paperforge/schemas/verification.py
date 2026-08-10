@@ -5,6 +5,34 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 
+class VerificationGates(BaseModel):
+    """Hard gates (doc 24). A gate failure cannot be overridden by an overall score."""
+
+    workspace_ok: bool = False
+    typecheck_ok: bool = False
+    build_ok: bool = False
+    lint_ok: bool = False
+    security_ok: bool = False
+    runtime_ok: bool | None = None
+    acceptance_ok: bool | None = None
+
+    @property
+    def technical_ready(self) -> bool:
+        return all([self.workspace_ok, self.typecheck_ok, self.build_ok, self.security_ok])
+
+    @property
+    def preview_allowed(self) -> bool:
+        return self.workspace_ok and self.build_ok
+
+    @property
+    def product_ready(self) -> bool:
+        return (
+            self.technical_ready
+            and self.runtime_ok is True
+            and self.acceptance_ok is True
+        )
+
+
 class VerificationReport(BaseModel):
     app_id: str
     prd_id: str | None = None
@@ -33,6 +61,11 @@ class VerificationReport(BaseModel):
     lint_errors: list[str] = Field(default_factory=list)
 
     security_issues: list[str] = Field(default_factory=list)
+
+    gates: VerificationGates = Field(default_factory=VerificationGates)
+    technical_ready: bool = False
+    preview_allowed: bool = False
+    product_ready: bool = False
 
     overall_score: float = 0.0
     ready_for_preview: bool = False

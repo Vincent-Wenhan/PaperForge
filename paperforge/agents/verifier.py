@@ -188,7 +188,31 @@ async def verify_app(
     security_penalty = min(len(security_issues) / 10, 0.1)
     score += 0.1 - security_penalty
 
-    ready_for_preview = build_succeeded and score >= 0.6
+    ready_for_preview = build_succeeded and score >= 0.6 and not type_errors
+
+    # Hard gates (doc 24): a failed gate cannot be overridden by score.
+    workspace_ok = has_package_json and has_app_dir and has_page
+    typecheck_ok = not type_errors
+    build_ok = build_succeeded
+    lint_ok = not lint_errors
+    security_ok = not security_issues
+    gates = {
+        "workspace_ok": workspace_ok,
+        "typecheck_ok": typecheck_ok,
+        "build_ok": build_ok,
+        "lint_ok": lint_ok,
+        "security_ok": security_ok,
+        "runtime_ok": None,
+        "acceptance_ok": acceptance_status != "failed",
+    }
+    technical_ready = all([
+        gates["workspace_ok"],
+        gates["typecheck_ok"],
+        gates["build_ok"],
+        gates["security_ok"],
+    ])
+    preview_allowed = gates["workspace_ok"] and gates["build_ok"]
+    product_ready = technical_ready and gates["runtime_ok"] is True and gates["acceptance_ok"] is True
 
     recommendations: list[str] = []
     if missing_features:
@@ -268,6 +292,10 @@ async def verify_app(
         "type_errors": type_errors,
         "lint_errors": lint_errors,
         "security_issues": security_issues,
+        "gates": gates,
+        "technical_ready": technical_ready,
+        "preview_allowed": preview_allowed,
+        "product_ready": product_ready,
         "overall_score": score,
         "ready_for_preview": ready_for_preview,
         "recommendations": recommendations,
@@ -325,9 +353,12 @@ async def build_and_repair(
             "lint_errors": len(report.get("lint_errors", [])),
             "overall_score": report.get("overall_score"),
             "ready_for_preview": report.get("ready_for_preview"),
+            "technical_ready": report.get("technical_ready"),
         })
 
-        if report.get("ready_for_preview"):
+        # Hard-gate loop exit: a TypeScript/build/security error can't be
+        # overridden by a high score, so stop once the gates pass (doc 24).
+        if report.get("technical_ready"):
             break
 
         # Snapshot before patching so we can roll back.
@@ -370,7 +401,11 @@ async def _apply_repair_patch(
     """
     from paperforge.config import get_config
     from paperforge.prompts import load_prompt
-    from paperforge.schemas.workspace_policy import SafeWorkspacePolicy
+    from paperforge.schemas.workspace_policy import (
+        SafeWorkspacePolicy,
+        WorkspacePatch,
+        apply_workspace_patch,
+    )
 
     policy = SafeWorkspacePolicy()
 
@@ -412,28 +447,18 @@ async def _apply_repair_patch(
 
     content = response.content or "{}"
     try:
-        patch = json.loads(content)
-    except json.JSONDecodeError:
+        patch = WorkspacePatch.model_validate_json(content)
+    except Exception:
         return False
 
-    patched_files = patch.get("files") or []
-    if not patched_files:
+    if not patch.files:
         return False
 
-    for entry in patched_files:
-        rel_path = entry.get("path") or ""
-        try:
-            normalized = policy.normalize(rel_path)
-        except ValueError:
-            logger.warning(f"Repair patch skips non-writable file: {rel_path}")
-            continue
-        target = (app_path / normalized).resolve()
-        try:
-            target.relative_to(app_path.resolve())
-        except ValueError:
-            continue
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(entry.get("content") or "", encoding="utf-8")
+    try:
+        apply_workspace_patch(app_path, patch, policy)
+    except ValueError as exc:
+        logger.warning(f"Repair patch rejected by policy: {exc}")
+        return False
 
     return True
 
