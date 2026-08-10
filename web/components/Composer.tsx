@@ -13,6 +13,20 @@ const QUICK_ACTIONS: { id: string; label: string; description: string }[] = [
   { id: "restart", label: "Restart preview", description: "Restart the preview sandbox." },
 ];
 
+const SLASH_TEMPLATES: Record<string, string> = {
+  productize: "Productize the attached paper end-to-end.",
+  alternatives: "Generate alternative product candidates from this paper.",
+  "revise-prd": "Revise the PRD based on the latest verification report.",
+  fix: "Fix the failing build based on the latest verification report.",
+  "restart-preview": "Restart the preview sandbox.",
+};
+
+function isSlashTemplate(text: string): string | null {
+  const key = text.slice(1).trim();
+  if (text.startsWith("/") && SLASH_TEMPLATES[key]) return SLASH_TEMPLATES[key];
+  return null;
+}
+
 export function Composer() {
   const currentRun = useAppStore((s) => s.currentRun);
   const isRunning = useAppStore((s) => s.isRunning);
@@ -54,8 +68,12 @@ export function Composer() {
   if (!currentRun) return null;
 
   const handleSend = async () => {
-    const content = input.trim();
-    if (!content || sending || submitLock.current) return;
+    const raw = input.trim();
+    if (!raw || sending || submitLock.current) return;
+
+    // Slash command → expand to a canned template (ponytail: no separate
+    // command dispatch layer; quick actions are the same templates).
+    const content = isSlashTemplate(raw) ?? raw;
 
     submitLock.current = true;
     setSending(true);
@@ -129,6 +147,31 @@ export function Composer() {
       toast({ title: "Run cancelled", variant: "default" });
     } catch (err) {
       toast({ title: "Cancel failed", description: err instanceof Error ? err.message : String(err), variant: "error" });
+    }
+  };
+
+  // Interrupt + resend: cancel any running task, then start fresh.
+  const handleInterruptSend = async () => {
+    const raw = input.trim();
+    if (!raw || sending || submitLock.current) return;
+    const content = isSlashTemplate(raw) ?? raw;
+    submitLock.current = true;
+    setSending(true);
+
+    try {
+      await api.sendMessage(currentRun.id, content, [], undefined, "interrupt");
+      clearAttachments();
+      setInput("");
+      setIsRunning(true);
+    } catch (error) {
+      toast({
+        title: "Message was not sent",
+        description: error instanceof Error ? error.message : String(error),
+        variant: "error",
+      });
+    } finally {
+      submitLock.current = false;
+      setSending(false);
     }
   };
 
@@ -239,13 +282,24 @@ export function Composer() {
         />
         <div className="flex gap-2">
           {isRunning && (
-            <button
-              onClick={handleStop}
-              className="px-3 py-2 bg-secondary text-secondary-foreground rounded text-sm"
-              title="Stop the current task"
-            >
-              ■
-            </button>
+            <>
+              <button
+                onClick={handleStop}
+                className="px-3 py-2 bg-secondary text-secondary-foreground rounded text-sm"
+                title="Stop the current task"
+              >
+                ■
+              </button>
+              {input.trim() && (
+                <button
+                  onClick={handleInterruptSend}
+                  className="px-3 py-2 bg-destructive text-destructive-foreground rounded text-sm"
+                  title="Interrupt the current task and send this message"
+                >
+                  ↻ Interrupt
+                </button>
+              )}
+            </>
           )}
           <button
             onClick={handleSend}

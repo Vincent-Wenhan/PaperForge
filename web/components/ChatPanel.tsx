@@ -3,9 +3,8 @@
 import { useEffect, useRef } from "react";
 import { useAppStore } from "@/lib/store";
 import { MessageView } from "./MessageView";
-import { ToolCallCard } from "./ToolCallCard";
 import { ApprovalCard } from "./ApprovalCard";
-import { AgentActivity } from "./AgentActivity";
+import { StepList } from "./StepList";
 import { Composer } from "./Composer";
 import { EmptyState } from "./Skeleton";
 
@@ -13,18 +12,30 @@ export function ChatPanel() {
   const currentRun = useAppStore((s) => s.currentRun);
   const messages = useAppStore((s) => s.messages);
   const events = useAppStore((s) => s.events);
+  const steps = useAppStore((s) => s.steps);
   const pendingApprovals = useAppStore((s) => s.pendingApprovals);
   const artifacts = useAppStore((s) => s.artifacts);
   const resolvePendingApproval = useAppStore((s) => s.resolvePendingApproval);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const pinnedToBottom = useRef(true);
+  const jumpRef = useRef({ visible: false });
 
   const onScroll = () => {
     const el = scrollRef.current;
     if (!el) return;
-    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 96;
     pinnedToBottom.current = nearBottom;
+    jumpRef.current.visible = !nearBottom;
+  };
+
+  const jumpToLatest = () => {
+    const el = scrollRef.current;
+    if (el) {
+      el.scrollTop = el.scrollHeight;
+      pinnedToBottom.current = true;
+      jumpRef.current.visible = false;
+    }
   };
 
   useEffect(() => {
@@ -32,7 +43,7 @@ export function ChatPanel() {
     if (el && pinnedToBottom.current) {
       el.scrollTop = el.scrollHeight;
     }
-  }, [messages, events]);
+  }, [messages, events, steps]);
 
   if (!currentRun) {
     return (
@@ -70,12 +81,16 @@ export function ChatPanel() {
         {messages.map((msg) => (
           <MessageView
             key={msg.public_id ?? msg.id ?? `${msg.role}-${msg.created_at ?? msg.content}`}
+            id={msg.id || msg.public_id}
             role={msg.role}
             content={msg.content}
+            streaming={msg.streaming}
             toolCalls={msg.tool_calls}
             toolCallId={msg.tool_call_id}
           />
         ))}
+
+        <StepList steps={steps} />
 
         {pendingApprovals.length > 0 && (
           <div className="space-y-2">
@@ -89,14 +104,17 @@ export function ChatPanel() {
           </div>
         )}
 
-        {events.length > 0 && (
-          <div className="space-y-2 mt-2">
-            <AgentActivity events={events.slice(-20)} />
-          </div>
-        )}
-
         <div className="h-px" />
       </div>
+
+      {jumpRef.current.visible && (
+        <button
+          onClick={jumpToLatest}
+          className="absolute bottom-24 left-1/2 -translate-x-1/2 px-3 py-1 text-xs bg-foreground text-background rounded-full shadow"
+        >
+          ↓ Jump to latest
+        </button>
+      )}
 
       <Composer />
     </div>

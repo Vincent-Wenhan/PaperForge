@@ -180,12 +180,24 @@ class ToolContext:
         llm: LLMClient,
         emit: EventEmitter,
         sandbox_manager: Any | None = None,
+        task_id: str | None = None,
     ) -> None:
         self.run_id = run_id
         self.storage = storage
         self.llm = llm
         self.emit = emit
+        self.task_id = task_id
         self._sandbox_manager: Any | None = sandbox_manager
+
+    def progress(self, task_id: str | None = None) -> "ProgressReporter":
+        from paperforge.orchestrator.progress import ProgressReporter
+
+        return ProgressReporter(
+            run_id=self.run_id,
+            task_id=task_id or self.task_id or "current",
+            storage=self.storage,
+            emit=self.emit,
+        )
 
     def get_sandbox_manager(self) -> Any:
         """Return one manager for all sandbox operations in this run."""
@@ -419,21 +431,29 @@ async def handle_parse_paper(args: dict[str, Any], ctx: ToolContext) -> ToolResu
     paper_id = args.get("paper_id")
     pdf_path = args.get("pdf_path")
 
-    if paper_id:
-        # Preferred path: look the paper up in the library to resolve pdf_path.
-        paper = ctx.storage.get_paper(paper_id)
-        if paper is not None and not pdf_path:
-            pdf_path = paper.get("pdf_path")
-    elif pdf_path:
-        paper_id = Path(pdf_path).stem
-    else:
-        return ToolResult(
-            ok=False,
-            tool="parse_paper",
-            error="Either paper_id or pdf_path must be provided.",
-        )
+    progress = ctx.progress()
+    step_id = await progress.start(kind="paper_parse", title="Parsing paper")
+    try:
+        if paper_id:
+            # Preferred path: look the paper up in the library to resolve pdf_path.
+            paper = ctx.storage.get_paper(paper_id)
+            if paper is not None and not pdf_path:
+                pdf_path = paper.get("pdf_path")
+        elif pdf_path:
+            paper_id = Path(pdf_path).stem
+        else:
+            await progress.fail(step_id, error="Either paper_id or pdf_path must be provided.")
+            return ToolResult(
+                ok=False,
+                tool="parse_paper",
+                error="Either paper_id or pdf_path must be provided.",
+            )
 
-    card = await parse_paper(pdf_path=pdf_path, paper_id=paper_id, llm=ctx.llm)
+        card = await parse_paper(pdf_path=pdf_path, paper_id=paper_id, llm=ctx.llm)
+        await progress.complete(step_id, summary="Paper parsed into capability card.")
+    except Exception as exc:
+        await progress.fail(step_id, error=str(exc))
+        raise
 
     card_data = card if isinstance(card, dict) else card
     artifact_id = ctx.storage.save_artifact(
@@ -473,7 +493,14 @@ async def handle_compose(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
     from paperforge.agents.composer import compose
 
     card_ids = args["card_ids"]
-    composition = await compose(card_ids=card_ids, llm=ctx.llm, storage=ctx.storage)
+    progress = ctx.progress()
+    step_id = await progress.start(kind="planning", title="Composing capabilities")
+    try:
+        composition = await compose(card_ids=card_ids, llm=ctx.llm, storage=ctx.storage)
+    except Exception as exc:
+        await progress.fail(step_id, error=str(exc))
+        raise
+    await progress.complete(step_id, summary=f"Composed {len(card_ids)} capability cards.")
 
     artifact_id = ctx.storage.save_artifact(
         run_id=ctx.run_id,
@@ -517,15 +544,22 @@ async def handle_plan_product(args: dict[str, Any], ctx: ToolContext) -> ToolRes
             error="Either composition_id or card_ids must be provided.",
         )
 
-    planner_output = await plan_product(
-        user_requirement=user_requirement,
-        llm=ctx.llm,
-        storage=ctx.storage,
-        composition_id=composition_id,
-        card_ids=card_ids,
-    )
+    progress = ctx.progress()
+    step_id = await progress.start(kind="planning", title="Planning product")
+    try:
+        planner_output = await plan_product(
+            user_requirement=user_requirement,
+            llm=ctx.llm,
+            storage=ctx.storage,
+            composition_id=composition_id,
+            card_ids=card_ids,
+        )
+    except Exception as exc:
+        await progress.fail(step_id, error=str(exc))
+        raise
 
     if planner_output.get("needs_more_input"):
+        await progress.complete(step_id, summary="Asked user for more input.")
         questions = planner_output.get("questions") or []
         return ToolResult(
             tool="plan_product",
@@ -537,6 +571,7 @@ async def handle_plan_product(args: dict[str, Any], ctx: ToolContext) -> ToolRes
         )
 
     prd = planner_output.get("prd") or {}
+    await progress.complete(step_id, summary="PRD generated.")
     artifact_id = ctx.storage.save_artifact(
         run_id=ctx.run_id,
         artifact_type="prd",
@@ -559,6 +594,8 @@ async def handle_generate(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
     from paperforge.agents.nextjs_generator import generate_nextjs_app
 
     prd_id = args["prd_id"]
+    progress = ctx.progress()
+    step_id = await progress.start(kind="codegen", title="Generating Next.js app")
     requested_output = args.get("output_dir")
     if requested_output:
         requested_path = Path(requested_output).resolve()
@@ -572,12 +609,17 @@ async def handle_generate(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
     else:
         output_dir = str(ctx.storage.apps_dir / f"app_{uuid.uuid4().hex[:6]}")
 
-    manifest = await generate_nextjs_app(
-        prd_id=prd_id,
-        output_dir=output_dir,
-        llm=ctx.llm,
-        storage=ctx.storage,
-    )
+    try:
+        manifest = await generate_nextjs_app(
+            prd_id=prd_id,
+            output_dir=output_dir,
+            llm=ctx.llm,
+            storage=ctx.storage,
+        )
+    except Exception as exc:
+        await progress.fail(step_id, error=str(exc))
+        raise
+    await progress.complete(step_id, summary=f"App generated at {output_dir}.")
 
     artifact_id = ctx.storage.save_artifact(
         run_id=ctx.run_id,
@@ -607,7 +649,6 @@ async def handle_generate(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         next_phase="generated",
     )
 
-
 async def handle_verify(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
     """Verify a generated Next.js app, running the full build/lint/typecheck."""
     from paperforge.agents.verifier import verify_app
@@ -615,13 +656,25 @@ async def handle_verify(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
     app_path = _resolve_app_path(args, ctx)
     prd_id = args.get("prd_id")
 
-    report = await verify_app(
-        app_path=app_path,
-        prd_id=prd_id,
-        llm=ctx.llm,
-        storage=ctx.storage,
-    )
+    progress = ctx.progress()
+    step_id = await progress.start(kind="test", title="Verifying app")
+    try:
+        report = await verify_app(
+            app_path=app_path,
+            prd_id=prd_id,
+            llm=ctx.llm,
+            storage=ctx.storage,
+        )
+    except Exception as exc:
+        await progress.fail(step_id, error=str(exc))
+        raise
 
+    ready = bool(report.get("ready_for_preview"))
+    await progress.complete(
+        step_id,
+        summary=f"Score={report.get('overall_score', 0):.2f}, "
+                f"ready={ready}.",
+    )
     artifact_id = ctx.storage.save_artifact(
         run_id=ctx.run_id,
         artifact_type="verification_report",
@@ -646,13 +699,21 @@ async def handle_build_and_repair(args: dict[str, Any], ctx: ToolContext) -> Too
     from paperforge.agents.verifier import build_and_repair
 
     app_path = _resolve_app_path(args, ctx)
-    report = await build_and_repair(
-        app_path=app_path,
-        prd_id=args.get("prd_id"),
-        llm=ctx.llm,
-        storage=ctx.storage,
-        max_attempts=min(max(int(args.get("max_attempts", 3)), 1), 3),
-    )
+    progress = ctx.progress()
+    step_id = await progress.start(kind="build", title="Build and repair")
+    try:
+        report = await build_and_repair(
+            app_path=app_path,
+            prd_id=args.get("prd_id"),
+            llm=ctx.llm,
+            storage=ctx.storage,
+            max_attempts=min(max(int(args.get("max_attempts", 3)), 1), 3),
+        )
+    except Exception as exc:
+        await progress.fail(step_id, error=str(exc))
+        raise
+    ready = bool(report.get("ready_for_preview"))
+    await progress.complete(step_id, summary="Build and repair complete." if ready else "Build and repair needs another iteration.")
     artifact_id = ctx.storage.save_artifact(
         run_id=ctx.run_id,
         artifact_type="verification_report",
@@ -714,26 +775,13 @@ async def handle_run_sandbox(args: dict[str, Any], ctx: ToolContext) -> ToolResu
             code="sandbox_unavailable",
             retryable=True,
         )
+    progress = ctx.progress()
+    step_id = await progress.start(kind="preview", title="Starting preview")
     try:
         sandbox = await manager.start(run_id=run_id, app_path=app_path)
-    except FileNotFoundError as exc:
-        await ctx.emit.sandbox_error(str(exc))
-        return ToolResult(
-            tool="run_in_sandbox",
-            status=ToolStatus.FAILED,
-            error=str(exc),
-            code="app_not_found",
-            retryable=False,
-        )
-    except Exception as e:
-        await ctx.emit.sandbox_error(str(e))
-        return ToolResult(
-            tool="run_in_sandbox",
-            status=ToolStatus.FAILED,
-            error=str(e),
-            code="sandbox_start_failed",
-            retryable=True,
-        )
+    except Exception as exc:
+        await progress.fail(step_id, error=str(exc))
+        raise
 
     if sandbox.get("status") != "running":
         ctx.storage.update_sandbox(
@@ -741,6 +789,7 @@ async def handle_run_sandbox(args: dict[str, Any], ctx: ToolContext) -> ToolResu
             preview_status="degraded",
             error=sandbox.get("error") or "Sandbox failed to start",
         )
+        await progress.fail(step_id, error=sandbox.get("error") or "Sandbox failed to start")
         await ctx.emit.sandbox_error(
             sandbox.get("error") or "Sandbox failed to start"
         )
@@ -774,6 +823,7 @@ async def handle_run_sandbox(args: dict[str, Any], ctx: ToolContext) -> ToolResu
             preview_status="degraded",
             error="Preview server did not become HTTP-ready within 60 seconds",
         )
+        await progress.fail(step_id, error="Preview server did not become HTTP-ready within 60 seconds")
         await ctx.emit.sandbox_error(f"Sandbox {sandbox['id']} failed health check within 60s")
         await _finalize_verification_runtime(
             ctx,
@@ -797,6 +847,7 @@ async def handle_run_sandbox(args: dict[str, Any], ctx: ToolContext) -> ToolResu
         preview_url=preview_url,
         error=None,
     )
+    await progress.complete(step_id, summary=f"Preview ready on port {sandbox.get('preview_port')}.")
     await ctx.emit.preview_ready(sandbox["id"], preview_url)
     report = await _finalize_verification_runtime(ctx, sandbox, runtime_ok=True)
     return ToolResult(
@@ -874,9 +925,12 @@ async def handle_restart_sandbox(args: dict[str, Any], ctx: ToolContext) -> Tool
             code="sandbox_unavailable",
         )
 
+    progress = ctx.progress()
+    step_id = await progress.start(kind="preview", title="Restarting preview")
     try:
         sandbox = await manager.restart(sandbox_id)
     except Exception as exc:
+        await progress.fail(step_id, error=str(exc))
         return ToolResult(
             tool="restart_sandbox",
             status=ToolStatus.FAILED,
@@ -891,6 +945,7 @@ async def handle_restart_sandbox(args: dict[str, Any], ctx: ToolContext) -> Tool
             preview_status="degraded",
             error=sandbox.get("error") or "Sandbox did not enter running state",
         )
+        await progress.fail(step_id, error=sandbox.get("error") or "Sandbox did not enter running state")
         await _finalize_verification_runtime(
             ctx,
             sandbox,
@@ -913,6 +968,7 @@ async def handle_restart_sandbox(args: dict[str, Any], ctx: ToolContext) -> Tool
             preview_status="degraded",
             error="Preview server did not become HTTP-ready after restart",
         )
+        await progress.fail(step_id, error="Preview server did not become HTTP-ready after restart")
         await _finalize_verification_runtime(
             ctx,
             sandbox,
@@ -934,6 +990,7 @@ async def handle_restart_sandbox(args: dict[str, Any], ctx: ToolContext) -> Tool
         preview_url=preview_url,
         error=None,
     )
+    await progress.complete(step_id, summary="Preview restarted.")
     await ctx.emit.preview_ready(sandbox["id"], preview_url)
     report = await _finalize_verification_runtime(ctx, sandbox, runtime_ok=True)
     return ToolResult(

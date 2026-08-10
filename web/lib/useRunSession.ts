@@ -24,6 +24,7 @@ export function useRunSession(runId: string | null | undefined) {
       sandbox: state.sandbox,
       pendingApprovals: pending,
       tasks: state.tasks || [],
+      steps: state.steps || [],
       lastSeq: state.event_cursor,
       isRunning: state.run.status === "running",
       preview: state.preview || null,

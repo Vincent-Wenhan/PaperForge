@@ -85,6 +85,17 @@ export interface Artifact {
   created_at?: string;
 }
 
+export interface AgentStep {
+  id: string;
+  task_id?: string;
+  kind?: string;
+  title?: string;
+  status: "pending" | "running" | "completed" | "failed";
+  detail?: string;
+  summary?: string;
+  percent?: number;
+}
+
 export interface Attachment {
   id: string;
   type: "file" | "paper";
@@ -97,6 +108,7 @@ interface AppState {
   currentRun: Run | null;
   messages: Message[];
   events: Event[];
+  steps: AgentStep[];
   sandbox: Sandbox | null;
   tasks: Task[];
   preview: PreviewState | null;
@@ -128,6 +140,8 @@ interface AppState {
   replaceMessages: (msgs: Message[]) => void;
   removeMessage: (messageId: string) => void;
   addEvent: (event: Event) => void;
+  upsertStep: (step: AgentStep) => void;
+  setSteps: (steps: AgentStep[]) => void;
   addPendingApproval: (approval: Approval) => void;
   resolvePendingApproval: (approvalId: string, approved: boolean) => void;
   setArtifacts: (artifacts: Artifact[]) => void;
@@ -148,6 +162,7 @@ export const useAppStore = create<AppState>((set) => ({
   currentRun: null,
   messages: [],
   events: [],
+  steps: [],
   sandbox: null,
   tasks: [],
   preview: null,
@@ -166,6 +181,7 @@ export const useAppStore = create<AppState>((set) => ({
       currentRun: run,
       messages: [],
       events: [],
+      steps: [],
       pendingApprovals: [],
       artifacts: [],
       sandbox: null,
@@ -309,6 +325,15 @@ export const useAppStore = create<AppState>((set) => ({
         events: events.length > 500 ? events.slice(-500) : events,
       };
     }),
+  upsertStep: (step) =>
+    set((s) => {
+      const idx = s.steps.findIndex((item) => item.id === step.id);
+      if (idx < 0) return { steps: [...s.steps, step] };
+      const steps = [...s.steps];
+      steps[idx] = { ...steps[idx], ...step };
+      return { steps };
+    }),
+  setSteps: (steps) => set({ steps }),
   addPendingApproval: (approval) =>
     set((s) =>
       s.pendingApprovals.some((a) => a.approval_id === approval.approval_id)

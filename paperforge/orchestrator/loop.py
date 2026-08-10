@@ -215,6 +215,7 @@ class Orchestrator:
             llm=self.llm,
             emit=emit,
             sandbox_manager=self.sandbox_manager,
+            task_id=self.task_id,
         )
 
         # Main loop

@@ -1,4 +1,5 @@
 import type {
+  AgentStep,
   Approval,
   Artifact,
   Event,
@@ -35,6 +36,7 @@ export interface RunSession {
   pending_approvals: Approval[];
   approvals: Approval[];
   tasks: Task[];
+  steps?: AgentStep[];
   event_cursor: number;
   preview?: PreviewState | null;
 }

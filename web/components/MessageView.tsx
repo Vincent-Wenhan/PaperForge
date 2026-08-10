@@ -1,15 +1,27 @@
 "use client";
 
+import { memo } from "react";
 import ReactMarkdown from "react-markdown";
 
 interface MessageViewProps {
+  id?: string;
   role: "user" | "assistant" | "tool";
   content: string;
+  streaming?: boolean;
   toolCalls?: any[];
   toolCallId?: string;
 }
 
-export function MessageView({ role, content, toolCalls }: MessageViewProps) {
+function StreamingCaret() {
+  return (
+    <span
+      aria-hidden
+      className="ml-0.5 inline-block h-4 w-[2px] animate-pulse bg-current align-middle"
+    />
+  );
+}
+
+function MessageViewImpl({ role, content, streaming, toolCalls }: MessageViewProps) {
   const isUser = role === "user";
 
   if (isUser) {
@@ -27,6 +39,7 @@ export function MessageView({ role, content, toolCalls }: MessageViewProps) {
       <div className="max-w-[720px] w-full px-1 py-1">
         <div className="text-sm prose prose-sm max-w-none">
           <ReactMarkdown>{content || ""}</ReactMarkdown>
+          {streaming && <StreamingCaret />}
         </div>
         {toolCalls && toolCalls.length > 0 && (
           <div className="mt-2 space-y-1">
@@ -44,3 +57,12 @@ export function MessageView({ role, content, toolCalls }: MessageViewProps) {
     </div>
   );
 }
+
+export const MessageView = memo(
+  MessageViewImpl,
+  (prev, next) =>
+    prev.id === next.id &&
+    prev.content === next.content &&
+    prev.role === next.role &&
+    prev.streaming === next.streaming,
+);

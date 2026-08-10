@@ -109,6 +109,43 @@ export function applyRunEvent(
         store.upsertTask(task);
       }
       return "applied";
+    case "step.started":
+      store.upsertStep({
+        id: data.step_id,
+        task_id: data.task_id,
+        kind: data.kind || "tool",
+        title: data.title || "Running step",
+        status: "running",
+      });
+      return "applied";
+    case "step.progress":
+      if (data.step_id) {
+        store.upsertStep({
+          id: data.step_id,
+          status: "running",
+          ...(typeof data.percent === "number" ? { percent: data.percent } : {}),
+          ...(data.detail ? { detail: data.detail } : {}),
+        });
+      }
+      return "applied";
+    case "step.completed":
+      if (data.step_id) {
+        store.upsertStep({
+          id: data.step_id,
+          status: "completed",
+          ...(data.summary ? { summary: data.summary } : {}),
+        });
+      }
+      return "applied";
+    case "step.failed":
+      if (data.step_id) {
+        store.upsertStep({
+          id: data.step_id,
+          status: "failed",
+          ...(data.error ? { detail: data.error } : {}),
+        });
+      }
+      return "applied";
     case "approval.requested":
       store.addPendingApproval({
         approval_id: data.approval_id,

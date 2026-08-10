@@ -72,4 +72,39 @@ describe("run event reducer", () => {
     expect(result).toBe("gap");
     expect(useAppStore.getState().currentRun?.status).toBe("running");
   });
+
+  it("applies step lifecycle events into the steps list", () => {
+    applyRunEvent({
+      version: 1,
+      id: "e1",
+      seq: 1,
+      run_id: "run_1",
+      type: "step.started",
+      ts: "now",
+      payload: { step_id: "step_1", kind: "codegen", title: "Generating" },
+    });
+    applyRunEvent({
+      version: 1,
+      id: "e2",
+      seq: 2,
+      run_id: "run_1",
+      type: "step.progress",
+      ts: "now",
+      payload: { step_id: "step_1", percent: 50 },
+    });
+    applyRunEvent({
+      version: 1,
+      id: "e3",
+      seq: 3,
+      run_id: "run_1",
+      type: "step.completed",
+      ts: "now",
+      payload: { step_id: "step_1", summary: "done" },
+    });
+
+    const step = useAppStore.getState().steps[0];
+    expect(step.id).toBe("step_1");
+    expect(step.status).toBe("completed");
+    expect(step.summary).toBe("done");
+  });
 });
