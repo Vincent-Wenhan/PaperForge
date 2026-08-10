@@ -48,6 +48,11 @@ class Settings(BaseSettings):
     # Preview origin for produced apps; must differ from the main app origin
     # so user apps never share an origin with the host (doc 38).
     PREVIEW_ORIGIN: str = "http://localhost"
+    # Sandbox network policy (doc 38.2): generated apps ship with mock
+    # adapters, so the container is created with its network disabled by
+    # default. Operators flip this on only after opting into real API
+    # integration.
+    PREVIEW_ALLOW_NETWORK: bool = False
 
     # Scheduler
     WORKER_LEASE_SECONDS: int = 300
@@ -94,6 +99,7 @@ class Config(BaseModel):
     SANDBOX_PIDS_LIMIT: int
     SANDBOX_RUN_AS_USER: str
     PREVIEW_ORIGIN: str
+    PREVIEW_ALLOW_NETWORK: bool
     WORKER_LEASE_SECONDS: int
     WORKER_HEARTBEAT_SECONDS: int
     WORKER_ID: str
@@ -128,6 +134,7 @@ def load_config() -> Config:
         SANDBOX_PIDS_LIMIT=s.SANDBOX_PIDS_LIMIT,
         SANDBOX_RUN_AS_USER=s.SANDBOX_RUN_AS_USER,
         PREVIEW_ORIGIN=s.PREVIEW_ORIGIN,
+        PREVIEW_ALLOW_NETWORK=s.PREVIEW_ALLOW_NETWORK,
         WORKER_LEASE_SECONDS=s.WORKER_LEASE_SECONDS,
         WORKER_HEARTBEAT_SECONDS=s.WORKER_HEARTBEAT_SECONDS,
         WORKER_ID=s.WORKER_ID,

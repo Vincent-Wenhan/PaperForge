@@ -98,6 +98,10 @@ class DockerSandboxManager:
         cpu_quota = cfg.SANDBOX_CPU_QUOTA
         pids_limit = cfg.SANDBOX_PIDS_LIMIT
         run_as_user = cfg.SANDBOX_RUN_AS_USER
+        # Generated apps ship with mock adapters; disable container network
+        # unless the operator explicitly opts into real API integration
+        # (doc 38.2). Docker still exposes the preview port mapping.
+        use_network = bool(cfg.PREVIEW_ALLOW_NETWORK)
 
         # Preview URL uses the configured preview origin, never the main app
         # origin, so user-generated apps are kept isolated (doc 38).
@@ -158,6 +162,7 @@ class DockerSandboxManager:
                 security_opt=["no-new-privileges"],
                 read_only=True,
                 tmpfs={"/tmp": "size=64m"},
+                network_disabled=not use_network,
             )
 
             container.start()
