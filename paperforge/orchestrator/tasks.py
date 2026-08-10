@@ -93,3 +93,46 @@ def get_run_task_manager() -> RunTaskManager:
 def reset_run_task_manager() -> None:
     global _run_task_manager
     _run_task_manager = None
+
+
+class RunQueue:
+    """Serializes orchestrator executions per run, so follow-up messages can be
+    queued or interrupt the running task instead of being rejected with 409."""
+
+    def __init__(self) -> None:
+        self._queues: dict[str, asyncio.Queue[tuple[str, Coroutine]]] = {}
+        self._workers: dict[str, asyncio.Task] = {}
+        self._manager = get_run_task_manager()
+
+    async def enqueue(self, run_id: str, task_id: str, coro: Coroutine) -> None:
+        if run_id not in self._queues:
+            self._queues[run_id] = asyncio.Queue()
+        await self._queues[run_id].put((task_id, coro))
+
+        worker = self._workers.get(run_id)
+        if worker is None or worker.done():
+            self._workers[run_id] = asyncio.create_task(self._worker(run_id))
+
+    async def _worker(self, run_id: str) -> None:
+        queue = self._queues.get(run_id)
+        try:
+            while queue is not None and not queue.empty():
+                task_id, coro = await queue.get()
+                self._manager.start(run_id, coro)
+                task = self._manager.tasks.get(run_id)
+                try:
+                    if task is not None:
+                        await asyncio.shield(task)
+                except asyncio.CancelledError:
+                    pass
+                finally:
+                    queue.task_done()
+        finally:
+            self._queues.pop(run_id, None)
+            self._workers.pop(run_id, None)
+
+    def running(self, run_id: str) -> bool:
+        return self._manager.is_running(run_id) or bool(self._queues.get(run_id))
+
+    async def cancel_and_wait(self, run_id: str) -> bool:
+        return await self._manager.cancel_and_wait(run_id)

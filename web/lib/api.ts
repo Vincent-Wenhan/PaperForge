@@ -161,11 +161,13 @@ export const api = {
     content: string,
     paperIds: string[] = [],
     publicId?: string,
+    mode: "start" | "queue" | "interrupt" = "start",
   ): Promise<{ status: string; run_id: string; message?: any }> => {
     return postJson(`/api/runs/${runId}/messages`, {
       content,
       paper_ids: paperIds,
       public_id: publicId,
+      mode,
     });
   },
   listMessages: async (runId: string): Promise<Message[]> => {

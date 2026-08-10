@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
@@ -10,17 +11,20 @@ from pydantic import BaseModel
 from api.deps import get_sandbox_manager_dep
 from paperforge.orchestrator.events import EventEmitter, get_event_manager
 from paperforge.orchestrator.loop import Orchestrator
-from paperforge.orchestrator.tasks import get_run_task_manager
+from paperforge.orchestrator.tasks import get_run_task_manager, RunQueue
 from paperforge.storage.db import get_storage
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+_run_queue = RunQueue()
 
 
 class MessageCreate(BaseModel):
     content: str
     paper_ids: list[str] = []
     public_id: str | None = None
+    mode: Literal["start", "queue", "interrupt"] = "start"
 
 
 def _derive_title(content: str, max_len: int = 50) -> str:
@@ -49,15 +53,18 @@ async def send_message(run_id: str, req: MessageCreate, request: Request) -> dic
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
 
-    # Reject if a task is already running for this run; the caller must stop
-    # the existing task before sending a new message. This prevents silent
-    # cancellation of in-flight orchestrator work.
+    # Reject with 409 only if the caller explicitly wants to start a fresh task
+    # while one is already running. Follow-ups queue instead; interrupts cancel
+    # the in-flight task first (doc 12.4).
     task_manager = get_run_task_manager()
-    if task_manager.is_running(run_id):
+    if task_manager.is_running(run_id) and req.mode == "start":
         raise HTTPException(
             status_code=409,
-            detail="A task is already running for this run. Cancel it first.",
+            detail="A task is already running for this run. Cancel it or send a follow-up.",
         )
+
+    if req.mode == "interrupt":
+        await _run_queue.cancel_and_wait(run_id)
 
     # A completed/cancelled run can start a fresh productization task. Reset the
     # aggregate phase before the new task is scheduled.
@@ -99,8 +106,9 @@ async def send_message(run_id: str, req: MessageCreate, request: Request) -> dic
     orchestrator = Orchestrator(
         sandbox_manager=get_sandbox_manager_dep(request),
     )
-    task_manager.start(
+    await _run_queue.enqueue(
         run_id,
+        task["id"],
         orchestrator.run(
             run_id=run_id,
             user_message=req.content,

@@ -300,7 +300,15 @@ export const useAppStore = create<AppState>((set) => ({
   replaceMessages: (msgs) => set({ messages: msgs }),
   removeMessage: (messageId) =>
     set((s) => ({ messages: s.messages.filter((m) => m.id !== messageId) })),
-  addEvent: (event) => set((s) => ({ events: [...s.events, event] })),
+  // ponytail: debug event ring buffer capped at 500 to bound memory; the
+  // debug drawer only needs the tail. Raise MAX_DEBUG_EVENTS if it ever helps.
+  addEvent: (event) =>
+    set((s) => {
+      const events = [...s.events, event];
+      return {
+        events: events.length > 500 ? events.slice(-500) : events,
+      };
+    }),
   addPendingApproval: (approval) =>
     set((s) =>
       s.pendingApprovals.some((a) => a.approval_id === approval.approval_id)

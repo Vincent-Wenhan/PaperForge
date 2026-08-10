@@ -166,7 +166,7 @@ export function applyRunEvent(
       } satisfies PreviewState);
       return "applied";
     case "stream.gap":
-      return "unknown";
+      return "gap";
     default:
       return "unknown";
   }

@@ -55,7 +55,7 @@ export function Composer() {
 
   const handleSend = async () => {
     const content = input.trim();
-    if (!content || sending || isRunning || submitLock.current) return;
+    if (!content || sending || submitLock.current) return;
 
     submitLock.current = true;
     setSending(true);
@@ -67,10 +67,11 @@ export function Composer() {
 
     addMessage({
       id: optimisticId,
+      public_id: optimisticId,
       role: "user",
       content,
-      streaming: true,
-      status: "streaming",
+      streaming: false,
+      status: "completed",
     });
 
     try {
@@ -94,7 +95,16 @@ export function Composer() {
         }
       }
 
-      await api.sendMessage(currentRun.id, content, paperIds);
+      const isRunningState = useAppStore.getState().isRunning;
+      const mode = isRunningState ? "queue" : "start";
+
+      await api.sendMessage(
+        currentRun.id,
+        content,
+        paperIds,
+        optimisticId,
+        mode,
+      );
       clearAttachments();
       setInput("");
       setIsRunning(true);
@@ -199,7 +209,7 @@ export function Composer() {
       <div className="flex items-end gap-2">
         <button
           onClick={() => fileInputRef.current?.click()}
-          disabled={sending || isRunning}
+          disabled={sending || uploading}
           className="p-2 hover:bg-accent rounded text-sm disabled:opacity-50"
           title="Attach PDF"
           aria-label="Attach PDF"
@@ -220,29 +230,35 @@ export function Composer() {
           onKeyDown={handleKeyDown}
           placeholder={
             isRunning
-              ? "Run in progress — wait for it to finish or cancel"
+              ? "Add a follow-up... (queued after the current task)"
               : "Ask PaperForge to build or change something..."
           }
           rows={2}
           className="flex-1 px-3 py-2 border border-border rounded resize-none focus:outline-none focus:ring-1 focus:ring-primary text-sm disabled:opacity-50"
-          disabled={sending || isRunning}
+          disabled={sending || uploading}
         />
-        {isRunning ? (
-          <button
-            onClick={handleStop}
-            className="px-4 py-2 bg-destructive text-destructive-foreground rounded text-sm"
-          >
-            Stop
-          </button>
-        ) : (
+        <div className="flex gap-2">
+          {isRunning && (
+            <button
+              onClick={handleStop}
+              className="px-3 py-2 bg-secondary text-secondary-foreground rounded text-sm"
+              title="Stop the current task"
+            >
+              ■
+            </button>
+          )}
           <button
             onClick={handleSend}
             disabled={sending || uploading || !input.trim()}
             className="px-4 py-2 bg-primary text-primary-foreground rounded disabled:opacity-50 text-sm"
           >
-            {uploading ? "Uploading…" : "Send"}
+            {uploading
+              ? "Uploading…"
+              : isRunning
+                ? "Queue ↑"
+                : "Send"}
           </button>
-        )}
+        </div>
       </div>
     </div>
   );

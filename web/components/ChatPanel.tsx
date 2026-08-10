@@ -17,10 +17,21 @@ export function ChatPanel() {
   const artifacts = useAppStore((s) => s.artifacts);
   const resolvePendingApproval = useAppStore((s) => s.resolvePendingApproval);
 
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const pinnedToBottom = useRef(true);
+
+  const onScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    pinnedToBottom.current = nearBottom;
+  };
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    const el = scrollRef.current;
+    if (el && pinnedToBottom.current) {
+      el.scrollTop = el.scrollHeight;
+    }
   }, [messages, events]);
 
   if (!currentRun) {
@@ -42,6 +53,8 @@ export function ChatPanel() {
       />
 
       <div
+        ref={scrollRef}
+        onScroll={onScroll}
         className="flex-1 overflow-y-auto p-4 space-y-3"
         role="log"
         aria-live="polite"
@@ -54,9 +67,9 @@ export function ChatPanel() {
             description="Send a message below to start working with PaperForge. Ask a question or request to productize a paper."
           />
         )}
-        {messages.map((msg, i) => (
+        {messages.map((msg) => (
           <MessageView
-            key={i}
+            key={msg.public_id ?? msg.id ?? `${msg.role}-${msg.created_at ?? msg.content}`}
             role={msg.role}
             content={msg.content}
             toolCalls={msg.tool_calls}
@@ -82,7 +95,7 @@ export function ChatPanel() {
           </div>
         )}
 
-        <div ref={messagesEndRef} />
+        <div className="h-px" />
       </div>
 
       <Composer />
