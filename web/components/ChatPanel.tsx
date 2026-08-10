@@ -7,12 +7,14 @@ import { ApprovalCard } from "./ApprovalCard";
 import { StepList } from "./StepList";
 import { Composer } from "./Composer";
 import { EmptyState } from "./Skeleton";
+import { projectTurns } from "@/lib/project-turns";
 
 export function ChatPanel() {
   const currentRun = useAppStore((s) => s.currentRun);
   const messages = useAppStore((s) => s.messages);
   const events = useAppStore((s) => s.events);
   const steps = useAppStore((s) => s.steps);
+  const tasks = useAppStore((s) => s.tasks);
   const pendingApprovals = useAppStore((s) => s.pendingApprovals);
   const artifacts = useAppStore((s) => s.artifacts);
   const resolvePendingApproval = useAppStore((s) => s.resolvePendingApproval);
@@ -53,6 +55,17 @@ export function ChatPanel() {
     );
   }
 
+  const turns = projectTurns(
+    tasks,
+    messages,
+    steps,
+    pendingApprovals,
+    artifacts,
+  );
+
+  // Pending approvals not yet attributed to a task (pre-16 data) still render.
+  const orphanApprovals = turns.length === 0 ? pendingApprovals : [];
+
   return (
     <div className="flex-1 flex flex-col border-r border-border">
       <RunHeader
@@ -78,23 +91,54 @@ export function ChatPanel() {
             description="Send a message below to start working with PaperForge. Ask a question or request to productize a paper."
           />
         )}
-        {messages.map((msg) => (
-          <MessageView
-            key={msg.public_id ?? msg.id ?? `${msg.role}-${msg.created_at ?? msg.content}`}
-            id={msg.id || msg.public_id}
-            role={msg.role}
-            content={msg.content}
-            streaming={msg.streaming}
-            toolCalls={msg.tool_calls}
-            toolCallId={msg.tool_call_id}
-          />
+
+        {turns.map((turn) => (
+          <section
+            key={turn.id}
+            data-task-id={turn.id}
+            className="space-y-3 py-2 border-b border-border/60 last:border-0"
+          >
+            {turn.userMessage && (
+              <MessageView
+                key={turn.userMessage.public_id ?? turn.userMessage.id ?? "user"}
+                id={turn.userMessage.id || turn.userMessage.public_id}
+                role="user"
+                content={turn.userMessage.content}
+                streaming={false}
+                toolCalls={turn.userMessage.tool_calls}
+                toolCallId={turn.userMessage.tool_call_id}
+              />
+            )}
+
+            {(turn.steps.length > 0 || turn.assistantMessages.length > 0) && (
+              <div className="pl-2">
+                <StepList steps={turn.steps} />
+                {turn.approvals.map((approval) => (
+                  <ApprovalCard
+                    key={approval.approval_id ?? approval.id}
+                    approval={approval}
+                    onResolved={(id, approved) => resolvePendingApproval(id, approved)}
+                  />
+                ))}
+                {turn.assistantMessages.map((msg) => (
+                  <MessageView
+                    key={msg.public_id ?? msg.id ?? `${msg.role}-${msg.content}`}
+                    id={msg.id || msg.public_id}
+                    role={msg.role}
+                    content={msg.content}
+                    streaming={msg.streaming}
+                    toolCalls={msg.tool_calls}
+                    toolCallId={msg.tool_call_id}
+                  />
+                ))}
+              </div>
+            )}
+          </section>
         ))}
 
-        <StepList steps={steps} />
-
-        {pendingApprovals.length > 0 && (
+        {orphanApprovals.length > 0 && (
           <div className="space-y-2">
-            {pendingApprovals.map((approval) => (
+            {orphanApprovals.map((approval) => (
               <ApprovalCard
                 key={approval.approval_id}
                 approval={approval}

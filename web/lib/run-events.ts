@@ -172,6 +172,7 @@ export function applyRunEvent(
         approval_id: data.approval_id,
         id: data.approval_id,
         run_id: runId,
+        task_id: data.task_id,
         tool: data.tool || data.tool_name || "",
         tool_name: data.tool_name || data.tool || "",
         args: data.args || {},

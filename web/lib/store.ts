@@ -7,6 +7,7 @@ export interface Message {
   id?: string;
   public_id?: string;
   run_id?: string;
+  task_id?: string;
   role: "user" | "assistant" | "tool";
   content: string;
   tool_calls?: any[];
@@ -67,6 +68,7 @@ export interface Approval {
   approval_id: string;
   id?: string;
   run_id?: string;
+  task_id?: string;
   tool: string;
   tool_name?: string;
   args: Record<string, any>;
@@ -78,6 +80,7 @@ export interface Approval {
 export interface Artifact {
   id: string;
   run_id?: string;
+  task_id?: string;
   type: string;
   path?: string;
   metadata?: Record<string, any>;

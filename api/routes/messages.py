@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import uuid as _uuid
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request
@@ -70,12 +71,16 @@ async def send_message(run_id: str, req: MessageCreate, request: Request) -> dic
     # new message is just the next task in the same thread. Phase is a UI
     # display concern, not a reset trigger.
 
-    # API layer owns user message persistence; orchestrator must not duplicate it.
+    # Generate task_id first so the user message can carry its task affiliation
+    # (doc 29.1). Save user message, then the task references it via
+    # user_message_id and priority for interrupt.
+    task_id = f"task_{_uuid.uuid4().hex}"
     message = storage.add_message(
         run_id=run_id,
         role="user",
         content=req.content,
         public_id=req.public_id,
+        task_id=task_id,
     )
 
     task = storage.create_task(
@@ -115,10 +120,10 @@ async def send_message(run_id: str, req: MessageCreate, request: Request) -> dic
             task_id=task["id"],
         ),
     )
-
     return {
         "status": "queued",
         "run_id": run_id,
+        "task_id": task["id"],
         "message": message,
     }
 

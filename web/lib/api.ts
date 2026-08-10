@@ -363,6 +363,14 @@ export const api = {
     return getJson(`/api/preview/status/${runId}`);
   },
 
+  // === Tasks / Steps ===
+  listRunTasks: async (runId: string): Promise<Task[]> => {
+    return getJson<Task[]>(`/api/runs/${runId}/tasks`);
+  },
+  listTaskSteps: async (runId: string, taskId: string): Promise<any[]> => {
+    return getJson<any[]>(`/api/runs/${runId}/tasks/${taskId}/steps`);
+  },
+
   // === Settings ===
   getSettings: async (): Promise<any> => {
     return getJson(`/api/settings`);
