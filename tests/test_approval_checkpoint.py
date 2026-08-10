@@ -27,8 +27,8 @@ async def test_approval_wait_reads_database_resolution(storage):
 
 
 def test_failed_preview_can_retry_repair_and_restart():
-    # DANGEROUS_TOOLS remain the HITL gate; phase is no longer a tool
-    # permission check (doc 14). These tools are all user-approval gated.
+    # Risk-based approval policy is the HITL gate; phase is no longer a tool
+    # permission check (doc 14/17).
     assert RunPhase.PREVIEW_READY.value == "preview_ready"
     assert RunPhase.GENERATED.value == "generated"
     assert RunPhase.VERIFIED.value == "verified"

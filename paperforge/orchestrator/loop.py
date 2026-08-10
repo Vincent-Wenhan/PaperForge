@@ -18,7 +18,11 @@ from paperforge.config import get_config
 from paperforge.llm.base import LLMClient, Message, ToolCall
 from paperforge.llm.factory import get_llm_client
 from paperforge.observability.metrics import get_metrics
-from paperforge.orchestrator.approvals import get_approval_registry
+from paperforge.orchestrator.approvals import (
+    ApprovalPolicy,
+    ToolSpec as ApprovalToolSpec,
+    get_approval_registry,
+)
 from paperforge.orchestrator.events import EventEmitter, get_event_manager
 from paperforge.orchestrator.stream_writer import StreamWriter
 from paperforge.orchestrator.tools import TOOL_DEFINITIONS, ToolContext, dispatch_tool
@@ -38,15 +42,29 @@ LLM_MAX_RETRIES = 3
 LLM_RETRY_BASE_DELAY = 1.0  # seconds
 APPROVAL_TIMEOUT = 300  # 5 minutes
 
-# Tools that require explicit user approval before execution (HITL).
-DANGEROUS_TOOLS = {
-    "generate_nextjs_app",
-    "apply_workspace_patch",
-    "run_in_sandbox",
-    "restart_sandbox",
-    "build_and_repair",
-    "repair_app",
-}
+
+def _approval_spec(name: str) -> ApprovalToolSpec:
+    """Map a tool name to its risk for the approval policy (doc 17).
+
+    Mirrors the resource-gate `ToolSpec` risk in workspace.py. Sandbox exec
+    tools are isolated-local by default, so they're trusted under
+    TRUST_WORKSPACE; network/destructive reads are the ones that prompt.
+    """
+    risk_map = {
+        "parse_paper": "read",
+        "compose_capabilities": "read",
+        "plan_product": "read",
+        "inspect_workspace": "read",
+        "read_workspace_file": "read",
+        "run_checks": "sandbox_exec",
+        "run_in_sandbox": "sandbox_exec",
+        "restart_sandbox": "sandbox_exec",
+        "generate_nextjs_app": "workspace_write",
+        "apply_workspace_patch": "workspace_write",
+        "build_and_repair": "workspace_write",
+        "repair_app": "workspace_write",
+    }
+    return ApprovalToolSpec(name=name, risk=risk_map.get(name, "read"))
 
 
 class RunPhase(str, Enum):
@@ -360,9 +378,7 @@ class Orchestrator:
         run_id: str,
     ) -> str:
         """Execute a single tool call, applying resource gate and HITL approval."""
-        # Resource gate is the sole tool-prerequisite authority. Phase no longer
-        # decides which tools are allowed (doc 14): a completed run can keep
-        # editing its workspace. Phase only drives the UI's displayed step.
+        # Resource gate is the sole tool-prerequisite authority (doc 14).
         workspace_state = load_workspace_state(self.storage, run_id)
         allowed, missing = check_tool_prerequisites(call.name, workspace_state)
         if not allowed:
@@ -378,8 +394,12 @@ class Orchestrator:
                 retryable=True,
             ).model_dump_json()
 
-        # HITL: dangerous tools require user approval
-        if call.name in DANGEROUS_TOOLS:
+        # HITL: risk-based approval gate (doc 17). Workspace reads and writes
+        # are trusted under TRUST_WORKSPACE so a continuous agent can patch its
+        # own workspace without a modal every turn; only network/destructive
+        # tools prompt.
+        policy = getattr(self, "_approval_policy", None) or ApprovalPolicy()
+        if policy.requires(_approval_spec(call.name)):
             approval = self.storage.create_approval(
                 run_id=run_id,
                 tool_name=call.name,

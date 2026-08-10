@@ -149,24 +149,18 @@ async def test_orchestrator_resource_gate_rejects_missing_prereq(storage):
 
 @pytest.mark.asyncio
 async def test_orchestrator_approval_flow(storage):
-    """Dangerous tools should trigger approval flow.
+    """Risk-gated tools should trigger approval flow.
 
-    Verifies P0-4: when orchestrator calls generate_nextjs_app (a dangerous
-    tool), it creates an approval record, emits approval.requested, and
-    waits for user resolution.
+    Verifies P0-4/doc 17: when orchestrator calls a tool that requires
+    approval, it creates an approval record, emits approval.requested, and
+    waits for user resolution. Uses ALWAYS-approval mode so workspace writes
+    still prompt, and calls generate_nextjs_app against the prd resource.
     """
-    storage.create_run("run_approval", "Approval Flow Test")
-    storage.add_message(run_id="run_approval", role="user", content="Generate app")
+    from paperforge.orchestrator import approvals as approvals_module
 
-    # Set phase to PLANNED so generate_nextjs_app is allowed
-    storage.update_run_phase("run_approval", RunPhase.PLANNED.value)
-
-    # Seed the prd resource the resource gate requires before generate_nextjs_app
-    # becomes reachable (allows the approval flow to engage, doc 11).
-    storage.save_artifact(
-        run_id="run_approval",
-        artifact_type="prd",
-        data={"goal": "test"},
+    # Force ALWAYS so every non-read tool (incl. generate_nextjs_app) prompts.
+    policy = approvals_module.ApprovalPolicy(
+        mode=approvals_module.ApprovalMode.ALWAYS
     )
 
     class ApprovalLLM(MockLLMClient):
@@ -191,6 +185,21 @@ async def test_orchestrator_approval_flow(storage):
             return ChatResponse(content="Done", finish_reason="stop")
 
     orc = Orchestrator(llm=ApprovalLLM(), storage=storage)
+    orc._approval_policy = policy
+
+    storage.create_run("run_approval", "Approval Flow Test")
+    storage.add_message(run_id="run_approval", role="user", content="Generate app")
+
+    # Set phase to PLANNED so generate_nextjs_app is allowed
+    storage.update_run_phase("run_approval", RunPhase.PLANNED.value)
+
+    # Seed the prd resource the resource gate requires before generate_nextjs_app
+    # becomes reachable (allows the approval flow to engage, doc 11).
+    storage.save_artifact(
+        run_id="run_approval",
+        artifact_type="prd",
+        data={"goal": "test"},
+    )
 
     # Start orchestrator in background — it will block waiting for approval
     task = asyncio.create_task(orc.run(run_id="run_approval", user_message="Generate"))

@@ -1,14 +1,64 @@
-"""Approval registry for HITL flow.
+"""Approval registry + risk-based approval policy for HITL flow.
 
-When the orchestrator encounters a dangerous tool, it creates an approval
-record, emits an approval.requested event, and waits for user resolution.
-The API endpoint resolves the approval and signals the waiting orchestrator.
+The registry just tracks pending approvals and their resolution events.
+The policy decides whether a tool needs approval at all — using a
+risk-based model (doc 17) instead of a flat dangerous-tool set, so a
+workspace write inside an isolated local sandbox does not prompt on every
+edit.
 """
 
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from dataclasses import dataclass
+from enum import Enum
+from typing import Any, Literal
+
+ToolRisk = Literal[
+    "read", "workspace_write", "sandbox_exec", "network", "destructive"
+]
+
+
+class ApprovalMode(str, Enum):
+    ALWAYS = "always"
+    TRUST_WORKSPACE = "trust_workspace"
+    MANUAL = "manual"
+
+
+@dataclass(frozen=True)
+class ToolSpec:
+    """Minimal risk descriptor used by the approval policy."""
+
+    name: str
+    risk: ToolRisk = "read"
+
+
+@dataclass(frozen=True)
+class ApprovalPolicy:
+    """Risk-based gating for whether a tool requires HITL approval (doc 17).
+
+    - ``ALWAYS``: every non-read tool prompts.
+    - ``MANUAL``: nothing prompts; the user resolves everything by hand.
+    - ``TRUST_WORKSPACE`` (default): reads and workspace writes are trusted,
+      sandbox exec is trusted when the workspace is isolated, and only
+      network/destructive operations prompt. This lets a continuous agent
+      patch its own workspace without a modal every turn.
+    """
+
+    mode: ApprovalMode = ApprovalMode.TRUST_WORKSPACE
+    workspace_isolated: bool = True
+    network_enabled: bool = False
+
+    def requires(self, spec: ToolSpec) -> bool:
+        if self.mode == ApprovalMode.ALWAYS:
+            return spec.risk != "read"
+        if self.mode == ApprovalMode.MANUAL:
+            return False
+        if spec.risk in {"read", "workspace_write"}:
+            return False
+        if spec.risk == "sandbox_exec":
+            return not self.workspace_isolated
+        return spec.risk in {"network", "destructive"}
 
 
 class ApprovalRegistry:
