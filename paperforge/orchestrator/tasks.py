@@ -125,7 +125,18 @@ class RunQueue:
         try:
             while queue is not None and not queue.empty():
                 task_id, coro = await queue.get()
+                started_at = asyncio.get_event_loop().time()
                 executed = await self._claim_and_run(run_id, task_id, coro, storage)
+                if executed:
+                    try:
+                        from paperforge.observability.metrics import get_metrics
+
+                        get_metrics().record_duration(
+                            "task_duration_ms",
+                            asyncio.get_event_loop().time() - started_at,
+                        )
+                    except Exception:
+                        pass
                 if not executed and storage is not None:
                     storage.update_task(task_id=task_id, status="queued")
                 queue.task_done()

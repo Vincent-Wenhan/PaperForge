@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from paperforge.llm.base import LLMClient, Message
+from paperforge.observability.metrics import get_metrics
 from paperforge.sandbox.build_runner import BuildRunner
 from paperforge.schemas.verification import VerificationReport
 from paperforge.storage.db import Storage
@@ -355,6 +356,10 @@ async def build_and_repair(
         )
         elapsed = time.monotonic() - started_at
         latest_report = report
+        try:
+            get_metrics().record_duration("verify_duration_ms", elapsed)
+        except Exception:
+            pass
 
         attempts.append({
             "attempt": attempt,

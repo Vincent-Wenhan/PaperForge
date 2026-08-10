@@ -58,6 +58,7 @@ class BuildRunner:
     ) -> BuildResult:
         """Execute install + build and return a unified BuildResult."""
         app_path = Path(app_path)
+        started = asyncio.get_event_loop().time()
         result = BuildResult(environment=self.mode)
 
         if not (app_path / "package.json").exists():
@@ -73,6 +74,7 @@ class BuildRunner:
             from paperforge.observability.metrics import get_metrics
 
             get_metrics().increment("build_total")
+            get_metrics().record_duration("build_duration_ms", asyncio.get_event_loop().time() - started)
         except Exception:
             pass
         return result
