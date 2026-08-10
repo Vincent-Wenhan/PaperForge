@@ -63,6 +63,16 @@ async def get_task(run_id: str, task_id: str) -> dict:
     return task
 
 
+@router.get("/{task_id}/steps")
+async def get_task_steps(run_id: str, task_id: str) -> list[dict]:
+    """Per-task step timeline, oldest first — survives reload (doc 16)."""
+    storage = get_storage()
+    task = storage.get_task(task_id)
+    if not task or task.get("run_id") != run_id:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return storage.list_steps_by_task(task_id)
+
+
 @router.patch("/{task_id}")
 async def update_task(run_id: str, task_id: str, req: TaskUpdate) -> dict:
     storage = get_storage()

@@ -274,6 +274,7 @@ class Orchestrator:
                             role="assistant",
                             content=response.content or "",
                             tool_calls=tool_calls_data,
+                            task_id=self.task_id,
                         )
                     messages.append(
                         Message(

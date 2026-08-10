@@ -134,6 +134,8 @@ CREATE TABLE IF NOT EXISTS steps (
     summary TEXT,
     metadata TEXT,
     percent REAL,
+    started_at TIMESTAMP,
+    completed_at TIMESTAMP,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -226,6 +228,7 @@ class Storage:
             self._ensure_column(conn, "messages", "public_id", "TEXT")
             self._ensure_column(conn, "messages", "status", "TEXT NOT NULL DEFAULT 'completed'")
             self._ensure_column(conn, "messages", "parts", "TEXT")
+            self._ensure_column(conn, "messages", "task_id", "TEXT")
             self._ensure_column(conn, "sandboxes", "preview_status", "TEXT NOT NULL DEFAULT 'idle'")
             self._ensure_column(conn, "sandboxes", "preview_url", "TEXT")
             self._ensure_column(conn, "sandboxes", "error", "TEXT")
@@ -236,6 +239,8 @@ class Storage:
             self._ensure_column(conn, "tasks", "attempt", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(conn, "tasks", "priority", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(conn, "tasks", "user_message_id", "INTEGER")
+            self._ensure_column(conn, "steps", "started_at", "TIMESTAMP")
+            self._ensure_column(conn, "steps", "completed_at", "TIMESTAMP")
             conn.execute(
                 "UPDATE sandboxes SET preview_status = 'starting' "
                 "WHERE preview_status = 'idle' AND status IN ('pending', 'starting', 'running')"
@@ -411,14 +416,15 @@ class Storage:
         public_id: str | None = None,
         status: str = "completed",
         parts: list[dict[str, Any]] | None = None,
+        task_id: str | None = None,
     ) -> dict[str, Any]:
         if public_id is None:
             public_id = f"msg_{uuid.uuid4().hex[:10]}"
         with self._lock, self._conn() as conn:
             cur = conn.execute(
                 """INSERT INTO messages
-                   (public_id, run_id, role, content, tool_calls, tool_call_id, name, status, parts)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   (public_id, run_id, role, content, tool_calls, tool_call_id, name, status, parts, task_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     public_id,
                     run_id,
@@ -429,6 +435,7 @@ class Storage:
                     name,
                     status,
                     json.dumps(parts, ensure_ascii=False) if parts else None,
+                    task_id,
                 ),
             )
             now = datetime.utcnow().isoformat()
@@ -774,6 +781,15 @@ class Storage:
             ).fetchall()
         return [self._decode_step(dict(r)) for r in rows]
 
+    def list_steps_by_task(self, task_id: str) -> list[dict[str, Any]]:
+        """Steps for a single task, oldest first — per-task independent queries."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM steps WHERE task_id = ? ORDER BY created_at ASC",
+                (task_id,),
+            ).fetchall()
+        return [self._decode_step(dict(r)) for r in rows]
+
     def claim_next_task(self, worker_id: str, lease_until: str) -> dict[str, Any] | None:
         """Atomically claim the oldest queued task under a worker lease (doc 21.2)."""
         with self._lock, self._conn() as conn:
@@ -862,10 +878,22 @@ class Storage:
         return self._decode_step(dict(row)) if row else None
 
     def complete_step(self, step_id: str, *, summary: str | None = None) -> dict[str, Any] | None:
-        return self.update_step(step_id, status="completed", summary=summary)
+        with self._lock, self._conn() as conn:
+            conn.execute(
+                "UPDATE steps SET status = 'completed', summary = ?, completed_at = ? WHERE id = ?",
+                (summary, datetime.utcnow().isoformat(), step_id),
+            )
+            row = conn.execute("SELECT * FROM steps WHERE id = ?", (step_id,)).fetchone()
+        return self._decode_step(dict(row)) if row else None
 
     def fail_step(self, step_id: str, *, error: str | None = None) -> dict[str, Any] | None:
-        return self.update_step(step_id, status="failed", detail=error)
+        with self._lock, self._conn() as conn:
+            conn.execute(
+                "UPDATE steps SET status = 'failed', detail = ?, completed_at = ? WHERE id = ?",
+                (error, datetime.utcnow().isoformat(), step_id),
+            )
+            row = conn.execute("SELECT * FROM steps WHERE id = ?", (step_id,)).fetchone()
+        return self._decode_step(dict(row)) if row else None
 
     # ===== Workspace revisions =====
 
