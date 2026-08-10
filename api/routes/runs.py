@@ -311,12 +311,6 @@ async def get_run_state(run_id: str) -> dict:
     }
 
 
-@router.get("/{run_id}/messages")
-async def list_messages(run_id: str) -> list[dict]:
-    storage = get_storage()
-    return storage.list_messages(run_id)
-
-
 @router.get("/{run_id}/artifacts")
 async def list_artifacts(run_id: str, artifact_type: str | None = None) -> list[dict]:
     storage = get_storage()

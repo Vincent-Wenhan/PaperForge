@@ -124,8 +124,8 @@ async def test_phase_change_emits_event(storage: Storage):
     await orc.run(run_id="run_phase", user_message="parse this paper")
 
     # After finish tool succeeds, phase should advance.
-    # The 'finish' tool is not in PHASE_TRANSITIONS, but we verify the
-    # mechanism: a successful tool call should not throw.
+    # The 'finish' tool has no next_phase of its own; a successful tool call
+    # should not throw.
     assert orc.phase in (RunPhase.INIT, RunPhase.DONE)
 
 

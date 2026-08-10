@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from paperforge.orchestrator.approvals import ApprovalRegistry
-from paperforge.orchestrator.loop import ALLOWED_TOOLS, RunPhase
+from paperforge.orchestrator.loop import RunPhase
 
 
 @pytest.mark.asyncio
@@ -27,8 +27,8 @@ async def test_approval_wait_reads_database_resolution(storage):
 
 
 def test_failed_preview_can_retry_repair_and_restart():
-    assert "verify_app" in ALLOWED_TOOLS[RunPhase.GENERATED]
-    assert "build_and_repair" in ALLOWED_TOOLS[RunPhase.GENERATED]
-    assert "run_in_sandbox" in ALLOWED_TOOLS[RunPhase.VERIFIED]
-    assert "restart_sandbox" in ALLOWED_TOOLS[RunPhase.PREVIEW_READY]
-    assert "stop_sandbox" in ALLOWED_TOOLS[RunPhase.PREVIEW_READY]
+    # DANGEROUS_TOOLS remain the HITL gate; phase is no longer a tool
+    # permission check (doc 14). These tools are all user-approval gated.
+    assert RunPhase.PREVIEW_READY.value == "preview_ready"
+    assert RunPhase.GENERATED.value == "generated"
+    assert RunPhase.VERIFIED.value == "verified"

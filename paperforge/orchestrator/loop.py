@@ -50,7 +50,7 @@ DANGEROUS_TOOLS = {
 
 
 class RunPhase(str, Enum):
-    """Deterministic phase gate for orchestrator flow."""
+    """Tracked only for the UI's displayed step; not a tool-permission gate (doc 14)."""
 
     INIT = "init"
     PARSED = "parsed"
@@ -61,69 +61,6 @@ class RunPhase(str, Enum):
     PREVIEW_READY = "preview_ready"
     DONE = "done"
     ERROR = "error"
-
-
-# Tools allowed per phase. Tools not in the current phase's set are rejected.
-ALLOWED_TOOLS: dict[RunPhase, set[str]] = {
-    RunPhase.INIT: {"parse_paper", "finish"},
-    RunPhase.PARSED: {"compose_capabilities", "plan_product", "finish"},
-    RunPhase.COMPOSED: {"plan_product", "finish"},
-    RunPhase.PLANNED: {"generate_nextjs_app", "finish"},
-    RunPhase.GENERATED: {
-        "verify_app",
-        "build_and_repair",
-        "repair_app",
-        "inspect_workspace",
-        "read_workspace_file",
-        "apply_workspace_patch",
-        "run_checks",
-        "finish",
-    },
-    RunPhase.VERIFIED: {
-        "verify_app",
-        "build_and_repair",
-        "repair_app",
-        "inspect_workspace",
-        "read_workspace_file",
-        "apply_workspace_patch",
-        "run_checks",
-        "run_in_sandbox",
-        "restart_sandbox",
-        "stop_sandbox",
-        "finish",
-    },
-    RunPhase.PREVIEW_READY: {
-        "parse_paper",
-        "compose_capabilities",
-        "plan_product",
-        "generate_nextjs_app",
-        "verify_app",
-        "build_and_repair",
-        "repair_app",
-        "inspect_workspace",
-        "read_workspace_file",
-        "apply_workspace_patch",
-        "run_checks",
-        "run_in_sandbox",
-        "restart_sandbox",
-        "stop_sandbox",
-        "finish",
-    },
-    RunPhase.DONE: set(),
-    RunPhase.ERROR: set(),
-}
-
-# Legacy mapping tool name → next phase. Kept for backwards compatibility
-# with older tests that import it. The orchestrator loop now reads
-# `next_phase` from the ToolResult returned by each tool handler.
-PHASE_TRANSITIONS: dict[str, RunPhase] = {
-    "parse_paper": RunPhase.PARSED,
-    "compose_capabilities": RunPhase.COMPOSED,
-    "plan_product": RunPhase.PLANNED,
-    "generate_nextjs_app": RunPhase.GENERATED,
-    "verify_app": RunPhase.VERIFIED,
-    "run_in_sandbox": RunPhase.PREVIEW_READY,
-}
 
 
 class Orchestrator:
