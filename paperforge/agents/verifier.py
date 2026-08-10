@@ -30,6 +30,16 @@ DANGEROUS_PATTERNS = [
     (re.compile(r"new\s+Function\s*\("), "new Function() usage"),
 ]
 
+# Target Repair V2 (doc 22.1): match TS error paths like app/page.tsx:12
+TS_ERROR_RE = re.compile(
+    r"(?P<path>"
+    r"(?:app|components|hooks|lib|types)"
+    r"/[^:(\s]+"
+    r")"
+    r"(?:\(|:)"
+    r"(?P<line>\d+)"
+)
+
 MAX_REPAIR_ROUNDS = 3
 TYPECHECK_TIMEOUT = 120
 LINT_TIMEOUT = 120
@@ -398,6 +408,11 @@ async def _apply_repair_patch(
     patch is restricted to the same writable roots as the generator
     (SafeWorkspacePolicy) so a hallucinating model cannot write arbitrary
     files.
+
+    Uses targeted repair (doc 22): instead of sending every workspace file
+    to the LLM, we seed the repair context from the error paths in the
+    report, then expand it to include each file's local ``@/`` dependencies
+    (bounded to ~12 files).
     """
     from paperforge.config import get_config
     from paperforge.prompts import load_prompt
@@ -418,14 +433,27 @@ async def _apply_repair_patch(
     if not errors:
         return False
 
-    files = collect_files(app_path)
-    relevant_files = []
-    for p, c in files:
+    # Targeted context: seed from error paths, expand local @/ dependencies.
+    seed_paths = extract_error_paths(errors)
+    selected = seed_paths
+    if selected:
         try:
-            policy.normalize(p)
-        except ValueError:
+            selected = expand_repair_context(app_path, seed_paths)
+        except OSError:
+            return False
+    else:
+        # No parseable error paths (e.g. missing toolchain / opaque errors).
+        # Fall back to a broad workspace scan so repair still can proceed.
+        selected = [rel for rel, _ in collect_files(app_path)]
+
+    relevant_files: list[dict[str, str]] = []
+    for rel in selected:
+        try:
+            policy.normalize(rel)
+            content = (app_path / rel).read_text(encoding="utf-8")
+        except (ValueError, OSError, UnicodeDecodeError):
             continue
-        relevant_files.append({"path": p, "content": c})
+        relevant_files.append({"path": rel, "content": content})
     if not relevant_files:
         return False
 
@@ -461,6 +489,56 @@ async def _apply_repair_patch(
         return False
 
     return True
+
+
+def extract_error_paths(errors: list[str]) -> list[str]:
+    """Return unique file paths referenced by TS/type error messages (doc 22.1)."""
+    result: list[str] = []
+    for error in errors:
+        for match in TS_ERROR_RE.finditer(error):
+            path = match.group("path")
+            if path not in result:
+                result.append(path)
+    return result
+
+
+def expand_repair_context(
+    workspace: Path,
+    seed_paths: list[str],
+    *,
+    max_files: int = 12,
+) -> list[str]:
+    """Expand seed error paths to include their local ``@/`` dependencies (doc 22.2)."""
+    from paperforge.agents.generation_v3 import (
+        import_to_paths,
+        parse_local_imports,
+    )
+
+    selected = list(seed_paths)
+
+    cursor = 0
+    while cursor < len(selected) and len(selected) < max_files:
+        path = selected[cursor]
+        cursor += 1
+
+        source_path = workspace / path
+        if not source_path.is_file():
+            continue
+
+        try:
+            source = source_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+
+        for module in parse_local_imports(source):
+            for candidate in import_to_paths(module):
+                if (workspace / candidate).is_file() and candidate not in selected:
+                    selected.append(candidate)
+                    break
+                if len(selected) >= max_files:
+                    break
+
+    return selected[:max_files]
 
 
 async def _exec(
