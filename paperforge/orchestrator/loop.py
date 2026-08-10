@@ -18,6 +18,7 @@ from paperforge.llm.base import LLMClient, Message, ToolCall
 from paperforge.llm.factory import get_llm_client
 from paperforge.orchestrator.approvals import get_approval_registry
 from paperforge.orchestrator.events import EventEmitter, get_event_manager
+from paperforge.orchestrator.stream_writer import StreamWriter
 from paperforge.orchestrator.tools import TOOL_DEFINITIONS, ToolContext, dispatch_tool
 from paperforge.prompts import load_prompt
 from paperforge.schemas.tool_result import ToolResult, ToolStatus
@@ -518,7 +519,6 @@ class Orchestrator:
             return await self.llm.chat(model=model, messages=messages, tools=tools)
 
         message_id = f"msg_{uuid.uuid4().hex[:12]}"
-        content_parts: list[str] = []
         tool_calls: list[ToolCall] = []
         finish_reason: str | None = None
 
@@ -527,6 +527,13 @@ class Orchestrator:
         self.storage.create_streaming_message(run_id, message_id)
         await emit.message_started(message_id)
 
+        writer = StreamWriter(
+            run_id=run_id,
+            message_id=message_id,
+            storage=self.storage,
+            emit=emit,
+        )
+
         try:
             async for chunk in stream_fn(
                 model=model,
@@ -534,10 +541,9 @@ class Orchestrator:
                 tools=tools,
             ):
                 if chunk.content:
-                    content_parts.append(chunk.content)
-                    self.storage.append_message_delta(message_id, chunk.content)
-                    # Emit each text chunk as message.delta with the same message_id.
-                    await emit.message_delta(message_id, chunk.content)
+                    # Coalesce deltas into ~40ms/batched events; durable
+                    # content checkpoints at a slower 250ms cadence.
+                    await writer.push_text(chunk.content)
                 if chunk.tool_calls:
                     tool_calls.extend(chunk.tool_calls)
                 if chunk.finish_reason:
@@ -553,18 +559,8 @@ class Orchestrator:
             await emit.message_failed(message_id, str(e))
             raise
 
-        final_content = "".join(content_parts) if content_parts else ""
-
-        # Emit message.completed to signal the message is done streaming.
-        self.storage.complete_message(
-            message_id,
-            final_content,
-            [
-                {"id": tc.id, "name": tc.name, "args": tc.args}
-                for tc in tool_calls
-            ] or None,
-        )
-        await emit.message_completed(message_id, final_content)
+        # flush remaining buffer, complete the durable message, emit completed.
+        final_content = await writer.finish(tool_calls)
 
         # Build a ChatResponse-like return so the main loop can handle uniformly.
         from paperforge.llm.base import ChatResponse

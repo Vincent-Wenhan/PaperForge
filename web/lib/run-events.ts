@@ -1,5 +1,6 @@
 import type { RunEvent } from "./api";
 import type { PreviewState, Task } from "./contracts";
+import { enqueueMessageDelta, flushMessageDeltas } from "./realtime/stream-buffer";
 import { useAppStore, type Approval, type Event } from "./store";
 
 export type ApplyRunEventResult = "applied" | "duplicate" | "gap" | "unknown";
@@ -45,12 +46,13 @@ export function applyRunEvent(
       return "applied";
     case "message.delta":
       if (data.message_id) {
-        store.appendMessageDelta(data.message_id, data.delta || data.text || "");
+        enqueueMessageDelta(data.message_id, data.delta || data.text || "");
       } else {
         store.appendAssistantDelta(data.text || data.delta || "");
       }
       return "applied";
     case "message.completed":
+      flushMessageDeltas();
       if (data.message_id) {
         store.completeMessage(data.message_id, data.content || "");
       } else {

@@ -454,6 +454,18 @@ class Storage:
                 (delta, public_id),
             )
 
+    def update_streaming_message_content(self, public_id: str, content: str) -> None:
+        """Overwrite a streaming message's content in place (checkpoint)."""
+        with self._lock, self._conn() as conn:
+            conn.execute(
+                """
+                UPDATE messages
+                SET content = ?
+                WHERE public_id = ? AND status = 'streaming'
+                """,
+                (content, public_id),
+            )
+
     def complete_message(
         self,
         public_id: str,
