@@ -5,14 +5,6 @@ import { api } from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 import { useToast } from "@/lib/toast";
 
-const QUICK_ACTIONS: { id: string; label: string; description: string }[] = [
-  { id: "productize", label: "Productize", description: "Productize the attached paper end-to-end." },
-  { id: "alternatives", label: "Alternatives", description: "Generate alternative product candidates from this paper." },
-  { id: "revise", label: "Revise PRD", description: "Revise the PRD based on the latest verification report." },
-  { id: "fix", label: "Fix build", description: "Fix the failing build based on the latest verification report." },
-  { id: "restart", label: "Restart preview", description: "Restart the preview sandbox." },
-];
-
 const SLASH_TEMPLATES: Record<string, string> = {
   productize: "Productize the attached paper end-to-end.",
   alternatives: "Generate alternative product candidates from this paper.",
@@ -67,14 +59,35 @@ export function Composer() {
 
   if (!currentRun) return null;
 
-  const handleSend = async () => {
+  type SendMode = "start" | "queue" | "interrupt";
+
+  const resolvePaperIds = async (): Promise<string[]> => {
+    const ids: string[] = [];
+    for (const attachment of attachments) {
+      if (attachment.type === "paper" && attachment.paperId) {
+        ids.push(attachment.paperId);
+        continue;
+      }
+      if (attachment.file) {
+        if (attachment.file.type !== "application/pdf") {
+          throw new Error("PaperForge currently supports PDF attachments only");
+        }
+        setUploading(true);
+        try {
+          const uploaded = await api.uploadPaper(attachment.file);
+          ids.push(uploaded.paper_id);
+        } finally {
+          setUploading(false);
+        }
+      }
+    }
+    return ids;
+  };
+
+  const submitMessage = async (mode: SendMode) => {
     const raw = input.trim();
     if (!raw || sending || submitLock.current) return;
-
-    // Slash command → expand to a canned template (ponytail: no separate
-    // command dispatch layer; quick actions are the same templates).
     const content = isSlashTemplate(raw) ?? raw;
-
     submitLock.current = true;
     setSending(true);
 
@@ -93,36 +106,8 @@ export function Composer() {
     });
 
     try {
-      const paperIds: string[] = [];
-      for (const attachment of attachments) {
-        if (attachment.type === "paper" && attachment.paperId) {
-          paperIds.push(attachment.paperId);
-          continue;
-        }
-        if (attachment.file) {
-          if (attachment.file.type !== "application/pdf") {
-            throw new Error("PaperForge currently supports PDF attachments only");
-          }
-          setUploading(true);
-          try {
-            const uploaded = await api.uploadPaper(attachment.file);
-            paperIds.push(uploaded.paper_id);
-          } finally {
-            setUploading(false);
-          }
-        }
-      }
-
-      const isRunningState = useAppStore.getState().isRunning;
-      const mode = isRunningState ? "queue" : "start";
-
-      await api.sendMessage(
-        currentRun.id,
-        content,
-        paperIds,
-        optimisticId,
-        mode,
-      );
+      const paperIds = await resolvePaperIds();
+      await api.sendMessage(currentRun.id, content, paperIds, optimisticId, mode);
       clearAttachments();
       setInput("");
       setIsRunning(true);
@@ -150,46 +135,6 @@ export function Composer() {
     }
   };
 
-  // Interrupt + resend: cancel any running task, then start fresh.
-  const handleInterruptSend = async () => {
-    const raw = input.trim();
-    if (!raw || sending || submitLock.current) return;
-    const content = isSlashTemplate(raw) ?? raw;
-    submitLock.current = true;
-    setSending(true);
-
-    try {
-      await api.sendMessage(currentRun.id, content, [], undefined, "interrupt");
-      clearAttachments();
-      setInput("");
-      setIsRunning(true);
-    } catch (error) {
-      toast({
-        title: "Message was not sent",
-        description: error instanceof Error ? error.message : String(error),
-        variant: "error",
-      });
-    } finally {
-      submitLock.current = false;
-      setSending(false);
-    }
-  };
-
-  const handleQuickAction = (kind: string) => {
-    const templates: Record<string, string> = {
-      productize: "Productize the attached paper end-to-end.",
-      alternatives: "Generate alternative product candidates from this paper.",
-      revise: "Revise the PRD based on the latest verification report.",
-      fix: "Fix the failing build based on the latest verification report.",
-      restart: "Restart the preview sandbox.",
-    };
-    const text = templates[kind];
-    if (!text) return;
-    setInput(text);
-    fileInputRef.current?.blur();
-    textareaRef.current?.focus();
-  };
-
   const handleAttach = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -213,7 +158,7 @@ export function Composer() {
     if (sending) return;
 
     e.preventDefault();
-    void handleSend();
+    void submitMessage(useAppStore.getState().isRunning ? "queue" : "start");
   };
 
   return (
@@ -237,18 +182,6 @@ export function Composer() {
           ))}
         </div>
       )}
-      <div className="flex items-center gap-1 mb-1 flex-wrap">
-        {QUICK_ACTIONS.map((action) => (
-          <button
-            key={action.id}
-            onClick={() => handleQuickAction(action.id)}
-            className="text-xs px-2 py-0.5 border border-border rounded hover:bg-accent"
-            title={action.description}
-          >
-            {action.label}
-          </button>
-        ))}
-      </div>
       <div className="flex items-end gap-2">
         <button
           onClick={() => fileInputRef.current?.click()}
@@ -292,7 +225,7 @@ export function Composer() {
               </button>
               {input.trim() && (
                 <button
-                  onClick={handleInterruptSend}
+                  onClick={() => submitMessage("interrupt")}
                   className="px-3 py-2 bg-destructive text-destructive-foreground rounded text-sm"
                   title="Interrupt the current task and send this message"
                 >
@@ -302,7 +235,7 @@ export function Composer() {
             </>
           )}
           <button
-            onClick={handleSend}
+            onClick={() => submitMessage(isRunning ? "queue" : "start")}
             disabled={sending || uploading || !input.trim()}
             className="px-4 py-2 bg-primary text-primary-foreground rounded disabled:opacity-50 text-sm"
           >

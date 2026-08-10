@@ -97,12 +97,17 @@ def reset_run_task_manager() -> None:
 
 class RunQueue:
     """Serializes orchestrator executions per run, so follow-up messages can be
-    queued or interrupt the running task instead of being rejected with 409."""
+    queued or interrupt the running task instead of being rejected with 409.
 
-    def __init__(self) -> None:
+    The DB `tasks` table is the source of truth; this queue is only the
+    in-process executor that drains queued tasks for a run.
+    """
+
+    def __init__(self, storage=None) -> None:
         self._queues: dict[str, asyncio.Queue[tuple[str, Coroutine]]] = {}
         self._workers: dict[str, asyncio.Task] = {}
         self._manager = get_run_task_manager()
+        self._storage = storage
 
     async def enqueue(self, run_id: str, task_id: str, coro: Coroutine) -> None:
         if run_id not in self._queues:
@@ -118,6 +123,11 @@ class RunQueue:
         try:
             while queue is not None and not queue.empty():
                 task_id, coro = await queue.get()
+                # DB task is the source of truth; mark this one running so the
+                # scheduler controls status (doc 15.3), not a separate in-memory flag.
+                storage = self._storage or _default_storage()
+                if storage is not None:
+                    storage.update_task(task_id=task_id, status="running")
                 self._manager.start(run_id, coro)
                 task = self._manager.tasks.get(run_id)
                 try:
@@ -125,7 +135,14 @@ class RunQueue:
                         await asyncio.shield(task)
                 except asyncio.CancelledError:
                     pass
+                except Exception:
+                    logger.exception("Task %s for run %s failed", task_id, run_id)
                 finally:
+                    if storage is not None:
+                        task_row = storage.get_task(task_id)
+                        status = task_row["status"] if task_row else "failed"
+                        if status == "running":
+                            storage.update_task(task_id=task_id, status="completed")
                     queue.task_done()
         finally:
             self._queues.pop(run_id, None)
@@ -136,3 +153,14 @@ class RunQueue:
 
     async def cancel_and_wait(self, run_id: str) -> bool:
         return await self._manager.cancel_and_wait(run_id)
+
+
+def _default_storage():
+    """Lazy import to avoid a circular import at module load."""
+    try:
+        from paperforge.storage.db import get_storage
+
+        return get_storage()
+    except Exception:
+        return None
+

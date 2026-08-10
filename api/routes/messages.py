@@ -70,20 +70,22 @@ async def send_message(run_id: str, req: MessageCreate, request: Request) -> dic
     # new message is just the next task in the same thread. Phase is a UI
     # display concern, not a reset trigger.
 
-    task = storage.create_task(
-        run_id=run_id,
-        title=req.content.strip()[:120] or "Productization task",
-        goal=req.content,
-        status="queued",
-        phase=storage.get_run_phase(run_id),
-    )
-
     # API layer owns user message persistence; orchestrator must not duplicate it.
     message = storage.add_message(
         run_id=run_id,
         role="user",
         content=req.content,
         public_id=req.public_id,
+    )
+
+    task = storage.create_task(
+        run_id=run_id,
+        title=req.content.strip()[:120] or "Productization task",
+        goal=req.content,
+        status="queued",
+        phase=storage.get_run_phase(run_id),
+        priority=100 if req.mode == "interrupt" else 0,
+        user_message_id=message["id"],
     )
 
     # Auto-generate run title from the first user message (doc 6.5).

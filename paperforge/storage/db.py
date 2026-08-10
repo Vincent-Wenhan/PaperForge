@@ -234,6 +234,8 @@ class Storage:
             self._ensure_column(conn, "tasks", "lease_owner", "TEXT")
             self._ensure_column(conn, "tasks", "lease_until", "TIMESTAMP")
             self._ensure_column(conn, "tasks", "attempt", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(conn, "tasks", "priority", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(conn, "tasks", "user_message_id", "INTEGER")
             conn.execute(
                 "UPDATE sandboxes SET preview_status = 'starting' "
                 "WHERE preview_status = 'idle' AND status IN ('pending', 'starting', 'running')"
@@ -626,14 +628,16 @@ class Storage:
         goal: str | None = None,
         status: str = "queued",
         phase: str = "init",
+        priority: int = 0,
+        user_message_id: int | None = None,
     ) -> dict[str, Any]:
         now = datetime.utcnow().isoformat()
         task_id = f"task_{uuid.uuid4().hex}"
         with self._lock, self._conn() as conn:
             conn.execute(
-                """INSERT INTO tasks (id, run_id, title, goal, status, phase, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                (task_id, run_id, title, goal, status, phase, now, now),
+                """INSERT INTO tasks (id, run_id, title, goal, status, phase, priority, user_message_id, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (task_id, run_id, title, goal, status, phase, priority, user_message_id, now, now),
             )
         return {
             "id": task_id,
@@ -642,9 +646,24 @@ class Storage:
             "goal": goal,
             "status": status,
             "phase": phase,
+            "priority": priority,
+            "user_message_id": user_message_id,
             "created_at": now,
             "updated_at": now,
         }
+
+    def get_next_queued_task(self, run_id: str) -> dict[str, Any] | None:
+        """Return the highest-priority queued task (ties → oldest) without
+        marking it running. Used by the RunTaskScheduler executor."""
+        with self._conn() as conn:
+            row = conn.execute(
+                """SELECT * FROM tasks
+                   WHERE run_id = ? AND status = 'queued'
+                   ORDER BY priority DESC, created_at ASC
+                   LIMIT 1""",
+                (run_id,),
+            ).fetchone()
+            return dict(row) if row else None
 
     def get_task(self, task_id: str) -> dict[str, Any] | None:
         with self._conn() as conn:
@@ -668,6 +687,7 @@ class Storage:
         status: str | None = None,
         phase: str | None = None,
         goal: str | None = None,
+        priority: int | None = None,
     ) -> dict[str, Any] | None:
         sets: list[str] = []
         params: list[Any] = []
@@ -683,6 +703,9 @@ class Storage:
         if goal is not None:
             sets.append("goal = ?")
             params.append(goal)
+        if priority is not None:
+            sets.append("priority = ?")
+            params.append(priority)
         if not sets:
             return self.get_task(task_id)
         sets.append("updated_at = ?")
