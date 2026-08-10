@@ -105,12 +105,11 @@ async def test_orchestrator_phase_persists_across_runs(storage):
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_phase_gate_rejects_invalid_tool(storage):
-    """Phase gate should reject tools not allowed in the current phase.
+async def test_orchestrator_resource_gate_rejects_missing_prereq(storage):
+    """Resource gate should reject tools whose prerequisites are missing.
 
-    Verifies the phase gate: in INIT phase, only parse_paper/finish are
-    allowed. A generate_nextjs_app call should be rejected with a clear
-    error message.
+    Phase no longer decides tool permission (doc 14); the resource gate is the
+    sole authority. A generate_nextjs_app call without a PRD is rejected.
     """
     storage.create_run("run_gate", "Phase Gate Test")
     storage.add_message(run_id="run_gate", role="user", content="Generate something")
@@ -140,13 +139,14 @@ async def test_orchestrator_phase_gate_rejects_invalid_tool(storage):
     orc = Orchestrator(llm=GateLLM(), storage=storage)
     await orc.run(run_id="run_gate", user_message="Generate")
 
-    # The tool should have been rejected by phase gate
+    # The tool should have been rejected by the resource gate (no PRD)
     messages = storage.list_messages("run_gate")
     tool_messages = [m for m in messages if m["role"] == "tool"]
     assert len(tool_messages) > 0
     result = json.loads(tool_messages[0]["content"])
     assert result["ok"] is False
-    assert "not allowed in phase" in result["error"]
+    assert result["code"] in ("resource_prerequisite", "tool_exception")
+    assert "Missing required resources" in result["error"]
 
 
 @pytest.mark.asyncio

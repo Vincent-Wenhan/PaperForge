@@ -422,11 +422,12 @@ class Orchestrator:
         run_id: str,
     ) -> str:
         """Execute a single tool call, applying resource gate and HITL approval."""
-        # Resource gate: reject tools whose prerequisites aren't present, so
-        # permission reflects real resources (doc 11) not an arbitrary phase.
+        # Resource gate is the sole tool-prerequisite authority. Phase no longer
+        # decides which tools are allowed (doc 14): a completed run can keep
+        # editing its workspace. Phase only drives the UI's displayed step.
         workspace_state = load_workspace_state(self.storage, run_id)
         allowed, missing = check_tool_prerequisites(call.name, workspace_state)
-        if call.name in ALLOWED_TOOLS.get(self.phase, set()) and not allowed:
+        if not allowed:
             return ToolResult(
                 tool=call.name,
                 status=ToolStatus.BLOCKED,
@@ -435,19 +436,6 @@ class Orchestrator:
                 data={
                     "missing": missing,
                     "available": sorted(available_resources(workspace_state)),
-                },
-                retryable=True,
-            ).model_dump_json()
-
-        if call.name not in ALLOWED_TOOLS.get(self.phase, set()):
-            return ToolResult(
-                tool=call.name,
-                status=ToolStatus.BLOCKED,
-                error=f"Tool '{call.name}' is not allowed in phase '{self.phase.value}'.",
-                code="phase_prerequisite",
-                data={
-                    "allowed_tools": sorted(ALLOWED_TOOLS.get(self.phase, set())),
-                    "current_phase": self.phase.value,
                 },
                 retryable=True,
             ).model_dump_json()

@@ -30,6 +30,7 @@ ToolRisk = Literal["read", "workspace_write", "sandbox_exec", "network", "destru
 class ToolSpec:
     name: str
     requires: frozenset[str] = field(default_factory=frozenset)
+    requires_any: tuple[frozenset[str], ...] = ()
     produces: frozenset[str] = field(default_factory=frozenset)
     risk: ToolRisk = "read"
 
@@ -49,7 +50,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
     ),
     "plan_product": ToolSpec(
         name="plan_product",
-        requires=frozenset({"capability_card"}),
+        requires_any=(frozenset({"capability_card"}), frozenset({"composition"})),
         produces=frozenset({"prd"}),
         risk="read",
     ),
@@ -166,5 +167,15 @@ def check_tool_prerequisites(
     if spec is None:
         # Unknown tools aren't gated by resources (read-only default).
         return True, []
-    missing = sorted(spec.requires - available_resources(state))
-    return len(missing) == 0, missing
+    available = available_resources(state)
+
+    missing = sorted(spec.requires - available)
+    if missing:
+        return False, missing
+
+    if spec.requires_any:
+        if not any(group <= available for group in spec.requires_any):
+            description = [" OR ".join(sorted(group)) for group in spec.requires_any]
+            return False, ["one of: " + " | ".join(description)]
+
+    return True, []

@@ -135,3 +135,16 @@ def test_workspace_edit_is_not_blocked_by_resource_gate(storage, workspace_artif
 def test_completed_generation_has_workspace_resource(storage, workspace_artifact):
     state = load_workspace_state(storage, workspace_artifact.run_id)
     assert "workspace" in available_resources(state)
+
+
+def test_done_phase_does_not_block_workspace_edit(storage, workspace_artifact):
+    """DONE phase must not gate workspace tools; resource gate is authoritative."""
+    from paperforge.orchestrator.loop import Orchestrator, RunPhase
+
+    orc = Orchestrator(llm=FakeLLM(), storage=storage)
+    orc.phase = RunPhase.DONE
+    state = load_workspace_state(storage, workspace_artifact.run_id)
+    allowed, missing = check_tool_prerequisites("inspect_workspace", state)
+    assert allowed
+    assert missing == []
+    assert orc.phase == RunPhase.DONE

@@ -66,11 +66,9 @@ async def send_message(run_id: str, req: MessageCreate, request: Request) -> dic
     if req.mode == "interrupt":
         await _run_queue.cancel_and_wait(run_id)
 
-    # A completed/cancelled run can start a fresh productization task. Reset the
-    # aggregate phase before the new task is scheduled.
-    if run["status"] in {"done", "cancelled", "error"} or run.get("phase") == "done":
-        storage.update_run_phase(run_id, "init")
-        storage.update_run_status(run_id, "active")
+    # Run = persistent thread (doc 13). A completed run keeps its workspace; the
+    # new message is just the next task in the same thread. Phase is a UI
+    # display concern, not a reset trigger.
 
     task = storage.create_task(
         run_id=run_id,
