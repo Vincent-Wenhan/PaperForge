@@ -65,8 +65,17 @@ class BuildRunner:
             return result
 
         if self.mode == "docker":
-            return await self._run_in_docker(app_path, result, install_timeout, build_timeout)
-        return await self._run_local(app_path, result, install_timeout, build_timeout)
+            result = await self._run_in_docker(app_path, result, install_timeout, build_timeout)
+        else:
+            result = await self._run_local(app_path, result, install_timeout, build_timeout)
+
+        try:
+            from paperforge.observability.metrics import get_metrics
+
+            get_metrics().increment("build_total")
+        except Exception:
+            pass
+        return result
 
     async def _run_local(
         self,

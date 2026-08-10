@@ -9,6 +9,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import time
 import uuid
 from enum import Enum
 from typing import Any
@@ -16,6 +17,7 @@ from typing import Any
 from paperforge.config import get_config
 from paperforge.llm.base import LLMClient, Message, ToolCall
 from paperforge.llm.factory import get_llm_client
+from paperforge.observability.metrics import get_metrics
 from paperforge.orchestrator.approvals import get_approval_registry
 from paperforge.orchestrator.events import EventEmitter, get_event_manager
 from paperforge.orchestrator.stream_writer import StreamWriter
@@ -569,6 +571,10 @@ class Orchestrator:
             emit=emit,
         )
 
+        metrics = get_metrics()
+        provider_started = time.monotonic()
+        provider_first_delta: float | None = None
+
         try:
             async for chunk in stream_fn(
                 model=model,
@@ -576,6 +582,12 @@ class Orchestrator:
                 tools=tools,
             ):
                 if chunk.content:
+                    if provider_first_delta is None:
+                        provider_first_delta = time.monotonic()
+                        metrics.record_duration(
+                            "provider_ttft_ms",
+                            provider_first_delta - provider_started,
+                        )
                     # Coalesce deltas into ~40ms/batched events; durable
                     # content checkpoints at a slower 250ms cadence.
                     await writer.push_text(chunk.content)

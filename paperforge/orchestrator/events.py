@@ -228,6 +228,7 @@ class EventManager:
                 from paperforge.storage.db import get_storage
 
                 storage = get_storage()
+            persist_start = time.monotonic()
             row = await asyncio.to_thread(
                 storage.append_run_event,
                 run_id=rid,
@@ -237,6 +238,15 @@ class EventManager:
                 task_id=event.task_id,
             )
             event.seq = row["seq"]
+            try:
+                from paperforge.observability.metrics import get_metrics
+
+                get_metrics().record_duration(
+                    "event_persist_ms",
+                    time.monotonic() - persist_start,
+                )
+            except Exception:
+                pass
         except Exception:
             # If persistence fails, fall back to in-memory seq so the
             # show can go on, but flag the event as not durable.
@@ -253,6 +263,12 @@ class EventManager:
             except asyncio.QueueFull:
                 # Insert an explicit gap marker so the client knows to
                 # rehydrate from the database.
+                try:
+                    from paperforge.observability.metrics import get_metrics
+
+                    get_metrics().increment("stream_gap_total")
+                except Exception:
+                    pass
                 gap = Event(
                     type="stream.gap",
                     data={"resume_after": event.seq - 1},

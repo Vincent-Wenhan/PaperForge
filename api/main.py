@@ -109,6 +109,12 @@ def create_app() -> FastAPI:
     async def health():
         return {"status": "ok", "version": "0.1.0"}
 
+    @app.get("/api/metrics")
+    async def metrics():
+        from paperforge.observability.metrics import get_metrics
+
+        return get_metrics().snapshot()
+
     return app
 
 
