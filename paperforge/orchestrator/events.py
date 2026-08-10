@@ -11,7 +11,7 @@ import contextlib
 import time
 import uuid
 from collections import defaultdict
-from typing import Any
+from typing import Any, Protocol
 
 from paperforge.llm.base import ToolCall
 
@@ -284,6 +284,47 @@ class EventManager:
 
     def has_subscribers(self, run_id: str) -> bool:
         return bool(self._subscribers.get(run_id))
+
+
+class EventStore(Protocol):
+    """Durable event persistence (doc 21.1)."""
+
+    def append(self, event: Event) -> Event:
+        ...
+
+    def list_after(self, run_id: str, seq: int) -> list[Event]:
+        ...
+
+
+class EventBroker(Protocol):
+    """In-memory fan-out of events to subscribers (doc 21.1)."""
+
+    async def publish(self, event: Event) -> None:
+        ...
+
+    def subscribe(self, run_id: str) -> asyncio.Queue[Event]:
+        ...
+
+
+class InProcessEventBroker(EventBroker):
+    """Single-process broker. Redis/Postgres impls can be added later if needed."""
+
+    def __init__(self) -> None:
+        self._subscribers: dict[str, list[asyncio.Queue[Event]]] = defaultdict(list)
+
+    async def publish(self, event: Event) -> None:
+        for queue in self._subscribers[event.run_id or ""]:
+            with contextlib.suppress(asyncio.QueueFull):
+                queue.put_nowait(event)
+
+    def subscribe(self, run_id: str) -> asyncio.Queue[Event]:
+        queue: asyncio.Queue[Event] = asyncio.Queue(maxsize=1000)
+        self._subscribers[run_id].append(queue)
+        return queue
+
+    def unsubscribe(self, run_id: str, queue: asyncio.Queue[Event]) -> None:
+        if queue in self._subscribers.get(run_id, []):
+            self._subscribers[run_id].remove(queue)
 
 
 _event_manager: EventManager | None = None

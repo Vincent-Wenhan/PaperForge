@@ -16,6 +16,7 @@ from paperforge.llm.base import (
     Chunk,
     LLMClient,
     Message,
+    ProviderStreamEvent,
     ToolCall,
     ToolDefinition,
 )
@@ -165,3 +166,18 @@ class ScriptedLLMClient(LLMClient):
         if resp.content:
             yield Chunk(content=resp.content)
         yield Chunk(finish_reason="stop")
+
+    async def stream_events(self, model, messages, tools=None) -> AsyncIterator[ProviderStreamEvent]:
+        resp = await self.chat(model, messages, tools)
+        if resp.content:
+            for chunk in resp.content.split(" "):
+                if chunk:
+                    yield ProviderStreamEvent(kind="text_delta", text=chunk + " ")
+        for tc in resp.tool_calls:
+            yield ProviderStreamEvent(
+                kind="tool_done",
+                tool_call_id=tc.id,
+                tool_name=tc.name,
+                arguments=tc.args,
+            )
+        yield ProviderStreamEvent(kind="done", finish_reason=resp.finish_reason or "stop")

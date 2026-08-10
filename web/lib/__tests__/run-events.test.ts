@@ -1,5 +1,6 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
+import { flushMessageDeltas } from "../realtime/stream-buffer";
 import { applyRunEvent } from "../run-events";
 import { useAppStore } from "../store";
 
@@ -28,6 +29,7 @@ describe("run event reducer", () => {
   it("applies ordered events once and advances the cursor", () => {
     expect(
       applyRunEvent({
+        version: 1,
         id: "evt_1",
         seq: 1,
         run_id: "run_1",
@@ -36,9 +38,12 @@ describe("run event reducer", () => {
         payload: { message_id: "msg_1", delta: "Hello" },
       }),
     ).toBe("applied");
+    // Deltas are batched per-frame; flush so the test observes the application.
+    flushMessageDeltas();
 
     expect(
       applyRunEvent({
+        version: 1,
         id: "evt_1",
         seq: 1,
         run_id: "run_1",
@@ -55,6 +60,7 @@ describe("run event reducer", () => {
   it("requests hydration when an event cursor has a gap", () => {
     useAppStore.getState().setLastSeq(2);
     const result = applyRunEvent({
+      version: 1,
       id: "evt_4",
       seq: 4,
       run_id: "run_1",

@@ -25,16 +25,17 @@ def _last_event_id(request: Request) -> int:
 
 def _encode_sse(row: dict) -> str:
     envelope = {
+        "version": 1,
         "id": row["id"],
         "seq": row["seq"],
         "run_id": row["run_id"],
+        "task_id": row.get("task_id"),
         "type": row["type"],
         "ts": row.get("created_at"),
         "payload": row.get("data") or {},
     }
     return (
         f"id: {row['seq']}\n"
-        f"event: {row['type']}\n"
         f"data: {json.dumps(envelope, ensure_ascii=False)}\n\n"
     )
 
@@ -75,11 +76,13 @@ async def stream_events(
     event_manager = get_event_manager()
     queue = event_manager.register(run_id)
 
-    # A browser reconnect may provide a newer Last-Event-ID than the original
-    # query string. Always resume from the furthest durable cursor.
-    cursor = max(after_seq or 0, _last_event_id(request))
-
     async def event_stream() -> AsyncIterator[str]:
+        # A browser reconnect may provide a newer Last-Event-ID than the
+        # original query string. Always resume from the furthest durable cursor.
+        # This is computed inside the generator so a reconnect (new request)
+        # always starts a fresh local `cursor`; defining it outside the closure
+        # against a nested-function escape would shadow and raise UnboundLocal.
+        cursor = max(after_seq or 0, _last_event_id(request))
         try:
             # 1) Snapshot the DB upper bound BEFORE consuming the live
             #    queue. This prevents a race where an event is persisted
@@ -126,6 +129,7 @@ async def stream_events(
                     "type": event.type,
                     "data": event.data,
                     "created_at": event.ts,
+                    "task_id": event.task_id,
                 }
                 yield _encode_sse(row)
         finally:

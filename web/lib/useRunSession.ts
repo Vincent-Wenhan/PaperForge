@@ -5,29 +5,6 @@ import { ApiError, api, SSEClient } from "./api";
 import { applyRunEvent } from "./run-events";
 import { useAppStore } from "./store";
 
-const EVENT_TYPES = [
-  "message.started",
-  "message.delta",
-  "message.completed",
-  "message.failed",
-  "tool.call",
-  "tool.result",
-  "run.started",
-  "run.finished",
-  "run.error",
-  "run.status.changed",
-  "run.updated",
-  "task.phase.changed",
-  "approval.requested",
-  "approval.resolved",
-  "artifact.created",
-  "artifact.updated",
-  "sandbox.started",
-  "sandbox.error",
-  "preview.ready",
-  "stream.gap",
-];
-
 export function useRunSession(runId: string | null | undefined) {
   const [loading, setLoading] = useState(Boolean(runId));
   const [error, setError] = useState<ApiError | null>(null);
@@ -75,22 +52,22 @@ export function useRunSession(runId: string | null | undefined) {
       try {
         const cursor = await hydrate();
         if (!active) return;
-        for (const eventType of EVENT_TYPES) {
-          sse.on(eventType, (_payload, event) => {
-            const result = applyRunEvent(event, runId);
-            if (result === "gap" || result === "unknown") {
-              void hydrate().catch((err) => {
-                if (active) {
-                  const apiError = err instanceof ApiError
-                    ? err
-                    : new ApiError(0, err instanceof Error ? err.message : String(err));
-                  setError(apiError);
-                  useAppStore.getState().setSessionError(apiError.message);
-                }
-              });
-            }
-          });
-        }
+        // Single onmessage: semantic type rides in the JSON envelope.
+        sse.onMessage((event) => {
+          const result = applyRunEvent(event, runId);
+          // Only a real seq gap rehydrates; unknown types are ignored (doc 14.4).
+          if (result === "gap") {
+            void hydrate().catch((err) => {
+              if (active) {
+                const apiError = err instanceof ApiError
+                  ? err
+                  : new ApiError(0, err instanceof Error ? err.message : String(err));
+                setError(apiError);
+                useAppStore.getState().setSessionError(apiError.message);
+              }
+            });
+          }
+        });
         sse.connect(runId, cursor);
       } catch (err) {
         if (!active) return;

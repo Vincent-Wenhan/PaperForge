@@ -370,9 +370,11 @@ export const api = {
 };
 
 export interface RunEvent<T = unknown> {
+  version: 1;
   id: string;
   seq: number;
   run_id: string;
+  task_id?: string | null;
   type: string;
   ts: number | string;
   payload: T;
@@ -380,7 +382,7 @@ export interface RunEvent<T = unknown> {
 
 export class SSEClient {
   private es: EventSource | null = null;
-  private handlers: Record<string, (payload: any, event: RunEvent) => void> = {};
+  private handler: ((event: RunEvent) => void) | null = null;
   private seenSeqs = new Set<number>();
 
   connect(runId: string, afterSeq = 0) {
@@ -397,22 +399,9 @@ export class SSEClient {
       console.warn("[SSE] error; browser will auto-reconnect");
     };
 
-    // Re-attach all previously-registered handlers to the new EventSource.
-    for (const type of Object.keys(this.handlers)) {
-      this._attach(type, this.handlers[type]);
-    }
-  }
-
-  on<T = any>(eventType: string, handler: (payload: T, event: RunEvent<T>) => void) {
-    this.handlers[eventType] = handler as any;
-    if (this.es) {
-      this._attach(eventType, handler as any);
-    }
-  }
-
-  private _attach(eventType: string, handler: (payload: any, event: RunEvent) => void) {
-    if (!this.es) return;
-    this.es.addEventListener(eventType, (e: MessageEvent) => {
+    // Single onmessage: the semantic type lives in the JSON envelope, so we
+    // no longer need named `event:` blocks or per-type subscriptions (doc 14.3).
+    this.es.onmessage = (e: MessageEvent) => {
       try {
         const event = JSON.parse(e.data) as RunEvent;
         if (this.seenSeqs.has(event.seq)) {
@@ -424,11 +413,15 @@ export class SSEClient {
           const arr = Array.from(this.seenSeqs).sort((a, b) => a - b);
           for (let i = 0; i < 250; i++) this.seenSeqs.delete(arr[i]);
         }
-        handler(event.payload, event);
+        this.handler?.(event);
       } catch (err) {
         console.error("[SSE] parse error:", err);
       }
-    });
+    };
+  }
+
+  onMessage(handler: (event: RunEvent) => void) {
+    this.handler = handler;
   }
 
   disconnect() {

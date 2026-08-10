@@ -21,6 +21,7 @@ from paperforge.llm.base import (
     Chunk,
     LLMClient,
     Message,
+    ProviderStreamEvent,
     ToolCall,
     ToolDefinition,
 )
@@ -199,3 +200,62 @@ class OpenAIProvider(LLMClient):
                         args = {}
                     tool_calls.append(ToolCall(id=tc["id"], name=tc["name"], args=args))
                 yield Chunk(tool_calls=tool_calls, finish_reason=finish)
+
+    async def stream_events(
+        self,
+        model: str,
+        messages: list[Message],
+        tools: list[ToolDefinition] | None = None,
+    ) -> AsyncIterator[ProviderStreamEvent]:
+        """Translate the OpenAI wire format into ProviderStreamEvent."""
+        kwargs: dict[str, Any] = {
+            "model": model or self.default_model,
+            "messages": self._to_openai_messages(messages),
+            "temperature": 0.7,
+            "stream": True,
+        }
+        if tools:
+            kwargs["tools"] = self._to_openai_tools(tools)
+
+        tool_acc: dict[int, dict[str, str]] = {}
+
+        async for event in await self.client.chat.completions.create(**kwargs):
+            if not event.choices:
+                continue
+            choice = event.choices[0]
+            delta = choice.delta
+
+            if hasattr(delta, "content") and delta.content:
+                yield ProviderStreamEvent(kind="text_delta", text=delta.content)
+
+            if hasattr(delta, "tool_calls") and delta.tool_calls:
+                for tc in delta.tool_calls:
+                    idx = tc.index if tc.index is not None else 0
+                    if idx not in tool_acc:
+                        tool_acc[idx] = {"id": "", "name": "", "arguments": ""}
+                    if tc.id:
+                        tool_acc[idx]["id"] = tc.id
+                    if tc.function and tc.function.name:
+                        tool_acc[idx]["name"] = tc.function.name
+                    if tc.function and tc.function.arguments:
+                        tool_acc[idx]["arguments"] += tc.function.arguments
+                        yield ProviderStreamEvent(
+                            kind="tool_args_delta",
+                            tool_call_id=tool_acc[idx]["id"] or f"tc_{idx}",
+                            arguments_delta=tc.function.arguments,
+                        )
+
+            if choice.finish_reason:
+                for idx in sorted(tool_acc.keys()):
+                    tc = tool_acc[idx]
+                    try:
+                        args = json.loads(tc["arguments"]) if tc["arguments"] else {}
+                    except (json.JSONDecodeError, ValueError):
+                        args = {}
+                    yield ProviderStreamEvent(
+                        kind="tool_done",
+                        tool_call_id=tc["id"] or f"tc_{idx}",
+                        tool_name=tc["name"],
+                        arguments=args,
+                    )
+                yield ProviderStreamEvent(kind="done", finish_reason=choice.finish_reason)

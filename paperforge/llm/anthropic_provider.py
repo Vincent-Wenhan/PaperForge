@@ -16,6 +16,7 @@ from paperforge.llm.base import (
     Chunk,
     LLMClient,
     Message,
+    ProviderStreamEvent,
     ToolCall,
     ToolDefinition,
 )
@@ -129,6 +130,22 @@ class AnthropicProvider(LLMClient):
         temperature: float = 0.7,
         max_tokens: int | None = None,
     ) -> AsyncIterator[Chunk]:
+        # P0: with tools present, use chat() so tool_use is never dropped by stream.text_stream.
+        if tools:
+            response = await self.chat(
+                model=model,
+                messages=messages,
+                tools=tools,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            if response.content:
+                yield Chunk(content=response.content)
+            if response.tool_calls:
+                yield Chunk(tool_calls=response.tool_calls)
+            yield Chunk(finish_reason=response.finish_reason or "stop")
+            return
+
         system, msgs = self._split_messages(messages)
         kwargs: dict[str, Any] = {
             "model": model or self.default_model,
@@ -137,10 +154,65 @@ class AnthropicProvider(LLMClient):
             "temperature": temperature,
             "max_tokens": max_tokens or 4096,
         }
-        if tools:
-            kwargs["tools"] = self._to_anthropic_tools(tools)
 
         async with self.client.messages.stream(**kwargs) as stream:
             async for text in stream.text_stream:
                 yield Chunk(content=text)
         yield Chunk(finish_reason="stop")
+
+    async def stream_events(
+        self,
+        model: str,
+        messages: list[Message],
+        tools: list[ToolDefinition] | None = None,
+    ) -> AsyncIterator[ProviderStreamEvent]:
+        """Translate the Anthropic wire format into ProviderStreamEvent."""
+        system, msgs = self._split_messages(messages)
+        kwargs: dict[str, Any] = {
+            "model": model or self.default_model,
+            "system": system,
+            "messages": msgs,
+            "temperature": 0.7,
+            "max_tokens": 4096,
+        }
+        if tools:
+            kwargs["tools"] = self._to_anthropic_tools(tools)
+
+        async with self.client.messages.stream(**kwargs) as stream:
+            async for event in stream:
+                if event.type == "content_block_start":
+                    block = event.content_block
+                    if block and block.type == "tool_use":
+                        yield ProviderStreamEvent(
+                            kind="tool_start",
+                            tool_call_id=block.id,
+                            tool_name=block.name,
+                        )
+                elif event.type == "content_block_delta":
+                    delta = event.delta
+                    if delta.type == "text_delta" and delta.text:
+                        yield ProviderStreamEvent(kind="text_delta", text=delta.text)
+                    elif delta.type == "input_json_delta" and delta.partial_json:
+                        yield ProviderStreamEvent(
+                            kind="tool_args_delta",
+                            arguments_delta=delta.partial_json,
+                        )
+                elif event.type == "message_delta":
+                    if event.usage and event.usage.output_tokens:
+                        yield ProviderStreamEvent(
+                            kind="usage",
+                            output_tokens=event.usage.output_tokens,
+                        )
+            final = await stream.get_final_message()
+            for block in final.content:
+                if block.type == "tool_use":
+                    yield ProviderStreamEvent(
+                        kind="tool_done",
+                        tool_call_id=block.id,
+                        tool_name=block.name,
+                        arguments=block.input or {},
+                    )
+            yield ProviderStreamEvent(
+                kind="done",
+                finish_reason=final.stop_reason or "stop",
+            )

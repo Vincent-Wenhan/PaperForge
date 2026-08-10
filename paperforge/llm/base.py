@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, runtime_checkable
 
 
 class ToolCall:
@@ -94,6 +94,58 @@ class Chunk:
         self.finish_reason = finish_reason
 
 
+ProviderEventKind = Literal[
+    "text_delta",
+    "tool_start",
+    "tool_args_delta",
+    "tool_done",
+    "usage",
+    "done",
+]
+
+
+class ProviderStreamEvent:
+    """Provider-neutral streaming event (doc 7.3).
+
+    Providers translate their native wire format into one of these kinds so
+    the orchestrator never depends on an SDK's event shape.
+    """
+
+    __slots__ = (
+        "kind",
+        "text",
+        "tool_call_id",
+        "tool_name",
+        "arguments_delta",
+        "arguments",
+        "finish_reason",
+        "input_tokens",
+        "output_tokens",
+    )
+
+    def __init__(
+        self,
+        kind: ProviderEventKind,
+        text: str | None = None,
+        tool_call_id: str | None = None,
+        tool_name: str | None = None,
+        arguments_delta: str | None = None,
+        arguments: dict[str, Any] | None = None,
+        finish_reason: str | None = None,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+    ) -> None:
+        self.kind = kind
+        self.text = text
+        self.tool_call_id = tool_call_id
+        self.tool_name = tool_name
+        self.arguments_delta = arguments_delta
+        self.arguments = arguments
+        self.finish_reason = finish_reason
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
+
+
 @runtime_checkable
 class LLMClient(Protocol):
     """Async LLM client protocol."""
@@ -117,4 +169,12 @@ class LLMClient(Protocol):
         temperature: float = 0.7,
         max_tokens: int | None = None,
     ) -> AsyncIterator[Chunk]:
+        ...
+
+    async def stream_events(
+        self,
+        model: str,
+        messages: list[Message],
+        tools: list[ToolDefinition] | None = None,
+    ) -> AsyncIterator[ProviderStreamEvent]:
         ...

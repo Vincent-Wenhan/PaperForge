@@ -13,7 +13,7 @@ vi.mock("../api", () => ({
   SSEClient: class {
     connect = vi.fn();
     disconnect = vi.fn();
-    on = vi.fn();
+    onMessage = vi.fn();
     constructor() {
       instances.push(this);
     }
