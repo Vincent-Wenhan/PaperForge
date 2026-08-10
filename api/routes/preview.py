@@ -8,7 +8,8 @@ import contextlib
 import httpx
 import websockets
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
+from starlette.background import BackgroundTask
 
 from paperforge.storage.db import get_storage
 
@@ -75,14 +76,18 @@ async def preview_status(run_id: str) -> dict:
     methods=FORWARDED_METHODS,
 )
 async def proxy_preview(sandbox_id: str, path: str, request: Request) -> Response:
-    """Proxy a request to the sandbox's Next.js dev server."""
+    """Proxy a request to the sandbox's Next.js dev server (doc 18.3).
+
+    Uses the shared lifespan AsyncClient and streams the upstream response
+    so large payloads / SSE are not fully buffered server-side.
+    """
     sandbox, port = _sandbox_target(sandbox_id)
 
-    target_url = f"http://localhost:{port}/{path}"
+    target_url = f"http://127.0.0.1:{port}/{path}"
     if request.url.query:
         target_url += f"?{request.url.query}"
 
-    body = await request.body()
+    client: httpx.AsyncClient = request.app.state.preview_http
     headers = {
         k: v
         for k, v in request.headers.items()
@@ -90,13 +95,13 @@ async def proxy_preview(sandbox_id: str, path: str, request: Request) -> Respons
     }
 
     try:
-        async with httpx.AsyncClient(follow_redirects=False, timeout=30.0) as client:
-            resp = await client.request(
-                request.method,
-                target_url,
-                headers=headers,
-                content=body or None,
-            )
+        upstream_request = client.build_request(
+            method=request.method,
+            url=target_url,
+            headers=headers,
+            content=(await request.body()) or None,
+        )
+        upstream = await client.send(upstream_request, stream=True)
     except httpx.ConnectError:
         raise HTTPException(status_code=502, detail="Sandbox dev server not reachable") from None
     except httpx.TimeoutException:
@@ -104,14 +109,15 @@ async def proxy_preview(sandbox_id: str, path: str, request: Request) -> Respons
 
     resp_headers = {
         k: v
-        for k, v in resp.headers.items()
+        for k, v in upstream.headers.items()
         if k.lower() not in ("content-length", "transfer-encoding", "connection")
     }
 
-    return Response(
-        content=resp.content,
-        status_code=resp.status_code,
+    return StreamingResponse(
+        upstream.aiter_raw(),
+        status_code=upstream.status_code,
         headers=resp_headers,
+        background=BackgroundTask(upstream.aclose),
     )
 
 

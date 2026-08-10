@@ -227,6 +227,16 @@ export function applyRunEvent(
       return "applied";
     case "stream.gap":
       return "gap";
+    case "sandbox.log.delta":
+      if (data.text) {
+        store.appendSandboxLog({
+          sandbox_id: data.sandbox_id,
+          offset: data.offset || 0,
+          stream: data.stream || "stdout",
+          text: data.text,
+        });
+      }
+      return "applied";
     default:
       return "unknown";
   }

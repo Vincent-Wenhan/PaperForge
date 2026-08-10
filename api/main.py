@@ -21,8 +21,22 @@ async def lifespan(app: FastAPI):
     cfg = get_config()
     init_db()
     app.state.config = cfg
-    app.state.storage = get_storage()
+    storage = get_storage()
+    app.state.storage = storage
     app.state.event_manager = get_event_manager()
+
+    # Requeue tasks whose leases expired while the process was down, so the
+    # UI doesn't stay stuck on "running" with no worker (doc 21.2).
+    storage.reconcile_stale_tasks()
+
+    # Shared preview proxy client (doc 18.2): one keepalive pool across
+    # all sandbox requests instead of a fresh AsyncClient per request.
+    import httpx
+    app.state.preview_http = httpx.AsyncClient(
+        timeout=httpx.Timeout(30),
+        follow_redirects=False,
+        limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
+    )
 
     # Start sandbox monitor
     if docker_available():
@@ -37,6 +51,7 @@ async def lifespan(app: FastAPI):
     yield
 
     # Cleanup
+    await app.state.preview_http.aclose()
     await stop_monitor()
     if hasattr(app.state, "sandbox_manager") and app.state.sandbox_manager:
         await app.state.sandbox_manager.shutdown_all()

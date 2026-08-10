@@ -96,6 +96,13 @@ export interface AgentStep {
   percent?: number;
 }
 
+export interface SandboxLog {
+  sandbox_id?: string;
+  offset: number;
+  stream: "stdout" | "stderr";
+  text: string;
+}
+
 export interface Attachment {
   id: string;
   type: "file" | "paper";
@@ -109,6 +116,7 @@ interface AppState {
   messages: Message[];
   events: Event[];
   steps: AgentStep[];
+  sandboxLogs: SandboxLog[];
   sandbox: Sandbox | null;
   tasks: Task[];
   preview: PreviewState | null;
@@ -146,6 +154,8 @@ interface AppState {
   addEvent: (event: Event) => void;
   upsertStep: (step: AgentStep) => void;
   setSteps: (steps: AgentStep[]) => void;
+  appendSandboxLog: (log: SandboxLog) => void;
+  clearSandboxLogs: () => void;
   addPendingApproval: (approval: Approval) => void;
   resolvePendingApproval: (approvalId: string, approved: boolean) => void;
   setArtifacts: (artifacts: Artifact[]) => void;
@@ -167,6 +177,7 @@ export const useAppStore = create<AppState>((set) => ({
   messages: [],
   events: [],
   steps: [],
+  sandboxLogs: [],
   sandbox: null,
   tasks: [],
   preview: null,
@@ -342,6 +353,14 @@ export const useAppStore = create<AppState>((set) => ({
       return { steps };
     }),
   setSteps: (steps) => set({ steps }),
+  // ponytail: cap accumulated sandbox log deltas so memory stays bounded;
+  // superseded by full docker logs in production.
+  appendSandboxLog: (log) =>
+    set((s) => {
+      const logs = [...s.sandboxLogs, log];
+      return { sandboxLogs: logs.length > 2000 ? logs.slice(-2000) : logs };
+    }),
+  clearSandboxLogs: () => set({ sandboxLogs: [] }),
   addPendingApproval: (approval) =>
     set((s) =>
       s.pendingApprovals.some((a) => a.approval_id === approval.approval_id)

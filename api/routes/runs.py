@@ -138,18 +138,8 @@ async def list_runs(
     archived: bool = False,
 ) -> list[Run]:
     storage = get_storage()
-    rows = storage.list_runs(limit=limit, offset=offset)
-    out: list[Run] = []
-    for r in rows:
-        is_archived = bool(r.get("archived_at"))
-        if is_archived != archived:
-            continue
-        if query:
-            q = query.lower()
-            if q not in (r.get("title") or "").lower() and q not in r["id"].lower():
-                continue
-        out.append(_to_run(r))
-    return out
+    rows = storage.list_runs(limit=limit, offset=offset, query=query, archived=archived)
+    return [_to_run(r) for r in rows]
 
 
 @router.get("/{run_id}", response_model=Run)

@@ -370,6 +370,8 @@ function PreviewFrame({ sandbox, preview }: PreviewFrameProps) {
           className="border-0 transition-all"
           style={{ width: viewportWidth, height: "100%" }}
           title="Preview"
+          sandbox="allow-scripts allow-forms allow-modals allow-popups"
+          referrerPolicy="no-referrer"
         />
       </div>
     </div>

@@ -286,12 +286,34 @@ class Storage:
             row = conn.execute("SELECT * FROM runs WHERE id = ?", (run_id,)).fetchone()
             return dict(row) if row else None
 
-    def list_runs(self, limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
+    def list_runs(
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        query: str | None = None,
+        archived: bool = False,
+    ) -> list[dict[str, Any]]:
+        # Filtering in SQL (doc 21.4) instead of LIMIT/OFFSET then Python-side.
+        clauses: list[str] = []
+        params: list[Any] = []
+        if archived:
+            clauses.append("archived_at IS NOT NULL")
+        else:
+            clauses.append("archived_at IS NULL")
+        if query:
+            clauses.append("(title LIKE ? OR id LIKE ?)")
+            token = f"%{query}%"
+            params.extend([token, token])
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.extend([limit, offset])
+        sql = f"""
+            SELECT * FROM runs
+            {where}
+            ORDER BY COALESCE(last_message_at, updated_at) DESC
+            LIMIT ? OFFSET ?
+        """
         with self._conn() as conn:
-            rows = conn.execute(
-                "SELECT * FROM runs ORDER BY updated_at DESC LIMIT ? OFFSET ?",
-                (limit, offset),
-            ).fetchall()
+            rows = conn.execute(sql, params).fetchall()
             return [dict(r) for r in rows]
 
     def update_run_status(self, run_id: str, status: str) -> None:

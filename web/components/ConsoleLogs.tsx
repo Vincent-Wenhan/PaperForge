@@ -1,39 +1,18 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { api } from "@/lib/api";
+import { useEffect } from "react";
+import { useAppStore } from "@/lib/store";
 
 interface ConsoleLogsProps {
   sandboxId?: string;
 }
 
 export function ConsoleLogs({ sandboxId }: ConsoleLogsProps) {
-  const [logs, setLogs] = useState<string[]>([]);
+  const logs = useAppStore((s) => s.sandboxLogs);
 
+  // Reset buffered log deltas when the sandbox changes.
   useEffect(() => {
-    if (!sandboxId) return;
-    let active = true;
-
-    const loadLogs = async () => {
-      try {
-        const resp = await fetch(`/api/sandboxes/${sandboxId}/logs`);
-        if (!resp.ok) return;
-        const data = await resp.json();
-        if (active && data.logs) {
-          setLogs(data.logs.split("\n"));
-        }
-      } catch {
-        // ignore
-      }
-    };
-
-    loadLogs();
-    const interval = setInterval(loadLogs, 3000);
-
-    return () => {
-      active = false;
-      clearInterval(interval);
-    };
+    useAppStore.getState().clearSandboxLogs();
   }, [sandboxId]);
 
   if (!sandboxId) {
@@ -57,8 +36,9 @@ export function ConsoleLogs({ sandboxId }: ConsoleLogsProps) {
       {logs.length === 0 ? (
         <div className="text-muted-foreground">No logs yet</div>
       ) : (
-        logs.map((line, i) => <div key={i}>{line}</div>)
+        logs.map((line, i) => <div key={i}>{line.text}</div>)
       )}
     </div>
   );
 }
+
