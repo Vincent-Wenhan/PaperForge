@@ -111,7 +111,10 @@ export function VerificationReportView({
             Build: {report.build_succeeded ? "✓" : "✗"}
           </div>
           <div>
-            Ready: {report.ready_for_preview ? "✓" : "✗"}
+            Technical Ready: {report.technical_ready ? "✓" : "✗"}
+          </div>
+          <div>
+            Product Ready: {report.product_ready ? "✓" : "✗"}
           </div>
           {report.build_duration_ms && (
             <div className="text-xs text-muted-foreground">

@@ -46,7 +46,7 @@ class MockStorage:
 
 @pytest.mark.asyncio
 async def test_build_and_repair_stops_on_ready(tmp_path: Path):
-    """build_and_repair must stop as soon as ready_for_preview is true."""
+    """build_and_repair must stop as soon as technical_ready is true."""
 
     app_path = tmp_path / "app"
     (app_path / "app").mkdir(parents=True)

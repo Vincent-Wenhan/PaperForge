@@ -200,8 +200,6 @@ async def verify_app(
     security_penalty = min(len(security_issues) / 10, 0.1)
     score += 0.1 - security_penalty
 
-    ready_for_preview = build_succeeded and score >= 0.6 and not type_errors
-
     # Hard gates (doc 24): a failed gate cannot be overridden by score.
     workspace_ok = has_package_json and has_app_dir and has_page
     typecheck_ok = not type_errors
@@ -309,7 +307,8 @@ async def verify_app(
         "preview_allowed": preview_allowed,
         "product_ready": product_ready,
         "overall_score": score,
-        "ready_for_preview": ready_for_preview,
+        # Compatibility derived field (doc 31): preview_allowed is the gate.
+        "ready_for_preview": preview_allowed,
         "recommendations": recommendations,
     }
 
@@ -334,7 +333,7 @@ async def build_and_repair(
 
     For each attempt:
       1. Run ``verify_app`` to get a fresh report.
-      2. If ``ready_for_preview`` is true, return the report.
+      2. If ``technical_ready`` is true, return the report (doc 24).
       3. Otherwise, snapshot the workspace, ask the LLM for a patch
          that fixes the top build/type/lint errors, apply it, and
          re-verify.

@@ -730,11 +730,9 @@ async def handle_verify(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         await progress.fail(step_id, error=str(exc))
         raise
 
-    ready = bool(report.get("ready_for_preview"))
     await progress.complete(
         step_id,
-        summary=f"Score={report.get('overall_score', 0):.2f}, "
-                f"ready={ready}.",
+        summary=f"Score={report.get('overall_score', 0):.2f}.",
     )
     artifact_id = ctx.storage.save_artifact(
         run_id=ctx.run_id,
@@ -744,15 +742,23 @@ async def handle_verify(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
     )
     await ctx.emit.artifact_created("verification_report", str(ctx.storage.reports_dir), artifact_id)
 
-    ready = bool(report.get("ready_for_preview"))
+    # Verification hard gates are the authority (doc 10/31): the tool itself
+    # succeeds (report produced), and readiness is expressed by the gates.
+    technical_ready = bool(report.get("technical_ready"))
+    preview_allowed = bool(report.get("preview_allowed"))
+    product_ready = bool(report.get("product_ready"))
     return ToolResult(
         tool="verify_app",
-        status=ToolStatus.SUCCEEDED if ready else ToolStatus.FAILED,
+        status=ToolStatus.SUCCEEDED,
         artifact_id=artifact_id,
-        data={"report": report},
-        summary=f"Verified app: score={report.get('overall_score', 0):.2f}, "
-                f"ready={report.get('ready_for_preview', False)}.",
-        next_phase="verified" if ready else None,
+        data={
+            "report": report,
+            "technical_ready": technical_ready,
+            "preview_allowed": preview_allowed,
+            "product_ready": product_ready,
+        },
+        summary=f"Verification completed: technical_ready={technical_ready}, product_ready={product_ready}.",
+        next_phase="verified" if technical_ready else None,
     )
 
 
@@ -774,8 +780,11 @@ async def handle_build_and_repair(args: dict[str, Any], ctx: ToolContext) -> Too
     except Exception as exc:
         await progress.fail(step_id, error=str(exc))
         raise
-    ready = bool(report.get("ready_for_preview"))
-    await progress.complete(step_id, summary="Build and repair complete." if ready else "Build and repair needs another iteration.")
+    technical_ready = bool(report.get("technical_ready"))
+    await progress.complete(
+        step_id,
+        summary="Build and repair complete." if technical_ready else "Build and repair needs another iteration.",
+    )
     artifact_id = ctx.storage.save_artifact(
         run_id=ctx.run_id,
         artifact_type="verification_report",
@@ -798,16 +807,25 @@ async def handle_build_and_repair(args: dict[str, Any], ctx: ToolContext) -> Too
             app_path=app_path,
         )
         revision_id = revision["id"]
-    ready = bool(report.get("ready_for_preview"))
+    # Hard gates control readiness; the tool succeeds once it produced a report
+    # (doc 10/31). Not ready is surfaced via the gates + a retryable code so the
+    # orchestrator/LLM can decide whether to attempt another repair.
+    technical_ready = bool(report.get("technical_ready"))
+    product_ready = bool(report.get("product_ready"))
     return ToolResult(
         tool="build_and_repair",
-        status=ToolStatus.SUCCEEDED if ready else ToolStatus.FAILED,
+        status=ToolStatus.SUCCEEDED,
         artifact_id=artifact_id,
-        data={"report": report, "revision_id": revision_id},
-        summary="Build and repair completed." if ready else "Build and repair needs another iteration.",
-        code=None if ready else "verification_failed",
-        retryable=not ready,
-        next_phase="verified" if ready else None,
+        data={
+            "report": report,
+            "revision_id": revision_id,
+            "technical_ready": technical_ready,
+            "product_ready": product_ready,
+        },
+        summary=f"Build and repair completed: technical_ready={technical_ready}, product_ready={product_ready}.",
+        code=None if technical_ready else "verification_failed",
+        retryable=not technical_ready,
+        next_phase="verified" if technical_ready else None,
     )
 
 
