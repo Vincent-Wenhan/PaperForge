@@ -649,12 +649,12 @@ async def handle_plan_product(args: dict[str, Any], ctx: ToolContext) -> ToolRes
 
 
 async def handle_generate(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
-    """Generate a Next.js app from a PRD."""
-    from paperforge.agents.nextjs_generator import generate_nextjs_app
+    """Generate a Next.js app from a PRD via Generation V3 (bounded batches)."""
+    from paperforge.agents.generation_v3 import generate_nextjs_app_v3
 
     prd_id = args["prd_id"]
     progress = ctx.progress()
-    step_id = await progress.start(kind="codegen", title="Generating Next.js app")
+    step_id = await progress.start(kind="codegen", title="Planning workspace")
     requested_output = args.get("output_dir")
     if requested_output:
         requested_path = Path(requested_output).resolve()
@@ -669,11 +669,12 @@ async def handle_generate(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         output_dir = str(ctx.storage.apps_dir / f"app_{uuid.uuid4().hex[:6]}")
 
     try:
-        manifest = await generate_nextjs_app(
+        manifest = await generate_nextjs_app_v3(
             prd_id=prd_id,
             output_dir=output_dir,
             llm=ctx.llm,
             storage=ctx.storage,
+            progress=progress,
         )
     except Exception as exc:
         await progress.fail(step_id, error=str(exc))

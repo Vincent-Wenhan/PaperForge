@@ -12,7 +12,11 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
+import shutil
+import tempfile
+import uuid
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -23,6 +27,7 @@ from paperforge.config import get_config
 from paperforge.llm.base import LLMClient, Message
 from paperforge.prompts import load_prompt
 from paperforge.schemas.workspace_plan import FileSpec, WorkspacePlan
+from paperforge.storage.db import Storage
 
 logger = logging.getLogger(__name__)
 
@@ -195,3 +200,119 @@ def write_batch_files(workspace: Path, batch: dict[str, Any]) -> list[str]:
         target.write_text(content, encoding="utf-8")
         changed.append(path)
     return changed
+
+
+def _merge_dependencies(workspace: Path, dependencies: dict[str, str]) -> None:
+    """Merge plan-declared deps into package.json, pinning scripts to SAFE_SCRIPTS."""
+    from paperforge.agents.nextjs_generator import SAFE_SCRIPTS
+    from paperforge.schemas.app_manifest import ALLOWED_DEPENDENCIES
+
+    pkg_path = workspace / "package.json"
+    pkg = (
+        json.loads(pkg_path.read_text(encoding="utf-8"))
+        if pkg_path.exists()
+        else {}
+    )
+    blocked = {
+        name: version
+        for name, version in dependencies.items()
+        if name not in ALLOWED_DEPENDENCIES
+    }
+    if blocked:
+        raise ValueError(f"Refusing to declare non-allowlist dependencies: {sorted(blocked)}")
+    pkg["scripts"] = SAFE_SCRIPTS
+    pkg["dependencies"] = {**(pkg.get("dependencies") or {}), **dependencies}
+    pkg_path.write_text(json.dumps(pkg, indent=2), encoding="utf-8")
+
+
+async def generate_nextjs_app_v3(
+    *,
+    prd_id: str,
+    output_dir: str | Path,
+    llm: LLMClient,
+    storage: Storage,
+    progress=None,
+) -> dict[str, Any]:
+    """High-level Generation V3 entry: plan-only call, then bounded per-kind
+    batches with dependency-aware context (doc 18-20/30).
+
+    Reuses the template scaffold + atomic promotion from nextjs_generator so
+    V3 keeps the same safe workspace policy without re-deriving it.
+    """
+    from paperforge.agents.nextjs_generator import TEMPLATE_DIR
+    from paperforge.storage.db import Storage
+
+    artifact = storage.get_artifact(prd_id)
+    if not artifact:
+        raise ValueError(f"PRD not found: {prd_id}")
+    prd = artifact.get("data") or {}
+
+    final_dir = Path(output_dir).resolve()
+    apps_root = storage.apps_dir.resolve()
+    try:
+        final_dir.relative_to(apps_root)
+    except ValueError as exc:
+        raise ValueError(f"output_dir must be inside {apps_root}, got {final_dir}") from exc
+    if final_dir == apps_root:
+        raise ValueError("output_dir must name a child app directory")
+
+    if not TEMPLATE_DIR.exists():
+        raise FileNotFoundError(f"Template directory not found: {TEMPLATE_DIR}")
+
+    app_id = f"app_{uuid.uuid4().hex[:8]}"
+    generated_files: list[str] = []
+
+    with tempfile.TemporaryDirectory(prefix="paperforge-v3-", dir=str(apps_root)) as tmp:
+        temp_dir = Path(tmp)
+        shutil.copytree(src=TEMPLATE_DIR, dst=temp_dir, dirs_exist_ok=True)
+
+        plan = await plan_workspace(prd=prd, llm=llm)
+        if not plan.app_name or plan.app_name == "generated-app":
+            plan.app_name = app_id
+
+        try:
+            for kind, specs in group_plan_files(plan):
+                step_id = None
+                if progress is not None:
+                    step_id = await progress.start(
+                        kind="codegen",
+                        title=f"Generating {kind} ({len(specs)} files)",
+                    )
+                batch = await generate_batch(
+                    prd=prd,
+                    plan=plan,
+                    specs=specs,
+                    workspace=temp_dir,
+                    llm=llm,
+                )
+                changed = write_batch_files(root=temp_dir, batch=batch)
+                generated_files.extend(changed)
+                if progress is not None and step_id is not None:
+                    await progress.complete(
+                        step_id,
+                        summary=f"{len(changed)} files generated",
+                    )
+        except Exception:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            raise
+
+        _merge_dependencies(temp_dir, plan.dependencies)
+
+        # Atomic promote temp_dir → final_dir (never partially overwrite).
+        if final_dir.exists():
+            backup = final_dir.with_name(final_dir.name + ".previous")
+            if backup.exists():
+                shutil.rmtree(backup)
+            os.replace(final_dir, backup)
+        os.replace(temp_dir, final_dir)
+
+    plan.dependencies = plan.dependencies  # keep plan deps for the manifest
+
+    return {
+        "app_id": app_id,
+        "prd_id": prd_id,
+        "plan": plan.model_dump(),
+        "files": generated_files,
+        "dependencies": plan.dependencies,
+        "output_dir": str(final_dir),
+    }
