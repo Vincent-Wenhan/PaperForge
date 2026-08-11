@@ -62,25 +62,28 @@ export function projectTurns(
     });
   }
 
-  // Any messages/steps not attributed to a known task still get a turn so the
-  // conversation is never silently dropped.
-  for (const id of ["untracked"]) {
-    const remaining = messageByTask.get(id)?.length
-      || stepByTask.get(id)?.length
-      || approvalByTask.get(id)?.length
-      || artifactByTask.get(id)?.length;
-    if (remaining) {
-      turns.push({
-        id,
-        task: { id, status: "completed" },
-        userMessage: (messageByTask.get(id) || []).find((m) => m.role === "user") ?? null,
-        assistantMessages: (messageByTask.get(id) || []).filter((m) => m.role === "assistant"),
-        steps: stepByTask.get(id) || [],
-        approvals: approvalByTask.get(id) || [],
-        artifacts: artifactByTask.get(id) || [],
-        status: "completed",
-      });
+  // Any messages/steps not attributed to a known task still get a legacy turn
+  // so old (pre-16) conversations are never silently dropped. New data
+  // reaching this branch is a task_id regression, so warn in development.
+  const untrackedItems = (messageByTask.get("untracked") || []).length
+    + (stepByTask.get("untracked") || []).length
+    + (approvalByTask.get("untracked") || []).length
+    + (artifactByTask.get("untracked") || []).length;
+  if (untrackedItems > 0) {
+    if (process.env.NODE_ENV !== "production") {
+      // eslint-disable-next-line no-console
+      console.warn("Unexpected untracked conversation entities", untrackedItems);
     }
+    turns.push({
+      id: "untracked",
+      task: { id: "untracked", status: "completed" },
+      userMessage: (messageByTask.get("untracked") || []).find((m) => m.role === "user") ?? null,
+      assistantMessages: (messageByTask.get("untracked") || []).filter((m) => m.role === "assistant"),
+      steps: stepByTask.get("untracked") || [],
+      approvals: approvalByTask.get("untracked") || [],
+      artifacts: artifactByTask.get("untracked") || [],
+      status: "completed",
+    });
   }
 
   return turns;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAppStore } from "@/lib/store";
 import { MessageView } from "./MessageView";
 import { ApprovalCard } from "./ApprovalCard";
@@ -21,14 +21,14 @@ export function ChatPanel() {
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const pinnedToBottom = useRef(true);
-  const jumpRef = useRef({ visible: false });
+  const [showJumpToLatest, setShowJumpToLatest] = useState(false);
 
   const onScroll = () => {
     const el = scrollRef.current;
     if (!el) return;
     const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 96;
     pinnedToBottom.current = nearBottom;
-    jumpRef.current.visible = !nearBottom;
+    setShowJumpToLatest(!nearBottom);
   };
 
   const jumpToLatest = () => {
@@ -36,7 +36,7 @@ export function ChatPanel() {
     if (el) {
       el.scrollTop = el.scrollHeight;
       pinnedToBottom.current = true;
-      jumpRef.current.visible = false;
+      setShowJumpToLatest(false);
     }
   };
 
@@ -68,14 +68,6 @@ export function ChatPanel() {
 
   return (
     <div className="flex-1 flex flex-col border-r border-border">
-      <RunHeader
-        title={currentRun.title}
-        runId={currentRun.id}
-        status={currentRun.status}
-        phase={(currentRun.phase as string) || "init"}
-        artifactCount={artifacts.length}
-      />
-
       <div
         ref={scrollRef}
         onScroll={onScroll}
@@ -131,6 +123,19 @@ export function ChatPanel() {
                     toolCallId={msg.tool_call_id}
                   />
                 ))}
+                {turn.artifacts.length > 0 && (
+                  <div className="space-y-1">
+                    {turn.artifacts.map((artifact) => (
+                      <div
+                        key={artifact.id}
+                        className="text-xs font-mono text-muted-foreground flex items-center gap-2"
+                      >
+                        <span>📄 {artifact.type}</span>
+                        <span>{artifact.path}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </section>
@@ -151,7 +156,7 @@ export function ChatPanel() {
         <div className="h-px" />
       </div>
 
-      {jumpRef.current.visible && (
+      {showJumpToLatest && (
         <button
           onClick={jumpToLatest}
           className="absolute bottom-24 left-1/2 -translate-x-1/2 px-3 py-1 text-xs bg-foreground text-background rounded-full shadow"
@@ -161,30 +166,6 @@ export function ChatPanel() {
       )}
 
       <Composer />
-    </div>
-  );
-}
-
-interface RunHeaderProps {
-  title: string;
-  runId: string;
-  status: string;
-  phase: string;
-  artifactCount: number;
-}
-
-function RunHeader({ title, runId, status, phase, artifactCount }: RunHeaderProps) {
-  return (
-    <div className="p-3 border-b border-border" data-testid="task-status">
-      <h2 className="font-semibold">{title}</h2>
-      <p className="text-xs text-muted-foreground">{runId}</p>
-      <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
-        <span className="px-1.5 py-0.5 bg-muted rounded">{status}</span>
-        <span className="px-1.5 py-0.5 bg-muted rounded">phase: {phase}</span>
-        <span className="px-1.5 py-0.5 bg-muted rounded">
-          {artifactCount} artifact{artifactCount === 1 ? "" : "s"}
-        </span>
-      </div>
     </div>
   );
 }
