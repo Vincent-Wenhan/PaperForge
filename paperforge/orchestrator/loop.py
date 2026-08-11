@@ -68,7 +68,11 @@ def _approval_spec(name: str) -> ApprovalToolSpec:
 
 
 class RunPhase(str, Enum):
-    """Tracked only for the UI's displayed step; not a tool-permission gate (doc 14)."""
+    """Tracked only for the UI's displayed step; not a tool-permission gate (doc 14).
+
+    `DONE` was removed as a thread terminal — a finished task leaves the Run
+    active as a persistent thread; the only true terminal is ``archived_at``.
+    """
 
     INIT = "init"
     PARSED = "parsed"
@@ -77,7 +81,6 @@ class RunPhase(str, Enum):
     GENERATED = "generated"
     VERIFIED = "verified"
     PREVIEW_READY = "preview_ready"
-    DONE = "done"
     ERROR = "error"
 
 
@@ -116,12 +119,13 @@ class Orchestrator:
         self.task_id = task_id
         emit = EventEmitter(run_id=run_id, manager=event_manager, task_id=self.task_id)
 
-        # Track previous status/phase so we only emit when they actually change.
+        # Cancel and completed (archived) runs are terminal checkpoints. A
+        # later worker invocation must not silently resume them. A "done"
+        # status is not terminal: tasks complete independently and the Run
+        # stays an active persistent thread (doc 5).
         prev_status = self.storage.get_run_status(run_id) or "active"
-
-        # Cancelled and completed runs are terminal checkpoints. A later
-        # worker invocation must not silently resume their LLM workflow.
-        if prev_status in {"cancelled", "done"}:
+        run_row = self.storage.get_run(run_id) or {}
+        if prev_status in {"cancelled"} or run_row.get("archived_at"):
             return
 
         # Persist run status as running
@@ -302,21 +306,22 @@ class Orchestrator:
                             stopped_result is not None
                             and stopped_result.code == "needs_user_input"
                         )
+                        # Task completion != Run completion (doc 5): finishing a
+                        # task leaves the Run active as a persistent thread.
                         terminal_status = (
-                            "done"
-                            if self.phase == RunPhase.DONE
-                            else "waiting_user"
+                            "waiting_user"
                             if waiting_for_user
                             else "active"
+                        )
+                        task_terminal = (
+                            "waiting_user"
+                            if waiting_for_user
+                            else "completed"
                         )
                         previous = self.storage.get_run_status(run_id) or "running"
                         self.storage.update_run_status(run_id, terminal_status)
                         self._update_task(
-                            status="completed"
-                            if terminal_status == "done"
-                            else "waiting_user"
-                            if waiting_for_user
-                            else "active",
+                            status=task_terminal,
                             phase=self.phase.value,
                         )
                         if previous != terminal_status:

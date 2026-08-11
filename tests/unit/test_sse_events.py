@@ -123,10 +123,10 @@ async def test_phase_change_emits_event(storage: Storage):
     orc = Orchestrator(llm=PhaseLLM(), storage=storage)
     await orc.run(run_id="run_phase", user_message="parse this paper")
 
-    # After finish tool succeeds, phase should advance.
+    # After finish tool succeeds, the task completes without ending the Run.
     # The 'finish' tool has no next_phase of its own; a successful tool call
-    # should not throw.
-    assert orc.phase in (RunPhase.INIT, RunPhase.DONE)
+    # should not throw, and phase stays INIT.
+    assert orc.phase == RunPhase.INIT
 
 
 # ===== test_artifact_created_emits_fetchable_artifact =====

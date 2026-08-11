@@ -142,9 +142,9 @@ def test_done_phase_does_not_block_workspace_edit(storage, workspace_artifact):
     from paperforge.orchestrator.loop import Orchestrator, RunPhase
 
     orc = Orchestrator(llm=FakeLLM(), storage=storage)
-    orc.phase = RunPhase.DONE
+    orc.phase = RunPhase.VERIFIED
     state = load_workspace_state(storage, workspace_artifact.run_id)
     allowed, missing = check_tool_prerequisites("inspect_workspace", state)
     assert allowed
     assert missing == []
-    assert orc.phase == RunPhase.DONE
+    assert orc.phase == RunPhase.VERIFIED

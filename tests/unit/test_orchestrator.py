@@ -32,7 +32,7 @@ async def test_orchestrator_runs_to_completion(storage):
 
     messages = storage.list_messages("run_orc")
     assert len(messages) >= 2
-    assert orc.phase in (RunPhase.DONE, RunPhase.INIT)
+    assert orc.phase in (RunPhase.INIT,)
 
 
 @pytest.mark.asyncio
@@ -224,11 +224,11 @@ async def test_orchestrator_approval_flow(storage):
 
 
 def test_run_phase_enum_completeness():
-    """RunPhase enum should have all expected phases."""
+    """RunPhase enum should have all expected phases (DONE removed as thread terminal)."""
     expected_phases = {
         "init", "parsed", "composed", "planned",
         "generated", "verified", "preview_ready",
-        "done", "error",
+        "error",
     }
     actual_phases = {phase.value for phase in RunPhase}
     assert actual_phases == expected_phases
@@ -313,8 +313,8 @@ async def test_plain_chat_does_not_block_subsequent_productization(storage):
     orc = Orchestrator(llm=PlainLLM(), storage=storage)
     await orc.run(run_id="run_plain", user_message="who are you")
 
-    # Phase must NOT advance to DONE on a plain reply.
-    assert orc.phase != RunPhase.DONE
+    # Phase must NOT advance to a terminal phase on a plain reply.
+    assert orc.phase == RunPhase.INIT
     # Run status should remain active, not completed.
     run = storage.get_run("run_plain")
     assert run["status"] == "active"

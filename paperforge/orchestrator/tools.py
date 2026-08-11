@@ -1076,14 +1076,17 @@ async def handle_restart_sandbox(args: dict[str, Any], ctx: ToolContext) -> Tool
 
 
 async def handle_finish(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
-    """Signal that the orchestration is complete."""
+    """Complete the current task without ending the Run/Thread (doc 5).
+
+    A completed task must not mark the whole Run as done, because the
+    Run is a persistent thread that can receive follow-up tasks.
+    """
     summary = args.get("summary", "Task completed")
     return ToolResult(
         tool="finish",
         status=ToolStatus.SUCCEEDED,
-        data={"summary": summary, "status": "done"},
+        data={"summary": summary, "task_status": "completed"},
         summary=summary,
-        next_phase="done",
         stop_loop=True,
     )
 

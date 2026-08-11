@@ -117,7 +117,7 @@ async def test_plain_chat_does_not_finish_task(storage: Storage):
     orc = Orchestrator(llm=PlainLLM(), storage=storage)
     await orc.run(run_id="run_plain", user_message="who are you")
 
-    assert orc.phase != RunPhase.DONE
+    assert orc.phase == RunPhase.INIT
     run = storage.get_run("run_plain")
     assert run["status"] == "active"
 
