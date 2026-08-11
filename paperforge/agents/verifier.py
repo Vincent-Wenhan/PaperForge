@@ -32,7 +32,7 @@ DANGEROUS_PATTERNS = [
     (re.compile(r"new\s+Function\s*\("), "new Function() usage"),
 ]
 
-# Target Repair V2 (doc 22.1): match TS error paths like app/page.tsx:12
+# Match TS error paths like app/page.tsx:12
 TS_ERROR_RE = re.compile(
     r"(?P<path>"
     r"(?:app|components|hooks|lib|types)"
@@ -131,7 +131,7 @@ async def verify_app(
             prd = artifact.get("data") or {}
 
     prd_features = []
-    # PRD V2: flat `features` list (doc 8.2). Fall back to legacy priority lists.
+    # Flat `features` list; fall back to legacy priority lists.
     if prd.get("features"):
         prd_features = [f.get("name", "") for f in prd["features"]]
     else:
@@ -200,7 +200,7 @@ async def verify_app(
     security_penalty = min(len(security_issues) / 10, 0.1)
     score += 0.1 - security_penalty
 
-    # Hard gates (doc 24): a failed gate cannot be overridden by score.
+    # A failed gate cannot be overridden by score.
     workspace_ok = has_package_json and has_app_dir and has_page
     typecheck_ok = not type_errors
     build_ok = build_succeeded
@@ -332,7 +332,7 @@ async def build_and_repair(
 
     For each attempt:
       1. Run ``verify_app`` to get a fresh report.
-      2. If ``technical_ready`` is true, return the report (doc 24).
+      2. If ``technical_ready`` is true, return the report.
       3. Otherwise, snapshot the workspace, ask the LLM for a patch
          that fixes the top build/type/lint errors, apply it, and
          re-verify.
@@ -371,7 +371,7 @@ async def build_and_repair(
         })
 
         # Hard-gate loop exit: a TypeScript/build/security error can't be
-        # overridden by a high score, so stop once the gates pass (doc 24).
+        # overridden by a high score, so stop once the gates pass.
         if report.get("technical_ready"):
             break
 
@@ -413,7 +413,7 @@ async def _apply_repair_patch(
     (SafeWorkspacePolicy) so a hallucinating model cannot write arbitrary
     files.
 
-    Uses targeted repair (doc 22): instead of sending every workspace file
+    Uses targeted repair: instead of sending every workspace file
     to the LLM, we seed the repair context from the error paths in the
     report, then expand it to include each file's local ``@/`` dependencies
     (bounded to ~12 files).
@@ -496,7 +496,7 @@ async def _apply_repair_patch(
 
 
 def extract_error_paths(errors: list[str]) -> list[str]:
-    """Return unique file paths referenced by TS/type error messages (doc 22.1)."""
+    """Return unique file paths referenced by TS/type error messages."""
     result: list[str] = []
     for error in errors:
         for match in TS_ERROR_RE.finditer(error):
@@ -512,7 +512,7 @@ def expand_repair_context(
     *,
     max_files: int = 12,
 ) -> list[str]:
-    """Expand seed error paths to include their local ``@/`` dependencies (doc 22.2)."""
+    """Expand seed error paths to include their local ``@/`` dependencies."""
     from paperforge.agents.generation_v3 import (
         import_to_paths,
         parse_local_imports,
@@ -560,7 +560,7 @@ async def run_command_stream(
     timeout_s: float,
     on_line: Any = None,
 ) -> CommandResult:
-    """Run a command, streaming stdout/stderr to ``on_line`` (doc 26).
+    """Run a command, streaming stdout/stderr to ``on_line``.
 
     ``timeout_s`` bounds the whole process wait, not each log callback, so a
     totally silent hung process still times out. Unifies the old ``_exec``
@@ -628,7 +628,7 @@ async def _exec_streaming(
     timeout: int,
     on_line: Any,
 ) -> tuple[bool, str]:
-    """Run a command, streaming each line to ``on_line`` (doc 26)."""
+    """Run a command, streaming each line to ``on_line``."""
     result = await run_command_stream(cmd, cwd, timeout_s=timeout, on_line=on_line)
     return result.returncode == 0 and not result.timed_out, result.stdout
 

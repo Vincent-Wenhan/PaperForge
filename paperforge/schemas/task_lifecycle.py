@@ -1,4 +1,4 @@
-"""Task lifecycle state machine (doc 27).
+"""Task lifecycle state machine.
 
 Tasks follow a strict status set distinct from Run status. A finished task
 leaves the Run active as a persistent thread, so task statuses are bounded

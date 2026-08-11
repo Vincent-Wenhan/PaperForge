@@ -54,7 +54,7 @@ async def send_message(run_id: str, req: MessageCreate) -> dict:
 
     # Reject with 409 only if the caller explicitly wants to start a fresh task
     # while one is already running. Follow-ups queue instead; interrupts cancel
-    # the in-flight task first (doc 12.4).
+    # the in-flight task first.
     task_manager = get_run_task_manager()
     if task_manager.is_running(run_id) and req.mode == "start":
         raise HTTPException(
@@ -65,12 +65,12 @@ async def send_message(run_id: str, req: MessageCreate) -> dict:
     if req.mode == "interrupt":
         await _run_queue.cancel_and_wait(run_id)
 
-    # Run = persistent thread (doc 13). A completed run keeps its workspace; the
+    # Run = persistent thread. A completed run keeps its workspace; the
     # new message is just the next task in the same thread. Phase is a UI
     # display concern, not a reset trigger.
 
-    # Generate task_id first so the user message can carry its task affiliation
-    # (doc 29.1). Save user message, then the task references it via
+    # Generate task_id first so the user message can carry its task affiliation.
+    # Save user message, then the task references it via
     # user_message_id and priority for interrupt.
     task_id = f"task_{_uuid.uuid4().hex}"
     message = storage.add_message(
@@ -92,7 +92,7 @@ async def send_message(run_id: str, req: MessageCreate) -> dict:
         user_message_id=message["id"],
     )
 
-    # Auto-generate run title from the first user message (doc 6.5).
+    # Auto-generate run title from the first user message.
     # Only update if the title is still the default placeholder so we
     # never overwrite a user's manual rename.
     current_title = run.get("title") or ""
@@ -103,7 +103,7 @@ async def send_message(run_id: str, req: MessageCreate) -> dict:
             title=updated_run.get("title") if updated_run else new_title,
         )
 
-    # Attach any new papers to this run as explicit context (doc 4.3/4.4).
+    # Attach any new papers to this run as explicit context.
     for paper_id in req.paper_ids:
         storage.attach_paper_to_run(run_id, paper_id)
 

@@ -1,4 +1,4 @@
-"""WorkspaceState, ToolSpec and resource gating (doc 10.4 / 11).
+"""WorkspaceState, ToolSpec and resource gating.
 
 Replaces the global phase gate as the authoritative tool-permission check.
 """

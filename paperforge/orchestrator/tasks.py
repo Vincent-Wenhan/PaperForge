@@ -103,7 +103,7 @@ class RunQueue:
     The DB `tasks` table is the *only* source of truth for the queue: the queue
     stores task ids (never coroutines), claims each task exactly, and rebuilds
     the orchestrator run from the task's goal. On restart, queued/stale tasks
-    are recovered from the DB so no coroutine is lost (doc 8 / doc 28).
+    are recovered from the DB so no coroutine is lost.
     """
 
     def __init__(self, storage=None) -> None:
@@ -172,7 +172,7 @@ class RunQueue:
         if not claimed:
             return False
 
-        # Reconstruct execution entirely from the DB task (doc 8): no coroutine
+        # Reconstruct execution entirely from the DB task: no coroutine
         # is passed through the queue, so a restart can restore queued work.
         orchestrator = Orchestrator(sandbox_manager=DockerSandboxManager(storage))
         coro = orchestrator.run(
@@ -181,7 +181,7 @@ class RunQueue:
             task_id=task_id,
         )
 
-        # Renew the lease on a heartbeat while the task runs (doc 37.2).
+        # Renew the lease on a heartbeat while the task runs.
         heartbeat = asyncio.create_task(
             self._heartbeat(
                 task_id,

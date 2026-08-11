@@ -1,7 +1,7 @@
 """AppManifest schema for generated Next.js apps.
 
 The exact 3-file allowlist (BUSINESS_FILES) is retired in favor of the
-bounded SafeWorkspacePolicy (doc 9.2/9.5). ``BusinessFile`` keeps the old
+bounded SafeWorkspacePolicy. ``BusinessFile`` keeps the old
 name as a thin subclass so existing imports and the generator's validation
 flow keep working while allowing multi-file generation.
 """

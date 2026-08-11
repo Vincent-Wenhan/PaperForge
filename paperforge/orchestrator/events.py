@@ -182,7 +182,7 @@ class EventEmitter:
         )
 
     async def build_log_delta(self, step_id: str, text: str) -> None:
-        """Stream a build/lint log line in-band (doc 19.3)."""
+        """Stream a build/lint log line in-band."""
         await self.emit("build.log.delta", {"step_id": step_id, "text": text})
 
     async def run_status_changed(
@@ -207,7 +207,7 @@ class EventManager:
     """Persist-then-fan-out event manager.
 
     Owns the authoritative seq (assigned by the store) and delegates
-    fan-out to an injected EventBroker (doc 22/35). SSE clients subscribe
+    fan-out to an injected EventBroker. SSE clients subscribe
     through the broker; swapping InProcessEventBroker for RedisBroker in
     production requires no business-layer change.
     """
@@ -299,7 +299,7 @@ class EventManager:
 
 
 class EventPersistenceError(Exception):
-    """Raised when an event cannot be persisted durably (doc 23).
+    """Raised when an event cannot be persisted durably.
 
     The SSE connection is dropped and the client recovers via snapshot +
     cursor rather than a fabricated in-memory seq.
@@ -313,7 +313,7 @@ class EventPersistenceError(Exception):
 
 
 class EventStore(Protocol):
-    """Durable event persistence (doc 21.1)."""
+    """Durable event persistence."""
 
     def append(self, event: Event) -> Event:
         ...
@@ -323,7 +323,7 @@ class EventStore(Protocol):
 
 
 class EventBroker(Protocol):
-    """In-memory fan-out of events to subscribers (doc 21.1)."""
+    """In-memory fan-out of events to subscribers."""
 
     async def publish(self, event: Event) -> None:
         ...

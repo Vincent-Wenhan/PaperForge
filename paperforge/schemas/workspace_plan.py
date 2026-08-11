@@ -1,4 +1,4 @@
-"""WorkspacePlan schema (doc 9.3): a bounded, dependency-aware plan of files."""
+"""WorkspacePlan schema: a bounded, dependency-aware plan of files."""
 
 from __future__ import annotations
 

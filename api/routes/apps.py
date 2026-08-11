@@ -1,4 +1,4 @@
-"""App-based file API routes (doc 8.4).
+"""App-based file API routes.
 
 These endpoints operate on a generated Next.js app identified by its
 artifact_id (the app artifact stored when `generate_nextjs_app` runs).

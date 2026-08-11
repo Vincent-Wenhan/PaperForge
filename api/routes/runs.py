@@ -230,7 +230,7 @@ async def cancel_run(run_id: str) -> dict:
 
 @router.post("/{run_id}/papers/{paper_id}")
 async def attach_paper(run_id: str, paper_id: str) -> dict:
-    """Attach a library paper to a run (doc 4.4)."""
+    """Attach a library paper to a run."""
     storage = get_storage()
     run = storage.get_run(run_id)
     if not run:
@@ -244,7 +244,7 @@ async def attach_paper(run_id: str, paper_id: str) -> dict:
 
 @router.delete("/{run_id}/papers/{paper_id}")
 async def detach_paper(run_id: str, paper_id: str) -> dict:
-    """Detach a paper from a run (doc 4.4)."""
+    """Detach a paper from a run."""
     storage = get_storage()
     run = storage.get_run(run_id)
     if not run:
@@ -268,7 +268,7 @@ async def list_run_papers(run_id: str) -> dict:
 
 @router.get("/{run_id}/state")
 async def get_run_state(run_id: str) -> dict:
-    """Aggregate run state in one request (doc 1A.6).
+    """Aggregate run state in one request.
 
     Returns run, messages, artifacts, sandbox, pending_approvals,
     and event_cursor so the frontend can hydrate in a single shot

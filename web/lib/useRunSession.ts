@@ -57,7 +57,7 @@ export function useRunSession(runId: string | null | undefined) {
         // Single onmessage: semantic type rides in the JSON envelope.
         sse.onMessage((event) => {
           const result = applyRunEvent(event, runId);
-          // Only a real seq gap rehydrates; unknown types are ignored (doc 14.4).
+          // Only a real seq gap rehydrates; unknown types are ignored.
           if (result === "gap") {
             void hydrate().catch((err) => {
               if (active) {

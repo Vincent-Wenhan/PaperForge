@@ -1,4 +1,4 @@
-"""Cheap in-process observability counters (doc 24).
+"""Cheap in-process observability counters.
 
 Backend timestamps and deltas (provider TTFT, event persist time, build
 duration, stream gap total) are tracked here as monotonic gauges. There is no

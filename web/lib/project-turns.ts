@@ -27,8 +27,8 @@ function groupByTask<T>(items: T[], getTaskId: (item: T) => string): Map<string,
   return map;
 }
 
-/** Project messages/steps/approvals/artifacts per task into conversation turns
- * (doc 29). Untracked (pre-16) items fall into a single "untracked" turn. */
+/** Project messages/steps/approvals/artifacts per task into conversation turns.
+ * Untracked (pre-16) items fall into a single "untracked" turn. */
 export function projectTurns(
   tasks: Task[],
   messages: Message[],

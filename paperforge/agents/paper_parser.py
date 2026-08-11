@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 MAX_RETRIES = 3
 MAX_CHUNK_CHARS = 12000
 MAX_CHUNKS = 32
-MAX_MAP_CHUNKS = 16  # chunks fed to the LLM per map call (doc 36.2 hierarchical cap)
+MAX_MAP_CHUNKS = 16  # chunks fed to the LLM per map call
 
 
 def extract_pdf_pages(pdf_path: str | Path) -> list[str]:
@@ -196,7 +196,7 @@ async def parse_paper(
 
 
 def _build_parse_coverage(pages: list[str], chunks: list[str]) -> ParseCoverage:
-    """Reconstruct which PDF pages are covered by the processed chunks (doc 20.2).
+    """Reconstruct which PDF pages are covered by the processed chunks.
 
     Each chunk carries ``[[Page N]]`` markers. Pages whose text appears in at
     least one kept chunk are ``processed``; the rest are ``omitted`` so we never

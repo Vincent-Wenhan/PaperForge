@@ -6,7 +6,7 @@ import { useAppStore, type AgentStep, type Approval, type Event } from "./store"
 export type ApplyRunEventResult = "applied" | "duplicate" | "gap" | "unknown";
 
 // ponytail: workbench stays closed while the user pins it closed; otherwise
-// preview.ready opens it and artifact/file events peek it (doc 16.3).
+// preview.ready opens it and artifact/file events peek it.
 export function inferWorkbenchMode(
   eventType: string,
   current: "closed" | "peek" | "open",

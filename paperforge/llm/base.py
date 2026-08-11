@@ -105,7 +105,7 @@ ProviderEventKind = Literal[
 
 
 class ProviderStreamEvent:
-    """Provider-neutral streaming event (doc 7.3).
+    """Provider-neutral streaming event.
 
     Providers translate their native wire format into one of these kinds so
     the orchestrator never depends on an SDK's event shape.

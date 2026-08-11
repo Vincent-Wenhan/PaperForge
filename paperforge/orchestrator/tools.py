@@ -924,7 +924,7 @@ async def handle_run_sandbox(args: dict[str, Any], ctx: ToolContext) -> ToolResu
 
 def _preview_url_for_sandbox(ctx, sandbox_id: str) -> str:
     """Build the preview URL, preferring an absolute preview origin so a
-    user-generated app never shares an origin with the main app (doc 38)."""
+    user-generated app never shares an origin with the main app."""
     from paperforge.config import get_config
 
     origin = get_config().PREVIEW_ORIGIN.rstrip("/")
@@ -1070,7 +1070,7 @@ async def handle_restart_sandbox(args: dict[str, Any], ctx: ToolContext) -> Tool
 
 
 async def handle_finish(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
-    """Complete the current task without ending the Run/Thread (doc 5).
+    """Complete the current task without ending the Run/Thread.""
 
     A completed task must not mark the whole Run as done, because the
     Run is a persistent thread that can receive follow-up tasks.

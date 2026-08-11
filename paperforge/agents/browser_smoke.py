@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urljoin
 
-# Dev-server noise that must not pollute product acceptance (doc 25.3).
+# Dev-server noise that must not pollute product acceptance.
 IGNORED_REQUEST_PATTERNS = [
     re.compile(r"/favicon\.ico$"),
     re.compile(r"/_next/webpack-hmr"),

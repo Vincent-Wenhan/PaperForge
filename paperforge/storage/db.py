@@ -310,7 +310,7 @@ class Storage:
         query: str | None = None,
         archived: bool = False,
     ) -> list[dict[str, Any]]:
-        # Filtering in SQL (doc 21.4) instead of LIMIT/OFFSET then Python-side.
+        # Filtering in SQL instead of LIMIT/OFFSET then Python-side.
         clauses: list[str] = []
         params: list[Any] = []
         if archived:
@@ -659,7 +659,7 @@ class Storage:
         """Create a task, optionally under an explicit task_id.
 
         Callers that already generated a task_id to thread through the user
-        message pass it here so User Message.task_id == Task.id (doc 4).
+        message pass it here so User Message.task_id == Task.id.
         """
         now = datetime.utcnow().isoformat()
         task_id = task_id or f"task_{uuid.uuid4().hex}"
@@ -825,7 +825,7 @@ class Storage:
 
         Unlike ``claim_next_task`` (global oldest), this claims the exact task
         the per-run worker is about to execute, so concurrent runs can never
-        cross-claim each other's tasks (doc 7 / doc 28).
+        cross-claim each other's tasks.
         """
         with self._lock, self._conn() as conn:
             conn.execute("BEGIN IMMEDIATE")
@@ -866,7 +866,7 @@ class Storage:
             return [dict(r) for r in rows]
 
     def claim_next_task(self, worker_id: str, lease_until: str) -> dict[str, Any] | None:
-        """Claim the next claimable task, serializing per run (doc 28).
+        """Claim the next claimable task, serializing per run.
 
         A run may have at most one task 'running' at a time: a task can only
         be claimed if its run has no other running task. This replaces the
@@ -914,7 +914,7 @@ class Storage:
         worker_id: str,
         lease_until: str,
     ) -> bool:
-        """Extend the lease for a task still owned by ``worker_id`` (doc 37.2).
+        """Extend the lease for a task still owned by ``worker_id``.
 
         Returns True only if the renewal succeeded (the caller still owns it).
         """
@@ -1494,7 +1494,7 @@ class Storage:
             rows = conn.execute(query, (run_id,)).fetchall()
             return [dict(r) for r in rows]
 
-    # ===== Run event persistence (doc 11) =====
+    # ===== Run event persistence =====
 
     def append_run_event(
         self,

@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 
 class VerificationGates(BaseModel):
-    """Hard gates (doc 24). A gate failure cannot be overridden by an overall score."""
+    """Hard gates. A gate failure cannot be overridden by an overall score."""
 
     workspace_ok: bool = False
     typecheck_ok: bool = False

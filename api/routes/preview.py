@@ -76,7 +76,7 @@ async def preview_status(run_id: str) -> dict:
     methods=FORWARDED_METHODS,
 )
 async def proxy_preview(sandbox_id: str, path: str, request: Request) -> Response:
-    """Proxy a request to the sandbox's Next.js dev server (doc 18.3).
+    """Proxy a request to the sandbox's Next.js dev server.
 
     Uses the shared lifespan AsyncClient and streams the upstream response
     so large payloads / SSE are not fully buffered server-side.

@@ -1,4 +1,4 @@
-"""Observability layer: in-process metrics counters (doc 24)."""
+"""Observability layer: in-process metrics counters."""
 
 from paperforge.observability.metrics import MetricsRegistry, get_metrics
 

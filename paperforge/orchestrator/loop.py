@@ -44,7 +44,7 @@ APPROVAL_TIMEOUT = 300  # 5 minutes
 
 
 def _approval_spec(name: str) -> ApprovalToolSpec:
-    """Map a tool name to its risk for the approval policy (doc 17).
+    """Map a tool name to its risk for the approval policy.
 
     Mirrors the resource-gate `ToolSpec` risk in workspace.py. Sandbox exec
     tools are isolated-local by default, so they're trusted under
@@ -68,7 +68,7 @@ def _approval_spec(name: str) -> ApprovalToolSpec:
 
 
 class RunPhase(str, Enum):
-    """Tracked only for the UI's displayed step; not a tool-permission gate (doc 14).
+    """Tracked only for the UI's displayed step; not a tool-permission gate.
 
     `DONE` was removed as a thread terminal — a finished task leaves the Run
     active as a persistent thread; the only true terminal is ``archived_at``.
@@ -122,7 +122,7 @@ class Orchestrator:
         # Cancel and completed (archived) runs are terminal checkpoints. A
         # later worker invocation must not silently resume them. A "done"
         # status is not terminal: tasks complete independently and the Run
-        # stays an active persistent thread (doc 5).
+        # stays an active persistent thread.
         prev_status = self.storage.get_run_status(run_id) or "active"
         run_row = self.storage.get_run(run_id) or {}
         if prev_status in {"cancelled"} or run_row.get("archived_at"):
@@ -306,7 +306,7 @@ class Orchestrator:
                             stopped_result is not None
                             and stopped_result.code == "needs_user_input"
                         )
-                        # Task completion != Run completion (doc 5): finishing a
+                        # Task completion != Run completion: finishing a
                         # task leaves the Run active as a persistent thread.
                         terminal_status = (
                             "waiting_user"
@@ -385,7 +385,7 @@ class Orchestrator:
         run_id: str,
     ) -> str:
         """Execute a single tool call, applying resource gate and HITL approval."""
-        # Resource gate is the sole tool-prerequisite authority (doc 14).
+        # Resource gate is the sole tool-prerequisite authority.
         workspace_state = load_workspace_state(self.storage, run_id)
         allowed, missing = check_tool_prerequisites(call.name, workspace_state)
         if not allowed:
@@ -401,7 +401,7 @@ class Orchestrator:
                 retryable=True,
             ).model_dump_json()
 
-        # HITL: risk-based approval gate (doc 17). Workspace reads and writes
+        # HITL: risk-based approval gate. Workspace reads and writes
         # are trusted under TRUST_WORKSPACE so a continuous agent can patch its
         # own workspace without a modal every turn; only network/destructive
         # tools prompt.
@@ -504,7 +504,7 @@ class Orchestrator:
         - message.completed (with message_id + content) on success
         - message.failed (with message_id + error) on failure
 
-        Consumes `ProviderStreamEvent` (doc 9/11) so the orchestrator never
+        Consumes `ProviderStreamEvent` so the orchestrator never
         depends on a provider-specific delta shape. Falls back to `stream()`
         chunks or plain `chat()` if the provider lacks a native event stream.
         """

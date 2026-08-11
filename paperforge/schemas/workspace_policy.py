@@ -1,4 +1,4 @@
-"""SafeWorkspacePolicy and workspace patch application (doc 9.2 / 9.4 / 9.5).
+"""SafeWorkspacePolicy and workspace patch application.
 
 Replaces the exact-3-file allowlist (BUSINESS_FILES) with a bounded-policy
 check: finite writable roots, no traversal, protected files, size limits.

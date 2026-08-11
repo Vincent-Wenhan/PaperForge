@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 MAX_RETRIES = 3
 
 # Generation V3 batch order: types/data first so shared contracts exist before
-# components and routes that import them (doc 19.2).
+# components and routes that import them.
 GENERATION_ORDER = [
     "type",
     "fixture",
@@ -185,7 +185,7 @@ async def generate_nextjs_app(
         # Step 3: write each generated file. AppFile.path is already validated
         # against SafeWorkspacePolicy, so no path traversal is possible. Each
         # file is one logical edit, captured as a workspace revision so the app
-        # can be rolled back or replayed per edit (doc 9.6).
+        # can be rolled back or replayed per edit.
         for f in validated.files:
             target = (temp_dir / f.path).resolve()
             try:

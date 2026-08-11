@@ -302,7 +302,7 @@ export const api = {
     return resp.blob();
   },
 
-  // === App-based file API (doc 8.4) ===
+  // === App-based file API ===
   listAppTree: async (appId: string, runId?: string): Promise<{ tree: any[] }> => {
     const query = runId ? `?run_id=${encodeURIComponent(runId)}` : "";
     return getJson(`/api/apps/${appId}/tree${query}`);
@@ -456,7 +456,7 @@ export class SSEClient {
     };
 
     // Single onmessage: the semantic type lives in the JSON envelope, so we
-    // no longer need named `event:` blocks or per-type subscriptions (doc 14.3).
+    // no longer need named `event:` blocks or per-type subscriptions.
     this.es.onmessage = (e: MessageEvent) => {
       try {
         const event = JSON.parse(e.data) as RunEvent;

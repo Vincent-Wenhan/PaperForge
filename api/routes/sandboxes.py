@@ -91,7 +91,7 @@ async def list_sandboxes(status: str | None = None) -> list[dict]:
 
 @router.get("/latest")
 async def get_latest_sandbox(run_id: str) -> dict | None:
-    """Get the most recent sandbox for a run (doc 1A.11).
+    """Get the most recent sandbox for a run.
 
     Used by the frontend during hydration to restore the active sandbox
     without relying on transient SSE events.

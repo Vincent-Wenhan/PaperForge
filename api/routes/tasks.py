@@ -65,7 +65,7 @@ async def get_task(run_id: str, task_id: str) -> dict:
 
 @router.get("/{task_id}/steps")
 async def get_task_steps(run_id: str, task_id: str) -> list[dict]:
-    """Per-task step timeline, oldest first — survives reload (doc 16)."""
+    """Per-task step timeline, oldest first — survives reload."""
     storage = get_storage()
     task = storage.get_task(task_id)
     if not task or task.get("run_id") != run_id:

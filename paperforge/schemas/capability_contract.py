@@ -1,4 +1,4 @@
-"""CapabilityContract and ParseCoverage schemas (doc 20.1 / 20.2).
+"""CapabilityContract and ParseCoverage schemas.
 
 A CapabilityContract is the typed boundary of a paper-derived capability:
 what it takes in, what it produces, its preconditions/failure modes, how it

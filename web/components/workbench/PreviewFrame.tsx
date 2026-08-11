@@ -12,7 +12,7 @@ export function PreviewFrame({ sandbox, preview }: { sandbox?: any; preview?: an
   const { toast } = useToast();
 
   // Prefer a server-returned preview origin so production can point the
-  // iframe at an isolated origin (doc 24). Fall back to the proxied API URL.
+  // iframe at an isolated origin. Fall back to the proxied API URL.
   const previewSrc =
     preview?.preview_url
     ?? sandbox?.preview_url

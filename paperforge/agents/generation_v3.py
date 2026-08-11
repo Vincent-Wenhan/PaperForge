@@ -1,12 +1,4 @@
-"""Generation V3: plan-only call, then bounded per-kind batches (doc 18-20).
-
-Rather than one giant JSON with the whole app, V3:
-1. ``plan_workspace`` — a single plan-only LLM call returning a WorkspacePlan.
-2. ``group_plan_files`` — order the plan's files by GENERATION_ORDER.
-3. ``generate_batch`` — one bounded LLM call per batch, with dependency-aware
-   context (only already-written dependency files), so a failing batch can be
-   retried without regenerating the whole app.
-"""
+"""Generation V3: plan-only call, then bounded per-kind batches."""
 
 from __future__ import annotations
 
@@ -38,7 +30,7 @@ TS_IMPORT_RE = re.compile(r"""import(?:[\s\S]*?)from\s+['"]([^'"]+)['"]""")
 
 
 def parse_local_imports(source: str) -> set[str]:
-    """Collect local imports that start with the ``@/`` alias (doc 20.1)."""
+    """Collect local imports that start with the ``@/`` alias."""
     return {
         m.group(1)
         for m in TS_IMPORT_RE.finditer(source) or IMPORT_RE.finditer(source)
@@ -73,7 +65,7 @@ def group_plan_files(plan: WorkspacePlan) -> list[tuple[str, list[FileSpec]]]:
 
 
 async def plan_workspace(prd: dict, llm: LLMClient) -> WorkspacePlan:
-    """One plan-only call that returns a WorkspacePlan (doc 19.1)."""
+    """One plan-only call that returns a WorkspacePlan."""
     response = await llm.chat(
         model=get_config().GENERATOR_MODEL,
         messages=[
@@ -107,7 +99,7 @@ def build_generation_context(
     workspace: Path,
     max_chars: int = 80_000,
 ) -> list[dict[str, str]]:
-    """Surface only the files this batch depends on (dependency-aware, doc 20)."""
+    """Surface only the files this batch depends on (dependency-aware)."""
     required = set()
     for spec in specs:
         required.update(spec.depends_on)
@@ -234,7 +226,7 @@ async def generate_nextjs_app_v3(
     progress=None,
 ) -> dict[str, Any]:
     """High-level Generation V3 entry: plan-only call, then bounded per-kind
-    batches with dependency-aware context (doc 18-20/30).
+    batches with dependency-aware context.
 
     Reuses the template scaffold + atomic promotion from nextjs_generator so
     V3 keeps the same safe workspace policy without re-deriving it.

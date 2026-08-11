@@ -248,7 +248,7 @@ async def download_sandbox_zip(sandbox_id: str) -> StreamingResponse:
 
 @router.get("/sandboxes/{sandbox_id}/files/{file_path:path}/download")
 async def download_single_file(sandbox_id: str, file_path: str) -> StreamingResponse:
-    """Download a single file from a sandbox (doc 8.4)."""
+    """Download a single file from a sandbox."""
     storage = get_storage()
     sandbox = storage.get_sandbox(sandbox_id)
     if not sandbox:

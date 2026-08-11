@@ -44,5 +44,5 @@ class CapabilityCard(BaseModel):
 
     evidence: list[Evidence] = Field(default_factory=list)
 
-    # Machine-readable contract for the Product Planner (doc 21).
+    # Machine-readable contract for the Product Planner.
     capability_contract: dict[str, Any] | None = None

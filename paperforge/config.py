@@ -46,12 +46,11 @@ class Settings(BaseSettings):
     SANDBOX_PIDS_LIMIT: int = 128
     SANDBOX_RUN_AS_USER: str = "node"
     # Preview origin for produced apps; must differ from the main app origin
-    # so user apps never share an origin with the host (doc 38).
+    # so user apps never share an origin with the host.
     PREVIEW_ORIGIN: str = "http://localhost"
-    # Sandbox network policy (doc 38.2): generated apps ship with mock
-    # adapters, so the container is created with its network disabled by
-    # default. Operators flip this on only after opting into real API
-    # integration.
+    # Generated apps ship with mock adapters, so the container is created
+    # with its network disabled by default. Operators flip this on only after
+    # opting into real API integration.
     PREVIEW_ALLOW_NETWORK: bool = False
 
     # Scheduler

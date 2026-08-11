@@ -1,4 +1,4 @@
-"""ProgressReporter: creates and updates Steps for a task (doc 13.2).
+"""ProgressReporter: creates and updates Steps for a task.
 
 Emits step.started / step.progress / step.completed / step.failed so the
 frontend conversation timeline can show live per-step activity.

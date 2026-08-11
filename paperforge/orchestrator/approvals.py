@@ -2,7 +2,7 @@
 
 The registry just tracks pending approvals and their resolution events.
 The policy decides whether a tool needs approval at all — using a
-risk-based model (doc 17) instead of a flat dangerous-tool set, so a
+risk-based model instead of a flat dangerous-tool set, so a
 workspace write inside an isolated local sandbox does not prompt on every
 edit.
 """
@@ -35,7 +35,7 @@ class ToolSpec:
 
 @dataclass(frozen=True)
 class ApprovalPolicy:
-    """Risk-based gating for whether a tool requires HITL approval (doc 17).
+    """Risk-based gating for whether a tool requires HITL approval.
 
     - ``ALWAYS``: every non-read tool prompts.
     - ``MANUAL``: nothing prompts; the user resolves everything by hand.
