@@ -6,12 +6,10 @@ import logging
 import uuid as _uuid
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from api.deps import get_sandbox_manager_dep
 from paperforge.orchestrator.events import EventEmitter, get_event_manager
-from paperforge.orchestrator.loop import Orchestrator
 from paperforge.orchestrator.tasks import get_run_task_manager, RunQueue
 from paperforge.storage.db import get_storage
 
@@ -43,7 +41,7 @@ def _derive_title(content: str, max_len: int = 50) -> str:
 
 
 @router.post("/{run_id}/messages")
-async def send_message(run_id: str, req: MessageCreate, request: Request) -> dict:
+async def send_message(run_id: str, req: MessageCreate) -> dict:
     """Send a user message to the run. Triggers the orchestrator asynchronously.
 
     `paper_ids` attach library papers as explicit context so the LLM never
@@ -109,17 +107,11 @@ async def send_message(run_id: str, req: MessageCreate, request: Request) -> dic
     for paper_id in req.paper_ids:
         storage.attach_paper_to_run(run_id, paper_id)
 
-    orchestrator = Orchestrator(
-        sandbox_manager=get_sandbox_manager_dep(request),
-    )
+    # The queue stores only the task id and rebuilds execution from the DB
+    # task row, so a restart can recover queued work (doc 8).
     await _run_queue.enqueue(
         run_id,
         task["id"],
-        orchestrator.run(
-            run_id=run_id,
-            user_message=req.content,
-            task_id=task["id"],
-        ),
     )
     return {
         "status": "queued",

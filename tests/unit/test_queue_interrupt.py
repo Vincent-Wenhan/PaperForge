@@ -72,10 +72,7 @@ def test_get_next_queued_task_skips_non_queued_statuses(storage: Storage):
 @pytest.mark.asyncio
 async def test_run_queue_marks_task_running_then_completed(storage: Storage):
     """RunQueue drives task status so the DB is the source of truth."""
-    from paperforge.orchestrator.loop import Orchestrator
     from paperforge.orchestrator.tasks import RunQueue
-    from paperforge.llm.mock_provider import MockLLMClient
-    from paperforge.llm.base import ChatResponse
 
     run = storage.create_run("run_q4", "Queue", status="active")
     storage.add_message(run_id=run["id"], role="user", content="hello")
@@ -84,17 +81,10 @@ async def test_run_queue_marks_task_running_then_completed(storage: Storage):
         run_id=run["id"], title="Task", goal="hello", status="queued",
     )
 
-    class StopLLM(MockLLMClient):
-        async def chat(self, *args, **kwargs):
-            return ChatResponse(content="Done", finish_reason="stop")
-
-    orc = Orchestrator(llm=StopLLM(), storage=storage)
+    # The queue stores only the task id and rebuilds execution from the DB —
+    # no coroutine is passed through, so a restart can recover queued work.
     queue = RunQueue(storage=storage)
-
-    await queue.enqueue(
-        run["id"], task["id"],
-        orc.run(run_id=run["id"], user_message="hello", task_id=task["id"]),
-    )
+    await queue.enqueue(run["id"], task["id"])
 
     # Wait for the worker to drain the single queued task.
     for _ in range(100):

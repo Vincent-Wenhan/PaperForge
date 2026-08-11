@@ -100,20 +100,22 @@ class RunQueue:
     """Serializes orchestrator executions per run, so follow-up messages can be
     queued or interrupt the running task instead of being rejected with 409.
 
-    The DB `tasks` table is the source of truth; this queue is only the
-    in-process executor that drains queued tasks for a run.
+    The DB `tasks` table is the *only* source of truth for the queue: the queue
+    stores task ids (never coroutines), claims each task exactly, and rebuilds
+    the orchestrator run from the task's goal. On restart, queued/stale tasks
+    are recovered from the DB so no coroutine is lost (doc 8 / doc 28).
     """
 
     def __init__(self, storage=None) -> None:
-        self._queues: dict[str, asyncio.Queue[tuple[str, Coroutine]]] = {}
+        self._queues: dict[str, asyncio.Queue[str]] = {}
         self._workers: dict[str, asyncio.Task] = {}
         self._manager = get_run_task_manager()
         self._storage = storage
 
-    async def enqueue(self, run_id: str, task_id: str, coro: Coroutine) -> None:
+    async def enqueue(self, run_id: str, task_id: str) -> None:
         if run_id not in self._queues:
             self._queues[run_id] = asyncio.Queue()
-        await self._queues[run_id].put((task_id, coro))
+        await self._queues[run_id].put(task_id)
 
         worker = self._workers.get(run_id)
         if worker is None or worker.done():
@@ -124,9 +126,9 @@ class RunQueue:
         storage = self._storage or _default_storage()
         try:
             while queue is not None and not queue.empty():
-                task_id, coro = await queue.get()
+                task_id = await queue.get()
                 started_at = asyncio.get_event_loop().time()
-                executed = await self._claim_and_run(run_id, task_id, coro, storage)
+                executed = await self._claim_and_run(run_id, task_id, storage)
                 if executed:
                     try:
                         from paperforge.observability.metrics import get_metrics
@@ -144,23 +146,40 @@ class RunQueue:
             self._queues.pop(run_id, None)
             self._workers.pop(run_id, None)
 
-    async def _claim_and_run(self, run_id, task_id, coro, storage):
-        """Claim the DB task with a lease, run it while renewing the lease, and
-        release on completion so a restart can reclaim stale running rows."""
+    async def _claim_and_run(self, run_id, task_id, storage):
+        """Claim the exact DB task with a lease, rebuild the orchestrator run
+        from the task row, and release on completion so a restart can reclaim
+        stale running rows."""
         if storage is None:
             return False
         from paperforge.config import get_config
         from datetime import timedelta
+        from paperforge.orchestrator.loop import Orchestrator
+        from paperforge.sandbox.docker_runner import DockerSandboxManager
+
+        task = storage.get_task(task_id)
+        if not task or task.get("run_id") != run_id:
+            return False
 
         cfg = get_config()
         worker_id = cfg.WORKER_ID
         lease_until = datetime.utcnow() + timedelta(seconds=cfg.WORKER_LEASE_SECONDS)
-        claimed = storage.claim_next_task(
+        claimed = storage.claim_task(
+            task_id=task_id,
             worker_id=worker_id,
             lease_until=lease_until.isoformat(),
         )
-        if not claimed or claimed["id"] != task_id:
+        if not claimed:
             return False
+
+        # Reconstruct execution entirely from the DB task (doc 8): no coroutine
+        # is passed through the queue, so a restart can restore queued work.
+        orchestrator = Orchestrator(sandbox_manager=DockerSandboxManager(storage))
+        coro = orchestrator.run(
+            run_id=run_id,
+            user_message=(task.get("goal") or ""),
+            task_id=task_id,
+        )
 
         # Renew the lease on a heartbeat while the task runs (doc 37.2).
         heartbeat = asyncio.create_task(
@@ -173,10 +192,10 @@ class RunQueue:
             )
         )
         self._manager.start(run_id, coro)
-        task = self._manager.tasks.get(run_id)
+        run_task = self._manager.tasks.get(run_id)
         try:
-            if task is not None:
-                await asyncio.shield(task)
+            if run_task is not None:
+                await asyncio.shield(run_task)
         except asyncio.CancelledError:
             pass
         except Exception:
@@ -193,6 +212,14 @@ class RunQueue:
                 if status == "running":
                     storage.update_task(task_id=task_id, status="completed")
         return True
+
+    async def enqueue_coro(self, run_id: str, task_id: str, coro: Coroutine) -> None:
+        """Compatibility shim for the older queue API that accepted a coroutine.
+
+        The coroutine is no longer persisted — the queue stores only the task
+        id and rebuilds the run from the DB. The coroutine is ignored.
+        """
+        await self.enqueue(run_id, task_id)
 
     async def _heartbeat(self, task_id, worker_id, *, interval, lease_seconds, storage):
         while True:

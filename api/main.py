@@ -29,6 +29,14 @@ async def lifespan(app: FastAPI):
     # UI doesn't stay stuck on "running" with no worker (doc 21.2).
     storage.reconcile_stale_tasks()
 
+    # Restart recovery: re-enqueue any tasks that were still queued when the
+    # process shut down. The queue stores only task ids (never coroutines), so
+    # queued work is restored purely from the DB (doc 8 / doc 28).
+    from api.routes.messages import _run_queue
+
+    for queued in storage.list_queued_tasks():
+        await _run_queue.enqueue(queued["run_id"], queued["id"])
+
     # Shared preview proxy client (doc 18.2): one keepalive pool across
     # all sandbox requests instead of a fresh AsyncClient per request.
     import httpx

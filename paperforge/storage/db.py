@@ -812,6 +812,57 @@ class Storage:
             ).fetchall()
         return [self._decode_step(dict(r)) for r in rows]
 
+    def claim_task(
+        self,
+        *,
+        task_id: str,
+        worker_id: str,
+        lease_until: str,
+    ) -> dict[str, Any] | None:
+        """Atomically claim a specific queued task by id under a worker lease.
+
+        Unlike ``claim_next_task`` (global oldest), this claims the exact task
+        the per-run worker is about to execute, so concurrent runs can never
+        cross-claim each other's tasks (doc 7 / doc 28).
+        """
+        with self._lock, self._conn() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                row = conn.execute(
+                    "SELECT * FROM tasks WHERE id = ? AND status = 'queued'",
+                    (task_id,),
+                ).fetchone()
+                if not row:
+                    conn.execute("COMMIT")
+                    return None
+                conn.execute(
+                    """UPDATE tasks
+                       SET status = 'running',
+                           lease_owner = ?,
+                           lease_until = ?,
+                           started_at = COALESCE(started_at, CURRENT_TIMESTAMP),
+                           attempt = attempt + 1
+                       WHERE id = ? AND status = 'queued'""",
+                    (worker_id, lease_until, task_id),
+                )
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+        return self.get_task(task_id)
+
+    def list_queued_tasks(self, run_id: str | None = None) -> list[dict[str, Any]]:
+        """Queued tasks, optionally scoped to a run, for restart recovery."""
+        query = "SELECT * FROM tasks WHERE status = 'queued'"
+        params: list[Any] = []
+        if run_id:
+            query += " AND run_id = ?"
+            params.append(run_id)
+        query += " ORDER BY priority DESC, created_at ASC"
+        with self._conn() as conn:
+            rows = conn.execute(query, params).fetchall()
+            return [dict(r) for r in rows]
+
     def claim_next_task(self, worker_id: str, lease_until: str) -> dict[str, Any] | None:
         """Atomically claim the oldest queued task under a worker lease (doc 21.2)."""
         with self._lock, self._conn() as conn:

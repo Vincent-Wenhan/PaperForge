@@ -53,3 +53,32 @@ def test_reconcile_stale_tasks_requeues_expired_lease(storage: Storage):
     # It is claimable again.
     reclaimed = storage.claim_next_task("worker-2", _lease_until(300))
     assert reclaimed["id"] == task["id"]
+
+
+def test_claim_task_cannot_cross_claim_other_runs(storage: Storage):
+    """Exact claim must never take a task belonging to another run (doc 7)."""
+    run_a = storage.create_run("run_ca", "A", status="active")
+    run_b = storage.create_run("run_cb", "B", status="active")
+    a = storage.create_task(run_id=run_a["id"], title="a", status="queued")
+    b = storage.create_task(run_id=run_b["id"], title="b", status="queued")
+
+    # Exact-claim task A; B must remain untouched (no global oldest stealing).
+    claimed = storage.claim_task(task_id=a["id"], worker_id="worker-1", lease_until=_lease_until(300))
+    assert claimed["id"] == a["id"]
+    assert storage.get_task(a["id"])["status"] == "running"
+    assert storage.get_task(b["id"])["status"] == "queued"
+
+    # Exact-claim is idempotent-guarded: cannot re-claim a running task.
+    assert storage.claim_task(task_id=a["id"], worker_id="worker-2", lease_until=_lease_until(300)) is None
+
+
+def test_list_queued_tasks_for_restart_recovery(storage: Storage):
+    """Queued tasks are listable for startup re-enqueue (doc 8)."""
+    run_a = storage.create_run("run_lq", "Queue", status="active")
+    t1 = storage.create_task(run_id=run_a["id"], title="t1", status="queued", priority=50)
+    t2 = storage.create_task(run_id=run_a["id"], title="t2", status="queued", priority=100)
+
+    queued = storage.list_queued_tasks()
+    assert {q["id"] for q in queued} == {t1["id"], t2["id"]}
+    # Ordered by priority desc.
+    assert queued[0]["id"] == t2["id"]
