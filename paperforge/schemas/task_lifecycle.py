@@ -21,8 +21,7 @@ class TaskStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
-# Allowed transitions. Not every edge is used today, but the set is
-# enforceable so future code can't invent an invalid move (doc 27).
+# Allowed transitions; empty sets are terminal.
 ALLOWED_TRANSITIONS: Final[dict[TaskStatus, set[TaskStatus]]] = {
     TaskStatus.QUEUED: {
         TaskStatus.RUNNING,

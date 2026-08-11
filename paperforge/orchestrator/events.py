@@ -232,10 +232,9 @@ class EventManager:
     async def broadcast(self, event: Event) -> None:
         rid = event.run_id or ""
 
-        # Persist FIRST so the seq assigned by SQLite is authoritative.
-        # If persistence fails, stop pretending to be a durable stream:
-        # raiding seq here would let the browser see seq=N that never
-        # reaches the DB, causing replay/divergence on recovery (doc 23).
+        # Persist first so DB seq is authoritative; on failure, stop pretending
+        # to be a durable stream (raiding an in-memory seq would let the browser
+        # see seq=N that never reaches the DB).
         try:
             storage = self._storage
             if storage is None:

@@ -67,8 +67,6 @@ async def plan_product(
         source_label = "composition"
     else:
         # Single-paper flow: synthesize a minimal composition from raw cards.
-        # Prefer the machine-readable CapabilityContract when the parser has
-        # produced one; the human-readable card remains for display (doc 21).
         cards: list[dict[str, Any]] = []
         contracts: list[dict[str, Any]] = []
         for paper_id in card_ids:

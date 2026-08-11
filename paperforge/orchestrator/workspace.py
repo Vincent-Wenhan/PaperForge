@@ -199,7 +199,6 @@ def check_tool_prerequisites(
 ) -> tuple[bool, list[str]]:
     spec = TOOL_SPECS.get(tool_name)
     if spec is None:
-        # Fail closed: a tool without a spec is not allowed to run.
         return False, ["unknown_tool"]
     available = available_resources(state)
 

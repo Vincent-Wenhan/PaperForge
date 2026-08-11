@@ -179,10 +179,6 @@ async def parse_paper(
             card["paper_id"] = paper_id
             processed_chunks = chunks[: min(len(mapped), MAX_MAP_CHUNKS)]
             coverage = _build_parse_coverage(pages, processed_chunks).model_dump()
-            # Surface the machine-readable contract (if the reduce step emitted
-            # one) so the Product Planner references it (doc 21). The nested
-            # parse_coverage is a parser-internal detail; consumers read
-            # card["parse_coverage"] directly.
             card["parse_coverage"] = coverage
             return card
         except Exception as exc:

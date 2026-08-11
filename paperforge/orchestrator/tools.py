@@ -724,8 +724,6 @@ async def handle_verify(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
     )
     await ctx.emit.artifact_created("verification_report", str(ctx.storage.reports_dir), artifact_id)
 
-    # Verification hard gates are the authority (doc 10/31): the tool itself
-    # succeeds (report produced), and readiness is expressed by the gates.
     technical_ready = bool(report.get("technical_ready"))
     preview_allowed = bool(report.get("preview_allowed"))
     product_ready = bool(report.get("product_ready"))
@@ -789,9 +787,7 @@ async def handle_build_and_repair(args: dict[str, Any], ctx: ToolContext) -> Too
             app_path=app_path,
         )
         revision_id = revision["id"]
-    # Hard gates control readiness; the tool succeeds once it produced a report
-    # (doc 10/31). Not ready is surfaced via the gates + a retryable code so the
-    # orchestrator/LLM can decide whether to attempt another repair.
+
     technical_ready = bool(report.get("technical_ready"))
     product_ready = bool(report.get("product_ready"))
     return ToolResult(
@@ -1233,8 +1229,7 @@ def _latest_app_artifact_id(ctx: ToolContext) -> str | None:
     return None
 
 
-# Registry of name → handler. Kept at module end so it can reference every
-# handler. The consistency test asserts this matches TOOL_DEFINITIONS.
+# name → handler; consistency test asserts this matches TOOL_DEFINITIONS.
 TOOL_HANDLERS: dict[str, Any] = {
     "parse_paper": handle_parse_paper,
     "compose_capabilities": handle_compose,

@@ -44,7 +44,5 @@ class CapabilityCard(BaseModel):
 
     evidence: list[Evidence] = Field(default_factory=list)
 
-    # Optional machine-readable contract for the Product Planner (doc 21).
-    # Parser output payload nests it as { capability_card, capability_contract,
-    # parse_coverage }.
+    # Machine-readable contract for the Product Planner (doc 21).
     capability_contract: dict[str, Any] | None = None
