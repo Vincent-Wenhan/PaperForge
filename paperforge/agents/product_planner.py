@@ -66,8 +66,11 @@ async def plan_product(
         source_data = composition
         source_label = "composition"
     else:
-        # Single-paper flow: synthesize a minimal composition from raw cards
+        # Single-paper flow: synthesize a minimal composition from raw cards.
+        # Prefer the machine-readable CapabilityContract when the parser has
+        # produced one; the human-readable card remains for display (doc 21).
         cards: list[dict[str, Any]] = []
+        contracts: list[dict[str, Any]] = []
         for paper_id in card_ids:
             paper = storage.get_paper(paper_id)
             if not paper:
@@ -77,11 +80,14 @@ async def plan_product(
                 raise ValueError(f"Capability card not found for paper: {paper_id}")
             card = json.loads(Path(card_path).read_text(encoding="utf-8"))
             cards.append(card)
+            if card.get("capability_contract"):
+                contracts.append(card["capability_contract"])
 
         source_data = {
             "composition_id": f"single_{card_ids[0]}",
             "source_cards": list(card_ids),
             "capability_cards": cards,
+            "capability_contracts": contracts if contracts else None,
             "product_candidates": build_single_paper_candidates(cards),
         }
         source_label = "single-paper"

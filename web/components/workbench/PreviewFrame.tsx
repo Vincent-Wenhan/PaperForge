@@ -11,6 +11,13 @@ export function PreviewFrame({ sandbox, preview }: { sandbox?: any; preview?: an
   const [viewport, setViewport] = useState<"desktop" | "tablet" | "mobile">("desktop");
   const { toast } = useToast();
 
+  // Prefer a server-returned preview origin so production can point the
+  // iframe at an isolated origin (doc 24). Fall back to the proxied API URL.
+  const previewSrc =
+    preview?.preview_url
+    ?? sandbox?.preview_url
+    ?? (sandbox?.id ? api.getPreviewUrl(sandbox.id) : null);
+
   const handleRefresh = () => {
     if (iframeRef.current) {
       iframeRef.current.src = iframeRef.current.src;
@@ -119,7 +126,7 @@ export function PreviewFrame({ sandbox, preview }: { sandbox?: any; preview?: an
       <div className="flex-1 overflow-hidden flex justify-center bg-muted/20">
         <iframe
           ref={iframeRef}
-          src={api.getPreviewUrl(sandbox.id)}
+          src={previewSrc ?? ""}
           className="border-0 transition-all"
           style={{ width: viewportWidth, height: "100%" }}
           title="Preview"

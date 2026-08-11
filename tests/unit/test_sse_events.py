@@ -24,7 +24,8 @@ from paperforge.storage.db import Storage
 @pytest.mark.asyncio
 async def test_sse_event_envelope_contract(storage: Storage):
     """Each emitted event must carry id, seq, run_id, type, ts, payload."""
-    mgr = EventManager()
+    storage.create_run("run_env", "Env Test", status="active")
+    mgr = EventManager(storage=storage)
     emitter = EventEmitter(run_id="run_env", manager=mgr)
 
     await emitter.text("first")
@@ -144,7 +145,7 @@ async def test_artifact_created_emits_fetchable_artifact(storage: Storage):
         metadata={"source": "test"},
     )
 
-    mgr = EventManager()
+    mgr = EventManager(storage=storage)
     emitter = EventEmitter(run_id="run_art", manager=mgr)
     await emitter.artifact_created(
         artifact_type="capability_card",

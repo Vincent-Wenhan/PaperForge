@@ -370,25 +370,7 @@ async def dispatch_tool(
     ctx: ToolContext,
 ) -> str:
     """Dispatch a tool call to the appropriate handler. Returns the result as a JSON string."""
-    handlers = {
-        "parse_paper": handle_parse_paper,
-        "compose_capabilities": handle_compose,
-        "plan_product": handle_plan_product,
-        "generate_nextjs_app": handle_generate,
-        "verify_app": handle_verify,
-        "build_and_repair": handle_build_and_repair,
-        "repair_app": handle_repair,
-        "run_in_sandbox": handle_run_sandbox,
-        "stop_sandbox": handle_stop_sandbox,
-        "restart_sandbox": handle_restart_sandbox,
-        "inspect_workspace": handle_inspect_workspace,
-        "read_workspace_file": handle_read_workspace_file,
-        "apply_workspace_patch": handle_apply_workspace_patch,
-        "run_checks": handle_run_checks,
-        "finish": handle_finish,
-    }
-
-    handler = handlers.get(name)
+    handler = TOOL_HANDLERS.get(name)
     if not handler:
         result = ToolResult(
             ok=False,
@@ -1249,3 +1231,24 @@ def _latest_app_artifact_id(ctx: ToolContext) -> str | None:
     ):
         return artifact["id"]
     return None
+
+
+# Registry of name → handler. Kept at module end so it can reference every
+# handler. The consistency test asserts this matches TOOL_DEFINITIONS.
+TOOL_HANDLERS: dict[str, Any] = {
+    "parse_paper": handle_parse_paper,
+    "compose_capabilities": handle_compose,
+    "plan_product": handle_plan_product,
+    "generate_nextjs_app": handle_generate,
+    "verify_app": handle_verify,
+    "build_and_repair": handle_build_and_repair,
+    "repair_app": handle_repair,
+    "run_in_sandbox": handle_run_sandbox,
+    "stop_sandbox": handle_stop_sandbox,
+    "restart_sandbox": handle_restart_sandbox,
+    "inspect_workspace": handle_inspect_workspace,
+    "read_workspace_file": handle_read_workspace_file,
+    "apply_workspace_patch": handle_apply_workspace_patch,
+    "run_checks": handle_run_checks,
+    "finish": handle_finish,
+}

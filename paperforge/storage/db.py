@@ -117,6 +117,8 @@ CREATE TABLE IF NOT EXISTS tasks (
     goal TEXT,
     status TEXT NOT NULL DEFAULT 'queued',
     phase TEXT NOT NULL DEFAULT 'init',
+    priority INTEGER NOT NULL DEFAULT 0,
+    user_message_id INTEGER,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     completed_at TIMESTAMP,
@@ -864,14 +866,27 @@ class Storage:
             return [dict(r) for r in rows]
 
     def claim_next_task(self, worker_id: str, lease_until: str) -> dict[str, Any] | None:
-        """Atomically claim the oldest queued task under a worker lease (doc 21.2)."""
+        """Claim the next claimable task, serializing per run (doc 28).
+
+        A run may have at most one task 'running' at a time: a task can only
+        be claimed if its run has no other running task. This replaces the
+        old global-oldest pick, which could start two tasks of the same run
+        concurrently.
+        """
         with self._lock, self._conn() as conn:
             conn.execute("BEGIN IMMEDIATE")
             try:
                 row = conn.execute(
-                    """SELECT * FROM tasks
-                       WHERE status = 'queued'
-                       ORDER BY created_at ASC
+                    """SELECT t.*
+                       FROM tasks t
+                       WHERE t.status = 'queued'
+                         AND NOT EXISTS (
+                             SELECT 1
+                             FROM tasks active
+                             WHERE active.run_id = t.run_id
+                               AND active.status = 'running'
+                         )
+                       ORDER BY t.priority DESC, t.created_at ASC
                        LIMIT 1"""
                 ).fetchone()
                 if not row:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -41,3 +43,8 @@ class CapabilityCard(BaseModel):
     dependencies: list[str] = Field(default_factory=list)
 
     evidence: list[Evidence] = Field(default_factory=list)
+
+    # Optional machine-readable contract for the Product Planner (doc 21).
+    # Parser output payload nests it as { capability_card, capability_contract,
+    # parse_coverage }.
+    capability_contract: dict[str, Any] | None = None

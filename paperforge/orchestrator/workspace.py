@@ -60,6 +60,40 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         produces=frozenset({"workspace"}),
         risk="workspace_write",
     ),
+    "verify_app": ToolSpec(
+        name="verify_app",
+        requires_any=(frozenset({"workspace"}), frozenset({"prd"})),
+        produces=frozenset({"verification_report"}),
+        risk="sandbox_exec",
+    ),
+    "build_and_repair": ToolSpec(
+        name="build_and_repair",
+        requires=frozenset({"workspace"}),
+        produces=frozenset({"verification_report"}),
+        risk="sandbox_exec",
+    ),
+    "repair_app": ToolSpec(
+        name="repair_app",
+        requires=frozenset({"workspace"}),
+        produces=frozenset({"workspace_modified"}),
+        risk="workspace_write",
+    ),
+    "run_in_sandbox": ToolSpec(
+        name="run_in_sandbox",
+        requires=frozenset({"workspace"}),
+        produces=frozenset({"sandbox"}),
+        risk="sandbox_exec",
+    ),
+    "stop_sandbox": ToolSpec(
+        name="stop_sandbox",
+        requires=frozenset({"sandbox"}),
+        risk="sandbox_exec",
+    ),
+    "restart_sandbox": ToolSpec(
+        name="restart_sandbox",
+        requires=frozenset({"sandbox"}),
+        risk="sandbox_exec",
+    ),
     "inspect_workspace": ToolSpec(
         name="inspect_workspace",
         requires=frozenset({"workspace"}),
@@ -165,8 +199,8 @@ def check_tool_prerequisites(
 ) -> tuple[bool, list[str]]:
     spec = TOOL_SPECS.get(tool_name)
     if spec is None:
-        # Unknown tools aren't gated by resources (read-only default).
-        return True, []
+        # Fail closed: a tool without a spec is not allowed to run.
+        return False, ["unknown_tool"]
     available = available_resources(state)
 
     missing = sorted(spec.requires - available)

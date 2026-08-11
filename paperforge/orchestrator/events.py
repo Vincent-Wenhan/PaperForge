@@ -204,35 +204,38 @@ class EventEmitter:
 
 
 class EventManager:
-    """Manages event subscribers per run, with monotonic seq per run.
+    """Persist-then-fan-out event manager.
 
-    Events are also persisted to SQLite (run_events table) so they survive
-    backend restart. The in-memory history is still used as a fast cache
-    for active SSE connections.
+    Owns the authoritative seq (assigned by the store) and delegates
+    fan-out to an injected EventBroker (doc 22/35). SSE clients subscribe
+    through the broker; swapping InProcessEventBroker for RedisBroker in
+    production requires no business-layer change.
     """
 
-    def __init__(self, storage: Any | None = None) -> None:
-        self._subscribers: dict[str, list[asyncio.Queue]] = defaultdict(list)
+    def __init__(
+        self,
+        storage: Any | None = None,
+        broker: EventBroker | None = None,
+    ) -> None:
         self._history: dict[str, list[Event]] = defaultdict(list)
-        self._seq: dict[str, int] = defaultdict(int)
         self._max_history = 1000
         self._storage = storage
+        self._broker = broker or InProcessEventBroker()
 
     def register(self, run_id: str) -> asyncio.Queue:
-        q: asyncio.Queue = asyncio.Queue(maxsize=1000)
-        self._subscribers[run_id].append(q)
-        return q
+        return self._broker.subscribe(run_id)
 
     def unregister(self, run_id: str, queue: asyncio.Queue) -> None:
-        if queue in self._subscribers.get(run_id, []):
-            self._subscribers[run_id].remove(queue)
+        if hasattr(self._broker, "unsubscribe"):
+            self._broker.unsubscribe(run_id, queue)  # type: ignore[attr-defined]
 
     async def broadcast(self, event: Event) -> None:
         rid = event.run_id or ""
 
         # Persist FIRST so the seq assigned by SQLite is authoritative.
-        # If a subscriber queue overflows or a subscriber is slow, the
-        # event is still recoverable from the database on reconnect.
+        # If persistence fails, stop pretending to be a durable stream:
+        # raiding seq here would let the browser see seq=N that never
+        # reaches the DB, causing replay/divergence on recovery (doc 23).
         try:
             storage = self._storage
             if storage is None:
@@ -259,35 +262,13 @@ class EventManager:
             except Exception:
                 pass
         except Exception:
-            # If persistence fails, fall back to in-memory seq so the
-            # show can go on, but flag the event as not durable.
-            self._seq[rid] += 1
-            event.seq = self._seq[rid]
+            raise EventPersistenceError(rid, event.id) from None
 
         self._history[rid].append(event)
         if len(self._history[rid]) > self._max_history:
             self._history[rid].pop(0)
 
-        for q in self._subscribers.get(rid, []):
-            try:
-                q.put_nowait(event)
-            except asyncio.QueueFull:
-                # Insert an explicit gap marker so the client knows to
-                # rehydrate from the database.
-                try:
-                    from paperforge.observability.metrics import get_metrics
-
-                    get_metrics().increment("stream_gap_total")
-                except Exception:
-                    pass
-                gap = Event(
-                    type="stream.gap",
-                    data={"resume_after": event.seq - 1},
-                    run_id=rid,
-                    seq=event.seq,
-                )
-                with contextlib.suppress(asyncio.QueueFull):
-                    q.put_nowait(gap)
+        await self._broker.publish(event)
 
     def get_history(self, run_id: str) -> list[Event]:
         try:
@@ -314,7 +295,22 @@ class EventManager:
         return list(self._history.get(run_id, []))
 
     def has_subscribers(self, run_id: str) -> bool:
-        return bool(self._subscribers.get(run_id))
+        subscribers = getattr(self._broker, "subscribers", None)
+        return bool(subscribers and subscribers(run_id))
+
+
+class EventPersistenceError(Exception):
+    """Raised when an event cannot be persisted durably (doc 23).
+
+    The SSE connection is dropped and the client recovers via snapshot +
+    cursor rather than a fabricated in-memory seq.
+    """
+
+    def __init__(self, run_id: str, event_id: str) -> None:
+        self.run_id = run_id
+        self.event_id = event_id
+        super().__init__(f"Event persistence failed for run={run_id} event={event_id}")
+
 
 
 class EventStore(Protocol):
@@ -356,6 +352,9 @@ class InProcessEventBroker(EventBroker):
     def unsubscribe(self, run_id: str, queue: asyncio.Queue[Event]) -> None:
         if queue in self._subscribers.get(run_id, []):
             self._subscribers[run_id].remove(queue)
+
+    def subscribers(self, run_id: str) -> list[asyncio.Queue[Event]]:
+        return list(self._subscribers.get(run_id, []))
 
 
 _event_manager: EventManager | None = None

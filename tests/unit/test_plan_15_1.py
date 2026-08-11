@@ -215,9 +215,10 @@ def test_artifact_download_delete(storage: Storage):
 
 
 @pytest.mark.asyncio
-async def test_event_resume_after_seq():
+async def test_event_resume_after_seq(storage):
     """SSE should support resume after a given seq."""
-    mgr = EventManager()
+    storage.create_run("run_resume", title="resume")
+    mgr = EventManager(storage=storage)
     emitter = EventEmitter(run_id="run_resume", manager=mgr)
 
     await emitter.text("first")
