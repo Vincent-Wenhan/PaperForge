@@ -473,7 +473,6 @@ async def handle_parse_paper(args: dict[str, Any], ctx: ToolContext) -> ToolResu
     step_id = await progress.start(kind="paper_parse", title="Parsing paper")
     try:
         if paper_id:
-            # Preferred path: look the paper up in the library to resolve pdf_path.
             paper = ctx.storage.get_paper(paper_id)
             if paper is not None and not pdf_path:
                 pdf_path = paper.get("pdf_path")
@@ -502,7 +501,6 @@ async def handle_parse_paper(args: dict[str, Any], ctx: ToolContext) -> ToolResu
     )
     card_path = str(ctx.storage.library_dir / f"{artifact_id}.json")
 
-    # Persist card_path on the paper row so composer/planner can find it.
     paper = ctx.storage.get_paper(paper_id)
     if paper is None:
         ctx.storage.upsert_paper(
@@ -874,7 +872,6 @@ async def handle_run_sandbox(args: dict[str, Any], ctx: ToolContext) -> ToolResu
         error=None,
     )
 
-    # Wait for the Next.js dev server to be ready before emitting preview.ready
     ready = await manager.wait_for_ready(sandbox["id"], timeout=60)
     if not ready:
         ctx.storage.update_sandbox(
@@ -1229,7 +1226,6 @@ def _latest_app_artifact_id(ctx: ToolContext) -> str | None:
     return None
 
 
-# name → handler; consistency test asserts this matches TOOL_DEFINITIONS.
 TOOL_HANDLERS: dict[str, Any] = {
     "parse_paper": handle_parse_paper,
     "compose_capabilities": handle_compose,

@@ -307,7 +307,6 @@ async def verify_app(
         "preview_allowed": preview_allowed,
         "product_ready": product_ready,
         "overall_score": score,
-        # Compatibility derived field (doc 31): preview_allowed is the gate.
         "ready_for_preview": preview_allowed,
         "recommendations": recommendations,
     }
