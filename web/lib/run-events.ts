@@ -45,6 +45,7 @@ export function applyRunEvent(
   if (store.lastSeq > 0 && event.seq > store.lastSeq + 1) return "gap";
 
   const data = eventData(event);
+  const taskId = data.task_id ?? data.taskId ?? (event as { task_id?: string }).task_id ?? undefined;
   store.setLastSeq(event.seq);
   store.addEvent(toStoreEvent(event, data));
   const nextMode = inferWorkbenchMode(
@@ -63,6 +64,7 @@ export function applyRunEvent(
         content: "",
         streaming: true,
         status: "streaming",
+        task_id: taskId,
       });
       return "applied";
     case "message.delta":
@@ -189,6 +191,7 @@ export function applyRunEvent(
           run_id: runId,
           type: data.type || "artifact",
           path: data.path,
+          task_id: taskId,
         });
       }
       return "applied";

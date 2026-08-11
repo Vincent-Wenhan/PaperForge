@@ -516,6 +516,7 @@ async def handle_parse_paper(args: dict[str, Any], ctx: ToolContext) -> ToolResu
         run_id=ctx.run_id,
         artifact_type="capability_card",
         data=card_data,
+        task_id=ctx.task_id,
     )
     card_path = str(ctx.storage.library_dir / f"{artifact_id}.json")
 
@@ -562,6 +563,7 @@ async def handle_compose(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         run_id=ctx.run_id,
         artifact_type="composition",
         data=composition,
+        task_id=ctx.task_id,
     )
     await ctx.emit.artifact_created("composition", str(ctx.storage.compositions_dir), artifact_id)
 
@@ -632,6 +634,7 @@ async def handle_plan_product(args: dict[str, Any], ctx: ToolContext) -> ToolRes
         run_id=ctx.run_id,
         artifact_type="prd",
         data=prd,
+        task_id=ctx.task_id,
     )
     await ctx.emit.artifact_created("prd", str(ctx.storage.prds_dir), artifact_id)
 
@@ -682,6 +685,7 @@ async def handle_generate(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         artifact_type="nextjs_app",
         data=manifest,
         metadata={"app_path": output_dir},
+        task_id=ctx.task_id,
     )
     revision = ctx.storage.create_workspace_revision(
         run_id=ctx.run_id,
@@ -735,6 +739,7 @@ async def handle_verify(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         run_id=ctx.run_id,
         artifact_type="verification_report",
         data=report,
+        task_id=ctx.task_id,
     )
     await ctx.emit.artifact_created("verification_report", str(ctx.storage.reports_dir), artifact_id)
 
@@ -775,6 +780,7 @@ async def handle_build_and_repair(args: dict[str, Any], ctx: ToolContext) -> Too
         artifact_type="verification_report",
         data=report,
         metadata={"app_path": app_path, "workflow": "build_and_repair"},
+        task_id=ctx.task_id,
     )
     await ctx.emit.artifact_created(
         "verification_report",

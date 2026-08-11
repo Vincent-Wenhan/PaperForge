@@ -85,6 +85,7 @@ async def send_message(run_id: str, req: MessageCreate, request: Request) -> dic
 
     task = storage.create_task(
         run_id=run_id,
+        task_id=task_id,
         title=req.content.strip()[:120] or "Productization task",
         goal=req.content,
         status="queued",

@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS messages (
     name TEXT,
     status TEXT NOT NULL DEFAULT 'completed',
     parts TEXT,
+    task_id TEXT,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -76,6 +77,7 @@ CREATE TABLE IF NOT EXISTS artifacts (
     display_name TEXT,
     version INTEGER NOT NULL DEFAULT 1,
     parent_artifact_id TEXT,
+    task_id TEXT,
     updated_at TIMESTAMP,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -85,6 +87,7 @@ CREATE TABLE IF NOT EXISTS approvals (
     run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
     tool_name TEXT NOT NULL,
     args TEXT NOT NULL,
+    task_id TEXT,
     status TEXT NOT NULL DEFAULT 'pending',
     resolved_at TIMESTAMP,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -161,6 +164,9 @@ CREATE INDEX IF NOT EXISTS idx_sandboxes_status ON sandboxes(status);
 CREATE INDEX IF NOT EXISTS idx_papers_status ON papers(status);
 CREATE INDEX IF NOT EXISTS idx_artifacts_run ON artifacts(run_id);
 CREATE INDEX IF NOT EXISTS idx_artifacts_type ON artifacts(type);
+CREATE INDEX IF NOT EXISTS idx_artifacts_task ON artifacts(task_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_approvals_task ON approvals(task_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_messages_task ON messages(task_id, id);
 CREATE INDEX IF NOT EXISTS idx_run_events ON run_events(run_id, seq);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_run_events_run_seq
     ON run_events(run_id, seq);
@@ -241,6 +247,8 @@ class Storage:
             self._ensure_column(conn, "tasks", "user_message_id", "INTEGER")
             self._ensure_column(conn, "steps", "started_at", "TIMESTAMP")
             self._ensure_column(conn, "steps", "completed_at", "TIMESTAMP")
+            self._ensure_column(conn, "artifacts", "task_id", "TEXT")
+            self._ensure_column(conn, "approvals", "task_id", "TEXT")
             conn.execute(
                 "UPDATE sandboxes SET preview_status = 'starting' "
                 "WHERE preview_status = 'idle' AND status IN ('pending', 'starting', 'running')"
@@ -491,7 +499,13 @@ class Storage:
             ).fetchone()
         return dict(row) if row else None
 
-    def create_streaming_message(self, run_id: str, public_id: str) -> dict[str, Any]:
+    def create_streaming_message(
+        self,
+        run_id: str,
+        public_id: str,
+        *,
+        task_id: str | None = None,
+    ) -> dict[str, Any]:
         """Create the assistant row before the first SSE delta is emitted."""
         return self.add_message(
             run_id=run_id,
@@ -499,6 +513,7 @@ class Storage:
             content="",
             public_id=public_id,
             status="streaming",
+            task_id=task_id,
         )
 
     def append_message_delta(self, public_id: str, delta: str) -> None:
@@ -637,9 +652,15 @@ class Storage:
         phase: str = "init",
         priority: int = 0,
         user_message_id: int | None = None,
+        task_id: str | None = None,
     ) -> dict[str, Any]:
+        """Create a task, optionally under an explicit task_id.
+
+        Callers that already generated a task_id to thread through the user
+        message pass it here so User Message.task_id == Task.id (doc 4).
+        """
         now = datetime.utcnow().isoformat()
-        task_id = f"task_{uuid.uuid4().hex}"
+        task_id = task_id or f"task_{uuid.uuid4().hex}"
         with self._lock, self._conn() as conn:
             conn.execute(
                 """INSERT INTO tasks (id, run_id, title, goal, status, phase, priority, user_message_id, created_at, updated_at)
@@ -1180,6 +1201,7 @@ class Storage:
         artifact_type: str,
         data: dict[str, Any],
         metadata: dict[str, Any] | None = None,
+        task_id: str | None = None,
     ) -> str:
         artifact_id = f"{artifact_type}_{uuid.uuid4().hex}"
         path = self._artifact_path(artifact_type, artifact_id)
@@ -1189,14 +1211,15 @@ class Storage:
         with self._lock, self._conn() as conn:
             conn.execute(
                 """INSERT INTO artifacts
-                   (id, run_id, type, path, metadata, version, updated_at, created_at)
-                   VALUES (?, ?, ?, ?, ?, 1, ?, ?)""",
+                   (id, run_id, type, path, metadata, task_id, version, updated_at, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)""",
                 (
                     artifact_id,
                     run_id,
                     artifact_type,
                     str(path),
                     json.dumps(metadata or {}, ensure_ascii=False),
+                    task_id,
                     now,
                     now,
                 ),
@@ -1280,19 +1303,25 @@ class Storage:
     # ===== Approvals =====
 
     def create_approval(
-        self, run_id: str, tool_name: str, args: dict[str, Any]
+        self,
+        run_id: str,
+        tool_name: str,
+        args: dict[str, Any],
+        *,
+        task_id: str | None = None,
     ) -> dict[str, Any]:
         approval_id = f"apv_{uuid.uuid4().hex[:8]}"
         now = datetime.utcnow().isoformat()
         with self._lock, self._conn() as conn:
             conn.execute(
-                """INSERT INTO approvals (id, run_id, tool_name, args, status, created_at)
-                   VALUES (?, ?, ?, ?, 'pending', ?)""",
+                """INSERT INTO approvals (id, run_id, tool_name, args, task_id, status, created_at)
+                   VALUES (?, ?, ?, ?, ?, 'pending', ?)""",
                 (
                     approval_id,
                     run_id,
                     tool_name,
                     json.dumps(args, ensure_ascii=False),
+                    task_id,
                     now,
                 ),
             )
@@ -1301,6 +1330,7 @@ class Storage:
             "run_id": run_id,
             "tool_name": tool_name,
             "args": args,
+            "task_id": task_id,
             "status": "pending",
             "created_at": now,
         }

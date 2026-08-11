@@ -254,6 +254,7 @@ class Orchestrator:
                             content=result_str,
                             tool_call_id=call.id,
                             name=call.name,
+                            task_id=self.task_id,
                         )
                         messages.append(
                             Message(
@@ -337,6 +338,7 @@ class Orchestrator:
                         run_id=run_id,
                         role="assistant",
                         content=final_content,
+                        task_id=self.task_id,
                     )
                 self.storage.update_run_status(run_id, "active")
                 self._update_task(status="completed", phase=self.phase.value)
@@ -404,6 +406,7 @@ class Orchestrator:
                 run_id=run_id,
                 tool_name=call.name,
                 args=call.args,
+                task_id=self.task_id,
             )
             approval_id = approval["id"]
 
@@ -513,7 +516,9 @@ class Orchestrator:
 
         # Persist the public ID before emitting the first lifecycle event so a
         # refresh can always reconcile the stream with one durable row.
-        self.storage.create_streaming_message(run_id, message_id)
+        self.storage.create_streaming_message(
+            run_id, message_id, task_id=self.task_id
+        )
         await emit.message_started(message_id)
 
         writer = StreamWriter(
@@ -589,7 +594,9 @@ class Orchestrator:
         tool_calls: list[ToolCall] = []
         finish_reason: str | None = None
 
-        self.storage.create_streaming_message(run_id, message_id)
+        self.storage.create_streaming_message(
+            run_id, message_id, task_id=self.task_id
+        )
         await emit.message_started(message_id)
 
         writer = StreamWriter(
