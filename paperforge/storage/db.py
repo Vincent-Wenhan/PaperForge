@@ -705,7 +705,7 @@ class Storage:
     def list_tasks(self, run_id: str) -> list[dict[str, Any]]:
         with self._conn() as conn:
             rows = conn.execute(
-                "SELECT * FROM tasks WHERE run_id = ? ORDER BY created_at DESC",
+                "SELECT * FROM tasks WHERE run_id = ? ORDER BY created_at ASC, id ASC",
                 (run_id,),
             ).fetchall()
             return [dict(r) for r in rows]

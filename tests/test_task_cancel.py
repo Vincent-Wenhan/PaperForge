@@ -28,33 +28,60 @@ async def test_cancel_and_wait_drains_task():
     assert not manager.is_running("run_cancel")
 
 
-def test_cancel_endpoint_persists_terminal_status_and_event(storage):
+def test_cancel_endpoint_stops_active_task_but_run_stays_active(storage):
     storage.create_run("run_cancel_api", "Cancel", status="running")
 
     response = TestClient(create_app()).post("/api/runs/run_cancel_api/cancel")
 
     assert response.status_code == 200
-    assert response.json()["status"] == "cancelled"
-    assert storage.get_run_status("run_cancel_api") == "cancelled"
-    assert storage.get_max_event_seq("run_cancel_api") >= 1
+    # Task-level stop: the run stays an active persistent thread.
+    assert storage.get_run_status("run_cancel_api") == "active"
 
 
 @pytest.mark.asyncio
-async def test_cancelled_run_does_not_resume_work(storage):
-    storage.create_run("run_cancelled", "Cancelled", status="cancelled")
+async def test_archived_run_does_not_resume_work(storage):
+    storage.create_run("run_archived", "Archived", status="active")
+    storage.archive_run("run_archived")
 
     class FailingLLM:
         calls = 0
 
         async def chat(self, *args, **kwargs):
             self.calls += 1
-            raise AssertionError("cancelled run must not call the LLM")
+            raise AssertionError("archived run must not call the LLM")
 
     llm = FailingLLM()
     await Orchestrator(llm=llm, storage=storage).run(
-        "run_cancelled",
+        "run_archived",
         "resume",
     )
 
     assert llm.calls == 0
-    assert storage.get_run_status("run_cancelled") == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_cancelled_run_can_still_resume_work(storage):
+    """A 'cancelled' run status is not terminal — the persistent thread can
+    resume. Only archive blocks a new task."""
+    storage.create_run("run_cancelled_but_active", "Cancelled", status="cancelled")
+
+    from paperforge.llm.base import ChatResponse
+
+    class ReraisingLLM:
+        calls = 0
+
+        async def chat(self, *args, **kwargs):
+            self.calls += 1
+            # Emulate a hard provider error so the orchestrator bails through
+            # its retry path. The point is that it *entered* the LLM call
+            # rather than short-circuiting on a cancelled status.
+            raise RuntimeError("provider down")
+
+    llm = ReraisingLLM()
+    orchestrator = Orchestrator(llm=llm, storage=storage)
+    orchestrator.llm = llm
+    await orchestrator.run("run_cancelled_but_active", "resume")
+
+    # The run was not blocked at the status gate; it attempted real work.
+    assert llm.calls > 0
+    assert storage.get_run_status("run_cancelled_but_active") == "error"

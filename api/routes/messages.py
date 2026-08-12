@@ -10,13 +10,13 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from paperforge.orchestrator.events import EventEmitter, get_event_manager
-from paperforge.orchestrator.tasks import get_run_task_manager, RunQueue
+from paperforge.orchestrator.tasks import get_run_queue, get_run_task_manager
 from paperforge.storage.db import get_storage
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-_run_queue = RunQueue()
+_run_queue = get_run_queue()
 
 
 class MessageCreate(BaseModel):

@@ -20,7 +20,9 @@ class ApprovalResolve(BaseModel):
 class ApprovalView(BaseModel):
     approval_id: str
     run_id: str
+    task_id: str | None = None
     tool: str
+    tool_name: str | None = None
     args: dict[str, Any] = Field(default_factory=dict)
     status: Literal["pending", "approved", "rejected", "expired"]
     created_at: str | None = None
@@ -31,7 +33,9 @@ def _to_approval(row: dict) -> ApprovalView:
     return ApprovalView(
         approval_id=row["id"],
         run_id=row["run_id"],
+        task_id=row.get("task_id"),
         tool=row["tool_name"],
+        tool_name=row["tool_name"],
         args=row.get("args") or {},
         status=row["status"],
         created_at=row["created_at"],

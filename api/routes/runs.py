@@ -74,12 +74,14 @@ def _to_approval(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "approval_id": row["id"],
         "run_id": row["run_id"],
+        "task_id": row.get("task_id"),
         "tool": row["tool_name"],
+        "tool_name": row["tool_name"],
         "args": row.get("args") or {},
         "status": row["status"],
         "created_at": row["created_at"],
         "resolved_at": row.get("resolved_at"),
-}
+    }
 
 
 def _to_preview(sandbox: dict[str, Any] | None) -> dict[str, Any]:
@@ -207,24 +209,27 @@ async def delete_run(run_id: str) -> dict:
 
 @router.post("/{run_id}/cancel")
 async def cancel_run(run_id: str) -> dict:
+    """Cancel the run's current active task.
+
+    Task-level stop: the Run stays an active persistent thread and remains
+    available for follow-up messages. Kept for backward compatibility; the
+    new task-level endpoint lives on the tasks router.
+    """
     storage = get_storage()
     run = storage.get_run(run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
-    if run["status"] in {"cancelled", "done"}:
-        raise HTTPException(status_code=409, detail="Run is not active")
+    if run.get("archived_at"):
+        raise HTTPException(status_code=409, detail="Run is archived")
 
     task_manager = get_run_task_manager()
-    cancelled = await task_manager.cancel_and_wait(run_id)
-    if not cancelled and run["status"] != "running":
-        raise HTTPException(status_code=409, detail="Run is not active")
+    await task_manager.cancel_and_wait(run_id)
 
     previous_status = run["status"]
-    storage.update_run_status(run_id, "cancelled")
+    storage.update_run_status(run_id, "active")
     event_manager = get_event_manager()
     emitter = EventEmitter(run_id=run_id, manager=event_manager)
-    await emitter.run_status_changed("cancelled", previous_status)
-    await emitter.run_finished()
+    await emitter.run_status_changed("active", previous_status)
     return {"status": "cancelled", "run_id": run_id}
 
 

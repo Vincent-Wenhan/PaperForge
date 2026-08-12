@@ -11,6 +11,7 @@ def test_approval_list_and_resolution_are_durable(storage):
         "run_approval",
         "generate_nextjs_app",
         {"artifact_id": "app_123"},
+        task_id="task_abc",
     )
 
     client = TestClient(create_app())
@@ -19,6 +20,8 @@ def test_approval_list_and_resolution_are_durable(storage):
     assert listed.json()[0]["approval_id"] == approval["id"]
     assert listed.json()[0]["status"] == "pending"
     assert listed.json()[0]["run_id"] == "run_approval"
+    assert listed.json()[0]["task_id"] == "task_abc"
+    assert listed.json()[0]["tool_name"] == "generate_nextjs_app"
 
     resolved = client.post(
         f"/api/approvals/{approval['id']}/resolve",

@@ -298,6 +298,8 @@ async def _finalize_verification_runtime(
     report["layers"] = layers
     report["runtime_status"] = "passed" if runtime_ok else "failed"
 
+    gates = report.setdefault("gates", {})
+    gates["runtime_ok"] = runtime_ok
     prd: dict[str, Any] | None = None
     if report.get("prd_id"):
         prd_artifact = ctx.storage.get_artifact(report["prd_id"])
@@ -356,6 +358,14 @@ async def _finalize_verification_runtime(
     report["layers"] = layers
     report["acceptance_status"] = acceptance_status
     report["browser_smoke"] = smoke
+    gates = report.setdefault("gates", {})
+    gates["acceptance_ok"] = (
+        True if acceptance_status == "passed"
+        else False if acceptance_status == "failed"
+        else None
+    )
+    from paperforge.agents.verifier import recompute_readiness
+    recompute_readiness(report)
     updated = ctx.storage.update_artifact(artifact["id"], data=report)
     if updated:
         await ctx.emit.artifact_updated(artifact["id"], report)

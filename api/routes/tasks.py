@@ -9,6 +9,8 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from paperforge.orchestrator.events import EventEmitter, get_event_manager
+from paperforge.orchestrator.tasks import get_run_queue
 from paperforge.storage.db import get_storage
 
 router = APIRouter()
@@ -100,3 +102,32 @@ async def delete_task(run_id: str, task_id: str) -> dict:
         raise HTTPException(status_code=404, detail="Task not found")
     storage.delete_task(task_id)
     return {"task_id": task_id, "deleted": True}
+
+
+@router.post("/{task_id}/cancel")
+async def cancel_task(run_id: str, task_id: str) -> dict:
+    """Cancel a single task, leaving the Run usable as a persistent thread."""
+    storage = get_storage()
+    task = storage.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if task.get("run_id") != run_id:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if task["status"] not in {"queued", "running", "waiting_user", "waiting_approval"}:
+        raise HTTPException(status_code=409, detail="Task is not cancellable")
+
+    queue = get_run_queue()
+    if task["status"] == "running":
+        await queue.cancel_and_wait(run_id)
+
+    storage.update_task(task_id=task_id, status="cancelled")
+
+    run = storage.get_run(run_id)
+    previous = run.get("status") if run else "running"
+    storage.update_run_status(run_id, "active")
+
+    emitter = EventEmitter(run_id=run_id, manager=get_event_manager(), task_id=task_id)
+    await emitter.run_status_changed("active", previous)
+    await emitter.run_updated(status="active")
+
+    return {"status": "cancelled", "task_id": task_id, "run_id": run_id}

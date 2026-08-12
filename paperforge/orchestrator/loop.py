@@ -119,13 +119,11 @@ class Orchestrator:
         self.task_id = task_id
         emit = EventEmitter(run_id=run_id, manager=event_manager, task_id=self.task_id)
 
-        # Cancel and completed (archived) runs are terminal checkpoints. A
-        # later worker invocation must not silently resume them. A "done"
-        # status is not terminal: tasks complete independently and the Run
-        # stays an active persistent thread.
+        # Cancel is a task-level terminal: the Run is a persistent thread and
+        # stays usable. The only thread-level terminal is archive.
         prev_status = self.storage.get_run_status(run_id) or "active"
         run_row = self.storage.get_run(run_id) or {}
-        if prev_status in {"cancelled"} or run_row.get("archived_at"):
+        if run_row.get("archived_at"):
             return
 
         # Persist run status as running
@@ -362,11 +360,12 @@ class Orchestrator:
 
         except asyncio.CancelledError:
             previous = self.storage.get_run_status(run_id) or "running"
-            self.storage.update_run_status(run_id, "cancelled")
+            # Current task stopped; persistent thread stays usable.
             self._update_task(status="cancelled", phase=self.phase.value)
+            self.storage.update_run_status(run_id, "active")
             with contextlib.suppress(Exception):
-                await emit.run_status_changed("cancelled", previous)
-                await emit.run_updated(status="cancelled", phase=self.phase.value)
+                await emit.run_status_changed("active", previous)
+                await emit.run_updated(status="active", phase=self.phase.value)
             raise
         except Exception as e:
             logger.exception(f"Orchestrator error: {e}")
