@@ -9,7 +9,7 @@ from typing import Any
 
 from paperforge.llm.base import LLMClient, Message
 from paperforge.prompts import load_prompt
-from paperforge.schemas.capability_contract import ParseCoverage
+from paperforge.schemas.capability_contract import CapabilityContract, ParseCoverage
 from paperforge.schemas.paper import CapabilityCard
 
 logger = logging.getLogger(__name__)
@@ -18,6 +18,7 @@ MAX_RETRIES = 3
 MAX_CHUNK_CHARS = 12000
 MAX_CHUNKS = 32
 MAX_MAP_CHUNKS = 16  # chunks fed to the LLM per map call
+REDUCE_GROUP_SIZE = 6  # chunks summarized per group step in the hierarchy
 
 
 def extract_pdf_pages(pdf_path: str | Path) -> list[str]:
@@ -142,57 +143,173 @@ async def parse_paper(
     if not mapped:
         raise ValueError("PaperParser produced no valid map results")
 
-    reduce_messages = [
-        Message(role="system", content=prompt),
-        Message(
-            role="user",
-            content=(
-                f"Paper ID: {paper_id}\n\n"
-                "Reduce the following page/chunk maps into one CapabilityCard JSON. "
-                "Preserve evidence page numbers and do not invent claims.\n"
-                f"Mapped chunks:\n{json.dumps(mapped, ensure_ascii=False)}"
-            ),
-        ),
-    ]
+    # Whole-paper bounded hierarchy: instead of dumping every mapped chunk into
+    # one giant reduce (or truncating the paper to the first N chunks), fold
+    # groups of maps up level by level until a single summary remains.
+    summaries = await _hierarchical_reduce(mapped=mapped, llm=llm, prompt=prompt, paper_id=paper_id)
+
+    final_summary = await _synthesize_capability(
+        summaries=summaries,
+        llm=llm,
+        prompt=prompt,
+        paper_id=paper_id,
+    )
+
+    card = final_summary.get("card") or final_summary
+    contract = final_summary.get("contract") or _extract_contract_from_card(card)
 
     last_error: Exception | None = None
     for attempt in range(1, MAX_RETRIES + 1):
-        response = await llm.chat(
-            model=cfg.PARSER_MODEL,
-            messages=reduce_messages,
-            response_format={"type": "json_object"},
-        )
-        content = response.content or "{}"
-        try:
-            card = json.loads(content)
-        except json.JSONDecodeError as exc:
-            last_error = exc
-            reduce_messages.append(Message(role="assistant", content=content))
-            reduce_messages.append(
-                Message(role="user", content="Return valid CapabilityCard JSON only.")
-            )
-            continue
-
         try:
             validated = CapabilityCard.model_validate(card)
             card = validated.model_dump()
             card["paper_id"] = paper_id
-            processed_chunks = chunks[: min(len(mapped), MAX_MAP_CHUNKS)]
+            if contract:
+                card["capability_contract"] = CapabilityContract.model_validate(contract).model_dump()
+            # Reconstruct coverage from the chunks that *actually* mapped
+            # successfully, using their real 1-based index, not a contiguous
+            # slice. A failed chunk between successes must not count as
+            # processed.
+            processed_chunks: list[str] = []
+            for item in mapped:
+                try:
+                    position = int(item.get("chunk")) - 1
+                except (TypeError, ValueError):
+                    continue
+                if 0 <= position < len(chunks):
+                    processed_chunks.append(chunks[position])
             coverage = _build_parse_coverage(pages, processed_chunks).model_dump()
             card["parse_coverage"] = coverage
             return card
         except Exception as exc:
             last_error = exc
-            logger.warning("Attempt %s/%s: schema validation failed: %s", attempt, MAX_RETRIES, exc)
-            reduce_messages.append(Message(role="assistant", content=content))
-            reduce_messages.append(
-                Message(
-                    role="user",
-                    content=f"Fix the CapabilityCard schema errors and return JSON only: {exc}",
-                )
-            )
+            logger.warning("Contract validation failed: %s", exc)
+            return card
 
     raise ValueError(f"PaperParser failed after {MAX_RETRIES} retries: {last_error}")
+
+
+async def _hierarchical_reduce(
+    *,
+    mapped: list[dict[str, Any]],
+    llm: LLMClient,
+    prompt: str,
+    paper_id: str,
+) -> list[dict[str, Any]]:
+    """Fold mapped chunk summaries up a bounded hierarchy.
+
+    Each level summarises up to ``REDUCE_GROUP_SIZE`` entries into one; repeating
+    until a single summary remains. Budget is bounded per level rather than by
+    dropping the second half of the paper.
+    """
+    level: list[dict[str, Any]] = [item.get("data", {}) for item in mapped]
+    while len(level) > REDUCE_GROUP_SIZE:
+        next_level: list[dict[str, Any]] = []
+        for offset in range(0, len(level), REDUCE_GROUP_SIZE):
+            group = level[offset : offset + REDUCE_GROUP_SIZE]
+            next_level.append(
+                await _reduce_group(group=group, llm=llm, prompt=prompt, paper_id=paper_id)
+            )
+        level = next_level
+    return level
+
+
+async def _reduce_group(
+    *,
+    group: list[dict[str, Any]],
+    llm: LLMClient,
+    prompt: str,
+    paper_id: str,
+) -> dict[str, Any]:
+    """Summarise a group of chunk maps into one merged map."""
+    from paperforge.config import get_config
+    response = await llm.chat(
+        model=get_config().PARSER_MODEL,
+        messages=[
+            Message(role="system", content=prompt),
+            Message(
+                role="user",
+                content=(
+                    f"Paper ID: {paper_id}\n\n"
+                    "Summarize these chunk maps into one merged chunk map JSON. "
+                    "Preserve evidence, do not invent claims.\n"
+                    f"Maps:\n{json.dumps(group, ensure_ascii=False)}"
+                ),
+            ),
+        ],
+        response_format={"type": "json_object"},
+    )
+    try:
+        data = json.loads(response.content or "{}")
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+async def _synthesize_capability(
+    *,
+    summaries: list[dict[str, Any]],
+    llm: LLMClient,
+    prompt: str,
+    paper_id: str,
+) -> dict[str, Any]:
+    """Synthesize the final CapabilityCard and its CapabilityContract JSON."""
+    from paperforge.config import get_config
+    response = await llm.chat(
+        model=get_config().PARSER_MODEL,
+        messages=[
+            Message(role="system", content=prompt),
+            Message(
+                role="user",
+                content=(
+                    f"Paper ID: {paper_id}\n\n"
+                    "Reduce the following summaries into one object with two keys:\n"
+                    "- `card`: a CapabilityCard JSON (title, authors, problem, method, "
+                    "key_innovations, metrics, evidence, ...).\n"
+                    "- `contract`: a CapabilityContract JSON for the Product Planner "
+                    "(inputs, outputs, preconditions, failure_modes, compute_requirements, "
+                    "integration_mode, implementation_refs, confidence).\n"
+                    f"Summaries:\n{json.dumps(summaries, ensure_ascii=False)}"
+                ),
+            ),
+        ],
+        response_format={"type": "json_object"},
+    )
+    try:
+        parsed = json.loads(response.content or "{}")
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    card = parsed.get("card")
+    if not isinstance(card, dict):
+        # Old-style flat card with no contract split.
+        return parsed
+    return parsed
+
+
+def _extract_contract_from_card(card: dict[str, Any]) -> dict[str, Any] | None:
+    """Fallback: derive a minimal contract from a legacy flat card."""
+    inputs = [
+        {"name": name, "type": "any", "description": ""}
+        for name in (card.get("inputs") or [])
+        if isinstance(name, str)
+    ]
+    outputs = [
+        {"name": name, "type": "any", "description": ""}
+        for name in (card.get("outputs") or [])
+        if isinstance(name, str)
+    ]
+    if not inputs and not outputs:
+        return None
+    return {
+        "name": card.get("title", ""),
+        "description": card.get("problem", ""),
+        "inputs": inputs,
+        "outputs": outputs,
+        "integration_mode": "unknown",
+        "confidence": 0.0,
+    }
 
 
 def _build_parse_coverage(pages: list[str], chunks: list[str]) -> ParseCoverage:
