@@ -14,6 +14,21 @@ IGNORED_REQUEST_PATTERNS = [
     re.compile(r"/_next/webpack-hmr"),
 ]
 
+# Controlled, in-memory upload fixtures. The LLM/PRD may only pick a named
+# fixture — never an arbitrary local filesystem path.
+FIXTURES: dict[str, dict[str, Any]] = {
+    "text": {
+        "name": "fixture.txt",
+        "mimeType": "text/plain",
+        "buffer": b"PaperForge fixture",
+    },
+    "csv": {
+        "name": "fixture.csv",
+        "mimeType": "text/csv",
+        "buffer": b"name,value\nsample,1\n",
+    },
+}
+
 
 def classify_request_failure(url: str, error: str) -> Literal["ignore", "warning", "error"]:
     if any(pattern.search(url) for pattern in IGNORED_REQUEST_PATTERNS):
@@ -85,9 +100,13 @@ async def _execute_interaction(page, criterion: dict[str, Any], timeout_ms: int)
             raise RuntimeError("select action requires input_value.")
         await locator.select_option(str(input_value))
     elif action == "upload":
-        if input_value is None:
-            raise RuntimeError("upload action requires a fixture path.")
-        await locator.set_input_files(str(input_value))
+        # Only allow controllable in-memory fixtures — never an arbitrary
+        # local filesystem path chosen by the LLM/PRD.
+        fixture_name = str(input_value) if input_value else "text"
+        fixture = FIXTURES.get(fixture_name)
+        if fixture is None:
+            raise RuntimeError(f"Unknown browser test fixture: {fixture_name}")
+        await locator.set_input_files(fixture)
     else:
         raise RuntimeError(f"Unsupported action: {action}")
 

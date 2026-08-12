@@ -62,7 +62,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
     ),
     "verify_app": ToolSpec(
         name="verify_app",
-        requires_any=(frozenset({"workspace"}), frozenset({"prd"})),
+        requires=frozenset({"workspace"}),
         produces=frozenset({"verification_report"}),
         risk="sandbox_exec",
     ),

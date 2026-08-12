@@ -47,6 +47,27 @@ TYPECHECK_TIMEOUT = 120
 LINT_TIMEOUT = 120
 
 
+def recompute_readiness(report: dict[str, Any]) -> dict[str, Any]:
+    """Derive readiness booleans from gates. Single source of truth."""
+    gates = report.setdefault("gates", {})
+    technical_ready = all(
+        gates.get(key) is True
+        for key in ("workspace_ok", "typecheck_ok", "build_ok", "security_ok")
+    )
+    preview_allowed = gates.get("workspace_ok") is True and gates.get("build_ok") is True
+    product_ready = (
+        technical_ready
+        and gates.get("runtime_ok") is True
+        and gates.get("acceptance_ok") is True
+    )
+    report["technical_ready"] = technical_ready
+    report["preview_allowed"] = preview_allowed
+    report["product_ready"] = product_ready
+    # Backward-compat only.
+    report["ready_for_preview"] = preview_allowed
+    return report
+
+
 async def verify_app(
     app_path: str | Path,
     prd_id: str | None,
@@ -642,6 +663,8 @@ async def _run_checks_streaming(
     """Run typecheck + lint, streaming each line through progress.step_progress.
 
     Returns ``(ok, errors)`` where errors are the filtered actionable lines.
+    A non-zero exit code fails the check even if no line literally contains
+    "error"/"failed".
     """
     errors: list[str] = []
 
@@ -653,12 +676,21 @@ async def _run_checks_streaming(
         if "error" in line.lower() or "failed" in line.lower():
             errors.append(line)
 
-    for cmd in (
+    all_ok = True
+    commands = (
         ["npx", "--no-install", "tsc", "--noEmit"],
         ["npm", "run", "lint", "--silent"],
-    ):
-        _, _ = await _exec_streaming(cmd, app_path, timeout, cb)
-    return len(errors) == 0, errors
+    )
+    for cmd in commands:
+        ok, output = await _exec_streaming(cmd, app_path, timeout, cb)
+        all_ok = all_ok and ok
+        if not ok and not any(
+            token in (output or "").lower() for token in ("error", "failed")
+        ):
+            errors.append(
+                f"Command failed with non-zero exit status: {' '.join(cmd)}"
+            )
+    return all_ok and len(errors) == 0, errors
 
 
 def collect_files(root: Path) -> list[tuple[str, str]]:
