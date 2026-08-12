@@ -19,6 +19,7 @@ from paperforge.config import get_config
 from paperforge.llm.base import LLMClient, Message
 from paperforge.prompts import load_prompt
 from paperforge.schemas.workspace_plan import FileSpec, WorkspacePlan
+from paperforge.schemas.workspace_policy import SafeWorkspacePolicy
 from paperforge.storage.db import Storage
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,16 @@ GENERATION_ORDER = ["type", "fixture", "adapter", "hook", "component", "route", 
 
 IMPORT_RE = re.compile(r"""from\s+['"]([^'"]+)['"]""")
 TS_IMPORT_RE = re.compile(r"""import(?:[\s\S]*?)from\s+['"]([^'"]+)['"]""")
+
+
+class GeneratedFile(BaseModel):
+    path: str
+    content: str
+
+
+class GeneratedBatch(BaseModel):
+    summary: str = ""
+    files: list[GeneratedFile] = Field(min_length=1, max_length=32)
 
 
 def parse_local_imports(source: str) -> set[str]:
@@ -146,7 +157,7 @@ async def generate_batch(
     specs: list[FileSpec],
     workspace: Path,
     llm: LLMClient,
-) -> dict[str, Any]:
+) -> GeneratedBatch:
     """One bounded LLM call that produces the files for a single batch."""
     context = build_generation_context(specs=specs, workspace=workspace)
     response = await llm.chat(
@@ -168,29 +179,60 @@ async def generate_batch(
         ],
         response_format={"type": "json_object"},
     )
-    data = json.loads(response.content or "{}")
-    return {
-        "summary": data.get("summary", ""),
-        "files": data.get("files", []),
-        "_kind": specs[0].kind if specs else "unknown",
-    }
+    raw = json.loads(response.content or "{}")
+    batch = GeneratedBatch.model_validate(raw)
+    validate_batch_contract(specs=specs, batch=batch)
+    return batch
 
 
-def write_batch_files(workspace: Path, batch: dict[str, Any]) -> list[str]:
-    """Write a batch's files to the workspace, returning the changed paths."""
+def validate_batch_contract(
+    *,
+    specs: list[FileSpec],
+    batch: GeneratedBatch,
+) -> None:
+    """The WorkspacePlan is the codegen contract: a batch must produce exactly
+    the planned paths — no more, no fewer, no duplicates."""
+    expected = {spec.path for spec in specs}
+    actual = {file.path for file in batch.files}
+
+    missing = expected - actual
+    unexpected = actual - expected
+    if missing:
+        raise ValueError(f"Generation batch omitted planned files: " + ", ".join(sorted(missing)))
+    if unexpected:
+        raise ValueError(f"Generation batch returned unplanned files: " + ", ".join(sorted(unexpected)))
+    if len(actual) != len(batch.files):
+        raise ValueError("Generation batch contains duplicate paths")
+
+
+def write_batch_files(
+    *,
+    workspace: Path,
+    batch: GeneratedBatch,
+    policy: SafeWorkspacePolicy | None = None,
+) -> list[str]:
+    """Write a batch's files to the workspace under the SafeWorkspacePolicy,
+    returning the changed paths."""
+    policy = policy or SafeWorkspacePolicy()
+
+    total_bytes = sum(len(file.content.encode("utf-8")) for file in batch.files)
+    if total_bytes > policy.MAX_PATCH_BYTES:
+        raise ValueError("Generated batch exceeds size limit")
+
+    root_resolved = workspace.resolve()
     changed: list[str] = []
-    for f in batch.get("files", []):
-        path = f.get("path")
-        content = f.get("content")
-        if not path or content is None:
-            continue
-        target = (workspace / path).resolve()
-        if workspace.resolve() not in target.parents and target != workspace.resolve():
-            logger.warning("Refusing to write outside workspace: %s", path)
-            continue
+    for file in batch.files:
+        relative = policy.normalize(file.path)
+        if relative in policy.PROTECTED_FILES:
+            raise ValueError(f"Protected file: {relative}")
+        policy.validate_content(file.content)
+
+        target = (workspace / relative).resolve()
+        target.relative_to(root_resolved)
+
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8")
-        changed.append(path)
+        target.write_text(file.content, encoding="utf-8")
+        changed.append(relative)
     return changed
 
 
@@ -277,7 +319,7 @@ async def generate_nextjs_app_v3(
                     workspace=temp_dir,
                     llm=llm,
                 )
-                changed = write_batch_files(root=temp_dir, batch=batch)
+                changed = write_batch_files(workspace=temp_dir, batch=batch)
                 generated_files.extend(changed)
                 if progress is not None and step_id is not None:
                     await progress.complete(
@@ -291,12 +333,20 @@ async def generate_nextjs_app_v3(
         _merge_dependencies(temp_dir, plan.dependencies)
 
         # Atomic promote temp_dir → final_dir (never partially overwrite).
-        if final_dir.exists():
-            backup = final_dir.with_name(final_dir.name + ".previous")
-            if backup.exists():
-                shutil.rmtree(backup)
-            os.replace(final_dir, backup)
-        os.replace(temp_dir, final_dir)
+        backup: Path | None = None
+        try:
+            if final_dir.exists():
+                backup = final_dir.with_name(final_dir.name + ".previous")
+                if backup.exists():
+                    shutil.rmtree(backup)
+                os.replace(final_dir, backup)
+
+            os.replace(temp_dir, final_dir)
+        except Exception:
+            # Restore the previous app if promotion to the new path failed.
+            if backup is not None and backup.exists() and not final_dir.exists():
+                os.replace(backup, final_dir)
+            raise
 
     plan.dependencies = plan.dependencies  # keep plan deps for the manifest
 

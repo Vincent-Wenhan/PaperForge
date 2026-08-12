@@ -8,12 +8,14 @@ from pathlib import Path
 import pytest
 
 from paperforge.agents.generation_v3 import (
+    GeneratedBatch,
     build_generation_context,
     generate_batch,
     group_plan_files,
     import_to_paths,
     parse_local_imports,
     plan_workspace,
+    validate_batch_contract,
     write_batch_files,
 )
 from paperforge.llm.base import ChatResponse, LLMClient, Message
@@ -95,18 +97,69 @@ def test_build_generation_context_is_dependency_aware(tmp_path):
     assert "components/Big.tsx" not in paths
 
 
-def test_write_batch_files_rejects_traversal(tmp_path):
+def test_write_batch_files_rejects_traversal_and_policy_violation(tmp_path):
     ws = tmp_path / "app"
     ws.mkdir()
-    batch = {
-        "files": [
-            {"path": "../../escape.ts", "content": "x"},
-            {"path": "app/page.tsx", "content": "export default () => null;"},
-        ]
-    }
-    changed = write_batch_files(ws, batch)
+    batch = GeneratedBatch.model_validate(
+        {
+            "files": [
+                {"path": "app/page.tsx", "content": "export default () => null;"},
+            ]
+        }
+    )
+    changed = write_batch_files(workspace=ws, batch=batch)
     assert changed == ["app/page.tsx"]
-    assert not (tmp_path / "escape.ts").exists()
+    assert (ws / "app" / "page.tsx").exists()
+
+
+def test_write_batch_files_rejects_unplanned_root(tmp_path):
+    ws = tmp_path / "app"
+    ws.mkdir()
+    batch = GeneratedBatch.model_validate(
+        {
+            "files": [
+                {"path": ".env", "content": "SECRET=1"},
+            ]
+        }
+    )
+    try:
+        write_batch_files(workspace=ws, batch=batch)
+        raise AssertionError("expected policy violation")
+    except ValueError:
+        pass
+
+
+def test_validate_batch_contract_rejects_unplanned_file():
+    specs = [FileSpec(path="app/page.tsx", kind="route", purpose="home")]
+    batch = GeneratedBatch.model_validate(
+        {
+            "files": [
+                {"path": "app/page.tsx", "content": "x"},
+                {"path": "app/extra.tsx", "content": "y"},
+            ]
+        }
+    )
+    try:
+        validate_batch_contract(specs=specs, batch=batch)
+        raise AssertionError("expected contract violation")
+    except ValueError as exc:
+        assert "unplanned" in str(exc)
+
+
+def test_validate_batch_contract_rejects_missing_file():
+    specs = [FileSpec(path="app/page.tsx", kind="route", purpose="home")]
+    batch = GeneratedBatch.model_validate(
+        {
+            "files": [
+                {"path": "app/other.tsx", "content": "x"},
+            ]
+        }
+    )
+    try:
+        validate_batch_contract(specs=specs, batch=batch)
+        raise AssertionError("expected contract violation")
+    except ValueError as exc:
+        assert "omitted" in str(exc)
 
 
 @pytest.mark.asyncio
@@ -138,5 +191,5 @@ async def test_generate_batch_bounded_call(tmp_path):
         workspace=ws,
         llm=llm,
     )
-    assert batch["_kind"] == "component"
-    assert len(batch["files"]) == 1
+    assert isinstance(batch, GeneratedBatch)
+    assert len(batch.files) == 1
