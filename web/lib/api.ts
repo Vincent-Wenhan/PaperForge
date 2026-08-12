@@ -354,8 +354,7 @@ export const api = {
     const query = runId ? `?run_id=${encodeURIComponent(runId)}` : "";
     return getJson(`/api/apps/${appId}/revisions/${revisionId}${query}`);
   },
-  restoreAppRevision: async (appId: string, revisionId: string, runId?: string): Promise<{ restored: boolean; revision_id?: string }> => {
-    const query = runId ? `?run_id=${encodeURIComponent(runId)}` : "";
+  restoreAppRevision: async (appId: string, revisionId: string, runId?: string): Promise<{ restored: boolean; revision_id?: string }> => {    const query = runId ? `?run_id=${encodeURIComponent(runId)}` : "";
     return postJson(`/api/apps/${appId}/revisions/${revisionId}/restore${query}`, {});
   },
 

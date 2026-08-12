@@ -124,7 +124,8 @@ function RevisionRow({
     if (files.length === 0) {
       try {
         const detail = await api.getAppRevision(appArtifactId, revision.id, runId);
-        setFiles(detail.files || []);
+        const revisionFiles = (detail.files as any[]) || [];
+        setFiles(revisionFiles);
       } catch (err) {
         toast({ title: "Could not load changes", description: err instanceof Error ? err.message : String(err), variant: "error" });
         return;
