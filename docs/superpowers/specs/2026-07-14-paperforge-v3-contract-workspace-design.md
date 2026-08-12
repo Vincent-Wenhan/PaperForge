@@ -1,7 +1,7 @@
 # PaperForge V3 Contract and Workspace Reliability Design
 
 **Date:** 2026-07-14  
-**Scope:** `PaperForge_当前代码复查与404修复方案_v3.md` as the primary review, with the second-round implementation details from `PaperForge_深度代码审查与重构实施方案_v2_代码增强版.md` applied where they do not conflict.
+**Scope:** `docs/reviews/2026-07/2026-07-14-404-fix-review-v3.md` as the primary review, with the second-round implementation details from `docs/reviews/2026-07/2026-07-14-code-review-refactor-v2.md` applied where they do not conflict.
 
 ## Goal
 
