@@ -6,6 +6,7 @@ Supports cancellation and cleanup on app shutdown.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from collections.abc import Coroutine
 from datetime import datetime, timedelta
@@ -27,7 +28,14 @@ class RunTaskManager:
 
         task = asyncio.create_task(coro)
         self.tasks[run_id] = task
-        task.add_done_callback(lambda _: self.tasks.pop(run_id, None))
+
+        def cleanup(done: asyncio.Task) -> None:
+            # Only remove ourselves — a replaced task must not evict its
+            # replacement from the manager.
+            if self.tasks.get(run_id) is done:
+                self.tasks.pop(run_id, None)
+
+        task.add_done_callback(cleanup)
         return task
 
     def cancel(self, run_id: str) -> bool:
@@ -122,29 +130,50 @@ class RunQueue:
             self._workers[run_id] = asyncio.create_task(self._worker(run_id))
 
     async def _worker(self, run_id: str) -> None:
-        queue = self._queues.get(run_id)
         storage = self._storage or _default_storage()
         try:
-            while queue is not None and not queue.empty():
-                task_id = await queue.get()
-                started_at = asyncio.get_event_loop().time()
-                executed = await self._claim_and_run(run_id, task_id, storage)
-                if executed:
-                    try:
-                        from paperforge.observability.metrics import get_metrics
+            while True:
+                queue = self._queues.get(run_id)
+                if queue is None:
+                    return
 
-                        get_metrics().record_duration(
-                            "task_duration_ms",
-                            asyncio.get_event_loop().time() - started_at,
-                        )
-                    except Exception:
-                        pass
-                if not executed and storage is not None:
-                    storage.update_task(task_id=task_id, status="queued")
-                queue.task_done()
+                try:
+                    task_id = await asyncio.wait_for(queue.get(), timeout=0.25)
+                except asyncio.TimeoutError:
+                    # Double-check DB and queue before retiring so an enqueue
+                    # that landed between `empty()` and the pop here isn't lost.
+                    if queue.empty() and not (
+                        storage
+                        and storage.get_next_queued_task(run_id)
+                    ):
+                        return
+                    continue
+
+                started_at = asyncio.get_event_loop().time()
+                try:
+                    executed = await self._claim_and_run(run_id, task_id, storage)
+                    if executed:
+                        try:
+                            from paperforge.observability.metrics import get_metrics
+
+                            get_metrics().record_duration(
+                                "task_duration_ms",
+                                asyncio.get_event_loop().time() - started_at,
+                            )
+                        except Exception:
+                            pass
+                finally:
+                    queue.task_done()
         finally:
-            self._queues.pop(run_id, None)
-            self._workers.pop(run_id, None)
+            current = self._workers.get(run_id)
+            if current is asyncio.current_task():
+                self._workers.pop(run_id, None)
+
+            queue = self._queues.get(run_id)
+            if queue is not None and not queue.empty():
+                self._workers[run_id] = asyncio.create_task(self._worker(run_id))
+            else:
+                self._queues.pop(run_id, None)
 
     async def _claim_and_run(self, run_id, task_id, storage):
         """Claim the exact DB task with a lease, rebuild the orchestrator run
@@ -170,6 +199,8 @@ class RunQueue:
             lease_until=lease_until.isoformat(),
         )
         if not claimed:
+            # Claim failure is not a requeue signal: another worker may own it
+            # now. Leave any requeue decision to the caller.
             return False
 
         # Reconstruct execution entirely from the DB task: no coroutine
@@ -182,6 +213,7 @@ class RunQueue:
         )
 
         # Renew the lease on a heartbeat while the task runs.
+        lease_lost = asyncio.Event()
         heartbeat = asyncio.create_task(
             self._heartbeat(
                 task_id,
@@ -189,13 +221,28 @@ class RunQueue:
                 interval=cfg.WORKER_HEARTBEAT_SECONDS,
                 lease_seconds=cfg.WORKER_LEASE_SECONDS,
                 storage=storage,
+                lease_lost=lease_lost,
             )
         )
         self._manager.start(run_id, coro)
         run_task = self._manager.tasks.get(run_id)
         try:
             if run_task is not None:
-                await asyncio.shield(run_task)
+                lease_waiter = asyncio.create_task(lease_lost.wait())
+                done, pending = await asyncio.wait(
+                    {run_task, lease_waiter},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if lease_waiter in done and lease_lost.is_set():
+                    # We lost the lease — stop the running execution so no
+                    # second worker can operate on the same workspace/run.
+                    if not run_task.done():
+                        run_task.cancel()
+                        with contextlib.suppress(asyncio.CancelledError):
+                            await run_task
+                    # Leave it queued/marked for reclaim by the scheduler.
+                    if storage is not None and storage.get_task(task_id):
+                        storage.update_task(task_id=task_id, status="queued")
         except asyncio.CancelledError:
             pass
         except Exception:
@@ -210,7 +257,12 @@ class RunQueue:
                 row = storage.get_task(task_id)
                 status = row["status"] if row else "failed"
                 if status == "running":
-                    storage.update_task(task_id=task_id, status="completed")
+                    # Still running after the orchestrator returned is an
+                    # anomaly — fail loudly instead of guessing "completed".
+                    storage.update_task(task_id=task_id, status="failed")
+                    logger.error(
+                        "Task %s exited while still marked running", task_id
+                    )
         return True
 
     async def enqueue_coro(self, run_id: str, task_id: str, coro: Coroutine) -> None:
@@ -221,7 +273,7 @@ class RunQueue:
         """
         await self.enqueue(run_id, task_id)
 
-    async def _heartbeat(self, task_id, worker_id, *, interval, lease_seconds, storage):
+    async def _heartbeat(self, task_id, worker_id, *, interval, lease_seconds, storage, lease_lost):
         while True:
             await asyncio.sleep(interval)
             lease_until = (datetime.utcnow() + timedelta(seconds=lease_seconds)).isoformat()
@@ -231,7 +283,7 @@ class RunQueue:
                 lease_until=lease_until,
             )
             if not ok:
-                # We lost the lease — stop renewing; the worker will give up.
+                lease_lost.set()
                 return
 
     def running(self, run_id: str) -> bool:
@@ -239,6 +291,21 @@ class RunQueue:
 
     async def cancel_and_wait(self, run_id: str) -> bool:
         return await self._manager.cancel_and_wait(run_id)
+
+
+_run_queue: RunQueue | None = None
+
+
+def get_run_queue() -> RunQueue:
+    global _run_queue
+    if _run_queue is None:
+        _run_queue = RunQueue()
+    return _run_queue
+
+
+def reset_run_queue() -> None:
+    global _run_queue
+    _run_queue = None
 
 
 def _default_storage():
