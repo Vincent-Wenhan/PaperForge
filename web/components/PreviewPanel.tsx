@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 import { ConsoleLogs } from "./ConsoleLogs";
@@ -43,6 +43,17 @@ export function PreviewPanel() {
   const [tree, setTree] = useState<TreeNode[]>([]);
   const [tabs, setTabs] = useState<EditorTab[]>([]);
   const [activeTabPath, setActiveTabPath] = useState<string | null>(null);
+  const previousAppId = useRef<string | undefined>(appArtifactId);
+
+  // Discard editor state when the workspace identity changes so stale tab
+  // content can never be saved into a different workspace revision.
+  useEffect(() => {
+    if (previousAppId.current && previousAppId.current !== appArtifactId) {
+      setTabs([]);
+      setActiveTabPath(null);
+    }
+    previousAppId.current = appArtifactId;
+  }, [appArtifactId]);
 
   useEffect(() => {
     let active = true;
@@ -111,7 +122,7 @@ export function PreviewPanel() {
       const resp = appArtifactId
         ? await api.readAppFile(appArtifactId, path, currentRun?.id)
         : await api.readFile(sandbox!.id, path);
-      const newTab: EditorTab = { path, content: resp.content, dirty: false, saveState: "saved" };
+      const newTab: EditorTab = { path, content: resp.content, dirty: false, saveState: "saved", workspaceId: appArtifactId ?? undefined };
       setTabs((prev) => [...prev, newTab]);
       setActiveTabPath(path);
     } catch (err) {
@@ -141,6 +152,14 @@ export function PreviewPanel() {
     if (!sandbox && !appArtifactId) return;
     const tab = tabs.find((t) => t.path === path);
     if (!tab) return;
+    if (tab.workspaceId && tab.workspaceId !== appArtifactId) {
+      toast({
+        title: "Workspace changed",
+        description: "This tab belongs to an older workspace revision. Re-open the file to edit the current one.",
+        variant: "error",
+      });
+      return;
+    }
     setTabs((prev) => prev.map((t) => (t.path === path ? { ...t, saveState: "saving" } : t)));
     try {
       if (appArtifactId) {

@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import { api } from "@/lib/api";
-import { useAppStore } from "@/lib/store";
+import { useAppStore, type Sandbox } from "@/lib/store";
 import { EmptyState } from "../Skeleton";
 import { useToast } from "@/lib/toast";
 
@@ -25,9 +25,8 @@ export function PreviewFrame({ sandbox, preview }: { sandbox?: any; preview?: an
   };
 
   const handleOpenNewTab = () => {
-    if (sandbox?.id) {
-      window.open(api.getPreviewUrl(sandbox.id), "_blank");
-    }
+    if (!previewSrc) return;
+    window.open(previewSrc, "_blank", "noopener,noreferrer");
   };
 
   const handleRestart = async () => {
@@ -35,7 +34,7 @@ export function PreviewFrame({ sandbox, preview }: { sandbox?: any; preview?: an
     try {
       const next = await api.restartSandbox(sandbox.id);
       if (next) {
-        useAppStore.getState().setSandbox(next);
+        useAppStore.getState().setSandbox(next as unknown as Sandbox);
       }
       useAppStore.getState().setPreview({
         status: "starting",

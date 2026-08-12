@@ -12,4 +12,5 @@ export interface EditorTab {
   content: string;
   dirty: boolean;
   saveState?: "saved" | "saving" | "error";
+  workspaceId?: string;
 }

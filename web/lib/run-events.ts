@@ -3,7 +3,7 @@ import type { PreviewState, Task } from "./contracts";
 import { enqueueMessageDelta, flushMessageDeltas } from "./realtime/stream-buffer";
 import { useAppStore, type AgentStep, type Approval, type Event } from "./store";
 
-export type ApplyRunEventResult = "applied" | "duplicate" | "gap" | "unknown";
+export type ApplyRunEventResult = "applied" | "ignored" | "duplicate" | "gap";
 
 // ponytail: workbench stays closed while the user pins it closed; otherwise
 // preview.ready opens it and artifact/file events peek it.
@@ -174,7 +174,7 @@ export function applyRunEvent(
         approval_id: data.approval_id,
         id: data.approval_id,
         run_id: runId,
-        task_id: data.task_id,
+        task_id: taskId,
         tool: data.tool || data.tool_name || "",
         tool_name: data.tool_name || data.tool || "",
         args: data.args || {},
@@ -252,6 +252,6 @@ export function applyRunEvent(
       }
       return "applied";
     default:
-      return "unknown";
+      return "ignored";
   }
 }
