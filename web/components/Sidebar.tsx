@@ -3,19 +3,20 @@
 import { useState } from "react";
 import { api, triggerBrowserDownload } from "@/lib/api";
 import { useIsMobile } from "@/lib/useMediaQuery";
-import type { Paper, Run } from "@/lib/store";
+import type { ApiPaper } from "@/lib/api/types";
+import type { Run } from "@/lib/store";
 import { useToast } from "@/lib/toast";
 
 interface SidebarProps {
   runs: Run[];
-  library: Paper[];
+  library: ApiPaper[];
   onNewRun: () => void;
   onSelectRun: (runId: string) => void;
   currentRunId?: string | null;
   onRunsChanged?: () => void;
   onLibraryChanged?: () => void;
   onOpenPaper?: (paperId: string) => void;
-  onAttachPaper?: (paper: Paper) => void;
+  onAttachPaper?: (paper: ApiPaper) => void;
   collapsed?: boolean;
   onToggleCollapse?: () => void;
   onCloseMobile?: () => void;
@@ -185,7 +186,7 @@ export function Sidebar({
     setPaperMenuFor(null);
   };
 
-  const handleAttachPaper = (paper: Paper) => {
+  const handleAttachPaper = (paper: ApiPaper) => {
     onAttachPaper?.(paper);
     setPaperMenuFor(null);
   };
@@ -291,7 +292,7 @@ export function Sidebar({
           Library
         </h3>
         <ul className="space-y-0.5 mb-2">
-          {library.map((p: Paper) => (
+          {library.map((p: ApiPaper) => (
             <PaperRow
               key={p.paper_id}
               paper={p}
@@ -471,7 +472,7 @@ export function RunRow({
 }
 
 interface PaperRowProps {
-  paper: Paper;
+  paper: ApiPaper;
   onOpen: () => void;
   onAttach: () => void;
   menuOpen: boolean;

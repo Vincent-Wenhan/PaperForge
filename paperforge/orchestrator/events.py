@@ -340,8 +340,15 @@ class InProcessEventBroker(EventBroker):
 
     async def publish(self, event: Event) -> None:
         for queue in self._subscribers[event.run_id or ""]:
-            with contextlib.suppress(asyncio.QueueFull):
+            try:
                 queue.put_nowait(event)
+            except asyncio.QueueFull:
+                # Dropping a live event is recoverable (seq gap triggers snapshot
+                # hydration) but must stay observable so broker backpressure is
+                # visible rather than surfacing only as occasional hydrates.
+                from paperforge.observability.metrics import get_metrics
+
+                get_metrics().increment("broker_live_drop_total")
 
     def subscribe(self, run_id: str) -> asyncio.Queue[Event]:
         queue: asyncio.Queue[Event] = asyncio.Queue(maxsize=1000)

@@ -1,4 +1,4 @@
-import type { Run, Message, Paper, Sandbox, Event, Approval, Artifact } from "./store";
+import type { ApiApproval, ApiArtifact, ApiMessage, ApiPaper, ApiRun, ApiSandbox } from "./api/types";
 import type { RunSession, Task } from "./contracts";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "";
@@ -73,7 +73,7 @@ async function getJson<T>(path: string): Promise<T> {
   return resp.json() as Promise<T>;
 }
 
-async function postJson<T>(path: string, body?: any): Promise<T> {
+async function postJson<T>(path: string, body?: unknown): Promise<T> {
   const resp = await fetch(buildUrl(path), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -93,7 +93,7 @@ async function deleteJson<T>(path: string): Promise<T> {
   return resp.json() as Promise<T>;
 }
 
-async function patchJson<T>(path: string, body: any): Promise<T> {
+async function patchJson<T>(path: string, body: unknown): Promise<T> {
   const resp = await fetch(buildUrl(path), {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
@@ -105,7 +105,7 @@ async function patchJson<T>(path: string, body: any): Promise<T> {
   return resp.json() as Promise<T>;
 }
 
-async function putJson<T>(path: string, body: any): Promise<T> {
+async function putJson<T>(path: string, body: unknown): Promise<T> {
   const resp = await fetch(buildUrl(path), {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
@@ -119,14 +119,14 @@ async function putJson<T>(path: string, body: any): Promise<T> {
 
 export const api = {
   // === Runs ===
-  createRun: async (title?: string): Promise<Run> => {
-    return postJson<Run>("/api/runs", { title });
+  createRun: async (title?: string): Promise<ApiRun> => {
+    return postJson<ApiRun>("/api/runs", { title });
   },
-  listRuns: async (): Promise<Run[]> => {
-    return getJson<Run[]>("/api/runs");
+  listRuns: async (): Promise<ApiRun[]> => {
+    return getJson<ApiRun[]>("/api/runs");
   },
-  getRun: async (id: string): Promise<Run> => {
-    return getJson<Run>(`/api/runs/${id}`);
+  getRun: async (id: string): Promise<ApiRun> => {
+    return getJson<ApiRun>(`/api/runs/${id}`);
   },
   getRunState: async (id: string): Promise<RunSession> => {
     const state = await getJson<RunSession>(`/api/runs/${id}/state`);
@@ -139,14 +139,14 @@ export const api = {
   updateRun: async (
     id: string,
     patch: { title?: string; pinned?: boolean }
-  ): Promise<Run> => {
-    return patchJson<Run>(`/api/runs/${id}`, patch);
+  ): Promise<ApiRun> => {
+    return patchJson<ApiRun>(`/api/runs/${id}`, patch);
   },
-  archiveRun: async (id: string): Promise<Run> => {
-    return postJson<Run>(`/api/runs/${id}/archive`, {});
+  archiveRun: async (id: string): Promise<ApiRun> => {
+    return postJson<ApiRun>(`/api/runs/${id}/archive`, {});
   },
-  restoreRun: async (id: string): Promise<Run> => {
-    return postJson<Run>(`/api/runs/${id}/restore`, {});
+  restoreRun: async (id: string): Promise<ApiRun> => {
+    return postJson<ApiRun>(`/api/runs/${id}/restore`, {});
   },
   deleteRun: async (id: string): Promise<{ status: string }> => {
     return deleteJson(`/api/runs/${id}`);
@@ -170,15 +170,15 @@ export const api = {
       mode,
     });
   },
-  listMessages: async (runId: string): Promise<Message[]> => {
-    return getJson<Message[]>(`/api/runs/${runId}/messages`);
+  listMessages: async (runId: string): Promise<ApiMessage[]> => {
+    return getJson<ApiMessage[]>(`/api/runs/${runId}/messages`);
   },
 
   // === Library ===
-  listLibrary: async (): Promise<{ papers: Paper[] }> => {
+  listLibrary: async (): Promise<{ papers: ApiPaper[] }> => {
     return getJson(`/api/library`);
   },
-  uploadPaper: async (file: File): Promise<Paper> => {
+  uploadPaper: async (file: File): Promise<ApiPaper> => {
     const formData = new FormData();
     formData.append("file", file);
     const resp = await fetch(buildUrl("/api/library/upload"), {
@@ -188,10 +188,10 @@ export const api = {
     if (!resp.ok) throw await apiErrorFromResponse(resp);
     return resp.json();
   },
-  getPaper: async (paperId: string): Promise<{ paper: Paper; capability_card: any }> => {
+  getPaper: async (paperId: string): Promise<{ paper: ApiPaper; capability_card: any }> => {
     return getJson(`/api/library/${paperId}`);
   },
-  renamePaper: async (paperId: string, title: string): Promise<Paper> => {
+  renamePaper: async (paperId: string, title: string): Promise<ApiPaper> => {
     return patchJson(`/api/library/${paperId}`, { title });
   },
   deletePaper: async (paperId: string): Promise<{ status: string }> => {
@@ -210,23 +210,23 @@ export const api = {
   },
 
   // === Sandboxes ===
-  listSandboxes: async (): Promise<Sandbox[]> => {
+  listSandboxes: async (): Promise<ApiSandbox[]> => {
     return getJson(`/api/sandboxes`);
   },
-  getLatestSandboxForRun: async (runId: string): Promise<Sandbox | null> => {
-    return getJson<Sandbox | null>(`/api/sandboxes/latest?run_id=${runId}`);
+  getLatestSandboxForRun: async (runId: string): Promise<ApiSandbox | null> => {
+    return getJson<ApiSandbox | null>(`/api/sandboxes/latest?run_id=${runId}`);
   },
-  startSandbox: async (runId: string, appArtifactId: string): Promise<Sandbox> => {
+  startSandbox: async (runId: string, appArtifactId: string): Promise<ApiSandbox> => {
     return postJson(`/api/sandboxes`, { app_artifact_id: appArtifactId, run_id: runId });
   },
   stopSandbox: async (sandboxId: string): Promise<{ status: string }> => {
     return postJson(`/api/sandboxes/${sandboxId}/stop`, {});
   },
-  restartSandbox: async (sandboxId: string): Promise<Sandbox> => {
+  restartSandbox: async (sandboxId: string): Promise<ApiSandbox> => {
     return postJson(`/api/sandboxes/${sandboxId}/restart`, {});
   },
-  getSandbox: async (sandboxId: string): Promise<Sandbox> => {
-    return getJson<Sandbox>(`/api/sandboxes/${sandboxId}`);
+  getSandbox: async (sandboxId: string): Promise<ApiSandbox> => {
+    return getJson<ApiSandbox>(`/api/sandboxes/${sandboxId}`);
   },
   listRunPapers: async (runId: string): Promise<{ papers: any[] }> => {
     return getJson(`/api/runs/${runId}/papers`);
@@ -276,22 +276,22 @@ export const api = {
   resolveApproval: async (approvalId: string, approved: boolean): Promise<{ approval_id: string; approved: boolean }> => {
     return postJson(`/api/approvals/${approvalId}/resolve`, { approved });
   },
-  listApprovals: async (runId?: string): Promise<Approval[]> => {
+  listApprovals: async (runId?: string): Promise<ApiApproval[]> => {
     const q = runId ? `?run_id=${runId}` : "";
     return getJson(`/api/approvals${q}`);
   },
 
   // === Artifacts ===
-  listArtifacts: async (runId: string, includeData = false): Promise<Artifact[]> => {
+  listArtifacts: async (runId: string, includeData = false): Promise<ApiArtifact[]> => {
     const params = new URLSearchParams({ run_id: runId });
     if (includeData) params.set("include_data", "true");
     return getJson(`/api/artifacts?${params.toString()}`);
   },
-  getArtifact: async (artifactId: string): Promise<Artifact> => {
-    return getJson<Artifact>(`/api/artifacts/${artifactId}`);
+  getArtifact: async (artifactId: string): Promise<ApiArtifact> => {
+    return getJson<ApiArtifact>(`/api/artifacts/${artifactId}`);
   },
-  renameArtifact: async (artifactId: string, displayName: string): Promise<Artifact> => {
-    return patchJson<Artifact>(`/api/artifacts/${artifactId}`, { display_name: displayName });
+  renameArtifact: async (artifactId: string, displayName: string): Promise<ApiArtifact> => {
+    return patchJson<ApiArtifact>(`/api/artifacts/${artifactId}`, { display_name: displayName });
   },
   deleteArtifact: async (artifactId: string): Promise<{ status: string }> => {
     return deleteJson(`/api/artifacts/${artifactId}`);
@@ -350,7 +350,7 @@ export const api = {
     const query = runId ? `?run_id=${encodeURIComponent(runId)}` : "";
     return getJson(`/api/apps/${appId}/revisions${query}`);
   },
-  getAppRevision: async (appId: string, revisionId: string, runId?: string): Promise<any> => {
+  getAppRevision: async (appId: string, revisionId: string, runId?: string): Promise<Record<string, unknown>> => {
     const query = runId ? `?run_id=${encodeURIComponent(runId)}` : "";
     return getJson(`/api/apps/${appId}/revisions/${revisionId}${query}`);
   },
@@ -359,7 +359,7 @@ export const api = {
     return postJson(`/api/apps/${appId}/revisions/${revisionId}/restore${query}`, {});
   },
 
-  getPreviewStatus: async (runId: string): Promise<any> => {
+  getPreviewStatus: async (runId: string): Promise<Record<string, unknown>> => {
     return getJson(`/api/preview/status/${runId}`);
   },
 
@@ -372,7 +372,7 @@ export const api = {
   },
 
   // === Settings ===
-  getSettings: async (): Promise<any> => {
+  getSettings: async (): Promise<Record<string, unknown>> => {
     return getJson(`/api/settings`);
   },
 };

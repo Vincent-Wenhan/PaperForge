@@ -76,3 +76,22 @@ async def test_persistence_failure_raises():
         await mgr.broadcast(Event(type="t", run_id="r"))
     # No event must leak to subscribers when persistence failed.
     assert not mgr.has_subscribers("r")
+
+
+@pytest.mark.asyncio
+async def test_broker_drop_records_metric(storage):
+    from paperforge.observability.metrics import get_metrics
+
+    get_metrics().snapshot()  # ensure registry exists
+    _counters = get_metrics()._counters
+    _counters.pop("broker_live_drop_total", None)
+    storage.create_run("run_drop", title="drop")
+    mgr = EventManager(storage=storage)
+    q = mgr.register("run_drop")
+    # Maxsize is 1000; fill the subscriber queue past its cap so publish drops.
+    filler = Event(type="filler", run_id="run_drop")
+    for _ in range(q.maxsize):
+        q.put_nowait(filler)
+    event = Event(type="test", data={"x": 1}, run_id="run_drop")
+    await mgr.broadcast(event)
+    assert _counters.get("broker_live_drop_total", 0) >= 1

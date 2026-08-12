@@ -40,17 +40,3 @@ export interface RunSession {
   event_cursor: number;
   preview?: PreviewState | null;
 }
-
-export interface RunEventEnvelope<T = unknown> {
-  id: string;
-  seq: number;
-  run_id: string;
-  type: string;
-  ts: number | string;
-  payload: T;
-}
-
-export type SessionEvent = Event & {
-  seq: number;
-  run_id: string;
-};

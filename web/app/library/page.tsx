@@ -3,13 +3,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
+import type { ApiPaper } from "@/lib/api/types";
 import { Sidebar } from "@/components/Sidebar";
-import type { Paper } from "@/lib/store";
 
 export default function LibraryPage() {
   const router = useRouter();
   const [runs, setRuns] = useState<any[]>([]);
-  const [papers, setPapers] = useState<Paper[]>([]);
+  const [papers, setPapers] = useState<ApiPaper[]>([]);
   const [loading, setLoading] = useState(true);
 
   const loadAll = useCallback(() => {

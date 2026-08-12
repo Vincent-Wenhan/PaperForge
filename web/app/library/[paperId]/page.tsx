@@ -3,12 +3,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { api, triggerBrowserDownload } from "@/lib/api";
+import type { ApiPaper } from "@/lib/api/types";
 import { Sidebar } from "@/components/Sidebar";
 import { CapabilityCardView } from "@/components/CapabilityCardView";
-import type { Paper, Run } from "@/lib/store";
+import type { Run } from "@/lib/store";
 
 interface PaperDetail {
-  paper: Paper;
+  paper: ApiPaper;
   capability_card: any;
 }
 
@@ -25,7 +26,7 @@ export default function PaperDetailPage() {
   const params = useParams<{ paperId: string }>();
   const router = useRouter();
   const [runs, setRuns] = useState<Run[]>([]);
-  const [papers, setPapers] = useState<Paper[]>([]);
+  const [papers, setPapers] = useState<ApiPaper[]>([]);
   const [data, setData] = useState<PaperDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
