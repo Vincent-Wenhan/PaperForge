@@ -11,6 +11,7 @@ from paperforge.agents.generation_v3 import (
     GeneratedBatch,
     build_generation_context,
     generate_batch,
+    generate_nextjs_app_v3,
     group_plan_files,
     import_to_paths,
     parse_local_imports,
@@ -193,3 +194,66 @@ async def test_generate_batch_bounded_call(tmp_path):
     )
     assert isinstance(batch, GeneratedBatch)
     assert len(batch.files) == 1
+
+
+@pytest.mark.asyncio
+async def test_generate_nextjs_app_v3_executes_full_path(storage, monkeypatch, tmp_path):
+    """Full V3 path: plan → batch → write → promote actually runs (doc 3.1)."""
+    import paperforge.agents.generation_v3 as generation_v3
+
+    storage.create_run("run_v3", title="V3")
+    prd_id = storage.save_artifact(
+        run_id="run_v3",
+        artifact_type="prd",
+        data={
+            "prd_id": "prd_test",
+            "product_name": "Test App",
+            "features": [],
+            "acceptance_criteria": [],
+        },
+    )
+
+    plan = WorkspacePlan(
+        app_name="test-app",
+        routes=[],
+        components=[],
+        files=[
+            FileSpec(
+                path="app/page.tsx",
+                kind="route",
+                purpose="Main page",
+                depends_on=[],
+            ),
+        ],
+        dependencies={},
+        acceptance_ids=[],
+    )
+
+    async def fake_plan_workspace(*, prd, llm):
+        return plan
+
+    async def fake_generate_batch(*, prd, plan, specs, workspace, llm):
+        return GeneratedBatch(
+            summary="Generated route",
+            files=[
+                {
+                    "path": "app/page.tsx",
+                    "content": "export default function Page() {return <main>Hello</main>;}",
+                }
+            ],
+        )
+
+    monkeypatch.setattr(generation_v3, "plan_workspace", fake_plan_workspace)
+    monkeypatch.setattr(generation_v3, "generate_batch", fake_generate_batch)
+
+    output_dir = storage.apps_dir / "integration-v3"
+
+    result = await generation_v3.generate_nextjs_app_v3(
+        prd_id=prd_id,
+        output_dir=output_dir,
+        llm=object(),
+        storage=storage,
+    )
+
+    assert (output_dir / "app/page.tsx").exists()
+    assert "app/page.tsx" in result["files"]
