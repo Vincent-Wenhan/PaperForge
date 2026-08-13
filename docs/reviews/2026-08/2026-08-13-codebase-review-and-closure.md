@@ -4273,72 +4273,72 @@ parse → generate from zero
 
 ## Main Path
 
-- [ ] `generate_nextjs_app_v3()` 真正完整执行通过；
-- [ ] V3 有 full integration test；
-- [ ] V3 batch 只允许 planned files；
-- [ ] V3 使用 SafeWorkspacePolicy；
-- [ ] atomic promotion 失败可 rollback。
+- [x] `generate_nextjs_app_v3()` 真正完整执行通过；
+- [x] V3 有 full integration test；
+- [x] V3 batch 只允许 planned files；
+- [x] V3 使用 SafeWorkspacePolicy；
+- [x] atomic promotion 失败可 rollback。
 
 ## Continuous Agent
 
-- [ ] Stop 只取消当前 Task；
-- [ ] Interrupt 只取消旧 Task，然后启动新 Task；
-- [ ] Stop 后 Run 仍可接受后续请求；
-- [ ] Orchestrator 不再因 `Run.cancelled` 阻止正常 follow-up；
-- [ ] archive/delete 才是 thread terminal。
+- [x] Stop 只取消当前 Task；
+- [x] Interrupt 只取消旧 Task，然后启动新 Task；
+- [x] Stop 后 Run 仍可接受后续请求；
+- [x] Orchestrator 不再因 `Run.cancelled` 阻止正常 follow-up；
+- [x] archive/delete 才是 thread terminal。
 
 ## Queue / Scheduler
 
-- [ ] replacement callback 不会删除新 task；
-- [ ] enqueue/worker shutdown 无 race；
-- [ ] claim loser 不会 requeue winner；
-- [ ] lease lost 会停止旧 execution；
-- [ ] Queue 不会把未知 early return 推断为 completed；
-- [ ] restart recovery 实际执行 queued task；
-- [ ] 同一 Run 同时最多一个 active Task。
+- [x] replacement callback 不会删除新 task；
+- [x] enqueue/worker shutdown 无 race；
+- [x] claim loser 不会 requeue winner；
+- [x] lease lost 会停止旧 execution；
+- [x] Queue 不会把未知 early return 推断为 completed；
+- [x] restart recovery 实际执行 queued task；
+- [x] 同一 Run 同时最多一个 active Task。
 
 ## Verification
 
-- [ ] `technical_ready` 正确；
-- [ ] `preview_allowed` 正确；
-- [ ] runtime success 写回 gates；
-- [ ] acceptance success 写回 gates；
-- [ ] `product_ready` 可从 False 正常变 True；
-- [ ] nonzero command exit 永远不会 false pass；
-- [ ] browser upload 不能访问任意本地文件。
+- [x] `technical_ready` 正确；
+- [x] `preview_allowed` 正确；
+- [x] runtime success 写回 gates；
+- [x] acceptance success 写回 gates；
+- [x] `product_ready` 可从 False 正常变 True；
+- [x] nonzero command exit 永远不会 false pass；
+- [x] browser upload 不能访问任意本地文件。
 
 ## Conversation
 
-- [ ] Task chronological order；
-- [ ] User Message task_id；
-- [ ] Assistant Message task_id；
-- [ ] Tool Message task_id；
-- [ ] Step task_id；
-- [ ] Artifact task_id；
-- [ ] Approval task_id；
-- [ ] SSE 与 reload hydration 后 Turn 完全一致；
-- [ ] 新数据不应产生 unexplained untracked entities。
+- [x] Task chronological order；
+- [x] User Message task_id；
+- [x] Assistant Message task_id；
+- [x] Tool Message task_id；
+- [x] Step task_id；
+- [x] Artifact task_id；
+- [x] Approval task_id；
+- [x] SSE 与 reload hydration 后 Turn 完全一致；
+- [x] 新数据不应产生 unexplained untracked entities。
 
 ## Workbench
 
-- [ ] workspace identity change 清理/重验证 editor tabs；
-- [ ] dirty tab 不可写到另一 workspace；
-- [ ] iframe 使用 isolated preview URL；
-- [ ] Open New Tab 也使用同一 `previewSrc`。
+- [x] workspace identity change 清理/重验证 editor tabs；
+- [x] dirty tab 不可写到另一 workspace；
+- [x] iframe 使用 isolated preview URL；
+- [x] Open New Tab 也使用同一 `previewSrc`。
 
 ## Parser
 
-- [ ] Coverage 根据实际成功 map chunk；
-- [ ] 长论文不只处理开头 16 chunks；
-- [ ] hierarchical reduction；
-- [ ] CapabilityContract 真正进入 Planner。
+- [x] Coverage 根据实际成功 map chunk；
+- [x] 长论文不只处理开头 16 chunks；
+- [x] hierarchical reduction；
+- [x] CapabilityContract 真正进入 Planner。
 
 ## Production
 
-- [ ] in-process broker 单机可靠；
-- [ ] queue drop 有 metrics；
-- [ ] 多 worker 时使用 shared Broker；
-- [ ] lease loss / reclaim 有系统测试。
+- [x] in-process broker 单机可靠；
+- [x] queue drop 有 metrics；
+- [ ] 多 worker 时使用 shared Broker；（按 §49 明确"现在就过度设计，等真正多 worker 时实现"，本次收口不构建）
+- [x] lease loss / reclaim 有系统测试。
 
 ---
 
