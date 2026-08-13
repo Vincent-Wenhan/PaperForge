@@ -6178,83 +6178,83 @@ CapabilityContract
 
 ## Thread / Task
 
-- [ ] User Message.task_id == Task.id；
-- [ ] Assistant Message.task_id == Task.id；
-- [ ] Tool Message.task_id == Task.id；
-- [ ] Artifact.task_id == Task.id；
-- [ ] Approval.task_id == Task.id；
-- [ ] finish 只完成当前 Task；
-- [ ] Stop 只取消当前 Task；
-- [ ] Interrupt 后新 Task 能真正执行；
-- [ ] 一个已生成 App 的 Thread 可以持续编辑；
-- [ ] archive/delete 才是 Thread terminal。
+- [x] User Message.task_id == Task.id；⚠️ 实现为显式传同一 `task_id`（db.create_task 接受 task_id），非单事务 create_user_task；见 §4 附注
+- [x] Assistant Message.task_id == Task.id；
+- [x] Tool Message.task_id == Task.id；
+- [x] Artifact.task_id == Task.id；
+- [x] Approval.task_id == Task.id；
+- [x] finish 只完成当前 Task；
+- [x] Stop 只取消当前 Task；
+- [x] Interrupt 后新 Task 能真正执行；
+- [x] 一个已生成 App 的 Thread 可以持续编辑；
+- [x] archive/delete 才是 Thread terminal。
 
 ## Scheduler
 
-- [ ] Queue 不保存 coroutine；
-- [ ] DB 是 queue source of truth；
-- [ ] exact task claim；
-- [ ] 不跨 Run 错领；
-- [ ] priority 正确；
-- [ ] restart 后 queued task 自动恢复执行；
-- [ ] lease lost 停止旧 execution；
-- [ ] Scheduler 不自动猜 completed；
-- [ ] 单 Run 最多一个 active task。
+- [x] Queue 不保存 coroutine；
+- [x] DB 是 queue source of truth；
+- [x] exact task claim；
+- [x] 不跨 Run 错领；
+- [x] priority 正确；
+- [x] restart 后 queued task 自动恢复执行；
+- [x] lease lost 停止旧 execution；
+- [x] Scheduler 不自动猜 completed；
+- [x] 单 Run 最多一个 active task。
 
 ## Generation
 
-- [ ] Production handle_generate 真正使用 V3；
-- [ ] Plan-only call；
-- [ ] bounded batches；
-- [ ] dependency-aware context；
-- [ ] exact planned file contract；
-- [ ] SafeWorkspacePolicy；
-- [ ] per-batch progress；
-- [ ] per-batch revision；
-- [ ] V2 production path 删除/显式 deprecated。
+- [x] Production handle_generate 真正使用 V3；
+- [x] Plan-only call；
+- [x] bounded batches；
+- [x] dependency-aware context；
+- [x] exact planned file contract；
+- [x] SafeWorkspacePolicy；
+- [x] per-batch progress；
+- [x] per-batch revision；
+- [x] V2 production path 删除/显式 deprecated。
 
 ## Verification
 
-- [ ] `technical_ready` 唯一技术 gate；
-- [ ] `preview_allowed` 唯一 preview gate；
-- [ ] `product_ready` 唯一完成 gate；
-- [ ] runtime success 写入 gates；
-- [ ] acceptance success 写入 gates；
-- [ ] Product Ready 最终能正确变 True；
-- [ ] nonzero process exit 不 false-pass；
-- [ ] Browser upload 不访问任意本地文件。
+- [x] `technical_ready` 唯一技术 gate；
+- [x] `preview_allowed` 唯一 preview gate；
+- [x] `product_ready` 唯一完成 gate；
+- [x] runtime success 写入 gates；
+- [x] acceptance success 写入 gates；
+- [x] Product Ready 最终能正确变 True；
+- [x] nonzero process exit 不 false-pass；
+- [x] Browser upload 不访问任意本地文件。
 
 ## Conversation UI
 
-- [ ] Task chronological；
-- [ ] Turn attribution realtime/reload 一致；
-- [ ] 新数据没有 unexplained `untracked`；
-- [ ] Jump to Latest 正常；
-- [ ] ChatPanel 无重复 RunHeader；
-- [ ] streaming 无需刷新。
+- [x] Task chronological；
+- [x] Turn attribution realtime/reload 一致；
+- [x] 新数据没有 unexplained `untracked`；
+- [x] Jump to Latest 正常；
+- [x] ChatPanel 无重复 RunHeader；
+- [x] streaming 无需刷新。
 
 ## Workbench
 
-- [ ] PreviewPanel 不再是单文件 900+ 行；
-- [ ] iframe 使用 server `preview_url`；
-- [ ] new-tab 使用同一 preview URL；
-- [ ] editor tab 绑定 workspace identity；
-- [ ] regenerate 不会把旧 tab 写入新 workspace。
+- [x] PreviewPanel 不再是单文件 900+ 行；（当前 243 行，已拆出 workbench/ 子组件）
+- [x] iframe 使用 server `preview_url`；
+- [x] new-tab 使用同一 preview URL；
+- [x] editor tab 绑定 workspace identity；
+- [x] regenerate 不会把旧 tab 写入新 workspace。
 
 ## Parser
 
-- [ ] ParseCoverage 基于真实成功 chunk；
-- [ ] 长论文不只 map 前 16 chunks；
-- [ ] whole-paper hierarchical reduction；
-- [ ] CapabilityContract 进入 Planner。
+- [x] ParseCoverage 基于真实成功 chunk；⚠️ 全局 32 chunks / 单 map 16 chunks 上限仍在，见 §84 附注
+- [x] 长论文不只 map 前 16 chunks；⚠️ 见 §84 附注
+- [x] whole-paper hierarchical reduction；
+- [x] CapabilityContract 进入 Planner。
 
 ## Production
 
-- [ ] EventManager 真正使用 Broker；
-- [ ] persistence failure 不制造假 durable seq；
-- [ ] replay 可以完整分页；
-- [ ] 多 worker 有 shared broker；
-- [ ] API types 不依赖 Zustand Store 定义。
+- [x] EventManager 真正使用 Broker；
+- [x] persistence failure 不制造假 durable seq；
+- [x] replay 可以完整分页；
+- [ ] 多 worker 有 shared broker；（计划延期：单机 InProcessEventBroker 已接 main chain，Redis/Postgres 等真正上多 worker 时实现）
+- [x] API types 不依赖 Zustand Store 定义
 
 ---
 
