@@ -17,7 +17,8 @@ logger = logging.getLogger(__name__)
 MAX_RETRIES = 3
 MAX_CHUNK_CHARS = 12000
 MAX_CHUNKS = 32
-MAX_MAP_CHUNKS = 16  # chunks fed to the LLM per map call
+# Every chunk is mapped (whole-paper); the hierarchy folds groups up so no
+# budget is spent by dropping the second half of a long paper.
 REDUCE_GROUP_SIZE = 6  # chunks summarized per group step in the hierarchy
 
 
