@@ -153,15 +153,15 @@ async def test_interrupt_cancels_task_and_run_stays_active(storage):
     treats the Run as a terminal. A follow-up task can then be queued.
     """
     run = storage.create_run("run_934", "Interrupt", status="active")
+    entered = asyncio.Event()
 
     class BlockingLLM:
         async def chat(self, *a, **k):
+            entered.set()
             await asyncio.sleep(60)
             raise AssertionError("interrupted task must not finish")
 
-        async def stream(self, *a, **k):
-            return
-            yield  # pragma: no cover
+        stream = None  # no streaming: chat() is the blocking path
 
     orchestrator = Orchestrator(llm=BlockingLLM(), storage=storage)
     # Pre-create the task so the orchestrator threads it and flips it to running.
@@ -171,9 +171,15 @@ async def test_interrupt_cancels_task_and_run_stays_active(storage):
     run_task = asyncio.create_task(
         orchestrator.run(run["id"], "block", task_id=task_row["id"])
     )
-    await asyncio.sleep(0.1)
-    # The orchestrator must have moved the queued task to running.
+    # The orchestrator loop must first move the queued task to running and be
+    # parked inside the blocking chat() before we interrupt. Poll until both
+    # hold (bounded) so the test isn't a race.
+    for _ in range(100):
+        await asyncio.sleep(0.01)
+        if storage.get_task(task_row["id"])["status"] == "running" and entered.is_set():
+            break
     assert storage.get_task(task_row["id"])["status"] == "running"
+    assert entered.is_set()
 
     # Simulate an interrupt: cancel the run task → CancelledError path.
     run_task.cancel()

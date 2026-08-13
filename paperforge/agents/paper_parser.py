@@ -134,11 +134,6 @@ async def parse_paper(
             continue
         if isinstance(chunk_data, dict):
             mapped.append({"chunk": index, "data": chunk_data})
-        # Stop mapping once we've consumed the bounded cap; remaining chunks
-        # stay excluded so we never silently truncate with no trace left.
-        if index >= MAX_MAP_CHUNKS:
-            logger.warning("Reached map cap of %s; remaining chunks left unmapped", MAX_MAP_CHUNKS)
-            break
 
     if not mapped:
         raise ValueError("PaperParser produced no valid map results")

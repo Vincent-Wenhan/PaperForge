@@ -6243,8 +6243,8 @@ CapabilityContract
 
 ## Parser
 
-- [x] ParseCoverage 基于真实成功 chunk；⚠️ 全局 32 chunks / 单 map 16 chunks 上限仍在，见 §84 附注
-- [x] 长论文不只 map 前 16 chunks；⚠️ 见 §84 附注
+- [x] ParseCoverage 基于真实成功 chunk；⚠️ 单 map 16 chunks 上限已移除，全局 32 chunks 上限仍在（chunk_pdf_pages 截断），见 §83/§84 附注
+- [x] 长论文不只 map 前 16 chunks；⚠️ map 循环已遍历全部 chunks，仅全局 32 chunk 截断保留，见 §83 附注
 - [x] whole-paper hierarchical reduction；
 - [x] CapabilityContract 进入 Planner。
 
