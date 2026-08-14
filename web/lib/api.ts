@@ -162,7 +162,7 @@ export const api = {
     paperIds: string[] = [],
     publicId?: string,
     mode: "start" | "queue" | "interrupt" = "start",
-  ): Promise<{ status: string; run_id: string; message?: any }> => {
+  ): Promise<SendMessageResult> => {
     return postJson(`/api/runs/${runId}/messages`, {
       content,
       paper_ids: paperIds,
@@ -423,9 +423,26 @@ export interface SandboxLogDeltaPayload {
   text: string;
 }
 
+export interface SendMessageResult {
+  status: string;
+  run_id: string;
+  message: any;
+  task: any;
+  task_id: string;
+  event_cursor: number;
+}
+
+export interface TaskEventPayload {
+  task: any;
+}
+
 export type KnownRunEvent =
   | RunEventBase<"message.delta", MessageDeltaPayload>
+  | RunEventBase<"message.started", { message_id: string }>
   | RunEventBase<"message.completed", { message_id: string; content?: string }>
+  | RunEventBase<"task.created", TaskEventPayload>
+  | RunEventBase<"task.updated", TaskEventPayload>
+  | RunEventBase<"task.completed", TaskEventPayload>
   | RunEventBase<"step.started", StepStartedPayload>
   | RunEventBase<"step.progress", StepProgressPayload>
   | RunEventBase<"step.completed", StepCompletedPayload>
@@ -435,23 +452,31 @@ export type KnownRunEvent =
 
 export type RunEvent = KnownRunEvent;
 
+export type ConnectionState = "connecting" | "connected" | "error";
+
 export class SSEClient {
   private es: EventSource | null = null;
   private handler: ((event: RunEvent) => void) | null = null;
+  private stateHandler: ((state: ConnectionState) => void) | null = null;
   private seenSeqs = new Set<number>();
 
   connect(runId: string, afterSeq = 0) {
     this.disconnect();
     this.seenSeqs.clear();
+    this.setState("connecting");
     const query = afterSeq > 0 ? `?after_seq=${afterSeq}` : "";
     this.es = new EventSource(buildUrl(`/api/runs/${runId}/events${query}`));
 
     this.es.onopen = () => {
-      console.log("[SSE] connected");
+      this.setState("connected");
     };
 
     this.es.onerror = () => {
-      console.warn("[SSE] error; browser will auto-reconnect");
+      // onerror fires both on transient failures (browser auto-reconnects)
+      // and on the terminal closed state. EventSource has no clean
+      // "disconnected" signal, so we report error and let the next onopen
+      // flip it back to connected.
+      this.setState("error");
     };
 
     // Single onmessage: the semantic type lives in the JSON envelope, so we
@@ -477,6 +502,18 @@ export class SSEClient {
 
   onMessage(handler: (event: RunEvent) => void) {
     this.handler = handler;
+  }
+
+  onConnectionState(handler: (state: ConnectionState) => void) {
+    this.stateHandler = handler;
+  }
+
+  private setState(state: ConnectionState) {
+    try {
+      this.stateHandler?.(state);
+    } catch (err) {
+      console.error("[SSE] state handler error:", err);
+    }
   }
 
   disconnect() {

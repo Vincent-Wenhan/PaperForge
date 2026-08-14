@@ -51,9 +51,14 @@ export function useRunSession(runId: string | null | undefined) {
     const connect = async () => {
       setLoading(true);
       setError(null);
+      useAppStore.getState().setConnection("connecting");
       try {
         const cursor = await hydrate();
         if (!active) return;
+        // Real SSE connection state feeds the header indicator.
+        sse.onConnectionState((state) => {
+          useAppStore.getState().setConnection(state);
+        });
         // Single onmessage: semantic type rides in the JSON envelope.
         sse.onMessage((event) => {
           const result = applyRunEvent(event, runId);

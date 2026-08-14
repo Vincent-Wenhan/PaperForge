@@ -35,6 +35,39 @@ function toStoreEvent(event: RunEvent, data: any): Event {
   };
 }
 
+function toTask(task: any, runId: string): Task {
+  const id = task?.id ?? task?.task_id ?? "untracked";
+  return {
+    id,
+    task_id: id,
+    run_id: task?.run_id ?? runId,
+    title: task?.title ?? null,
+    goal: task?.goal ?? null,
+    status: task?.status ?? "queued",
+    phase: task?.phase,
+    created_at: task?.created_at,
+    updated_at: task?.updated_at,
+    completed_at: task?.completed_at ?? null,
+  };
+}
+
+// ponytail: if a task.created/delta references a task we don't know yet, seed a
+// minimal running task so projectTurns always has a home for it. The real
+// task.created fills in the details onto the same id.
+function ensureSyntheticTask(runId: string, taskId: string | undefined) {
+  if (!taskId || taskId === "untracked") return;
+  const store = useAppStore.getState();
+  if (store.tasks.some((t) => t.id === taskId)) return;
+  store.upsertTask({
+    id: taskId,
+    task_id: taskId,
+    run_id: runId,
+    title: null,
+    goal: null,
+    status: "queued",
+  });
+}
+
 export function applyRunEvent(
   event: RunEvent,
   runId = useAppStore.getState().currentRun?.id,
@@ -56,7 +89,20 @@ export function applyRunEvent(
   if (nextMode !== store.workbenchMode) store.setWorkbenchMode(nextMode);
 
   switch (event.type) {
+    case "task.created":
+      ensureSyntheticTask(runId, taskId);
+      store.upsertTask(toTask(data.task, runId));
+      return "applied";
+    case "task.updated":
+      ensureSyntheticTask(runId, taskId);
+      store.upsertTask(toTask(data.task, runId));
+      return "applied";
+    case "task.completed":
+      ensureSyntheticTask(runId, taskId);
+      store.upsertTask(toTask(data.task, runId));
+      return "applied";
     case "message.started":
+      ensureSyntheticTask(runId, taskId);
       store.upsertMessage({
         id: data.message_id,
         public_id: data.message_id,
@@ -68,8 +114,13 @@ export function applyRunEvent(
       });
       return "applied";
     case "message.delta":
+      ensureSyntheticTask(runId, taskId);
       if (data.message_id) {
-        enqueueMessageDelta(data.message_id, data.delta || data.text || "");
+        enqueueMessageDelta(
+          data.message_id,
+          data.delta || data.text || "",
+          taskId,
+        );
       } else {
         store.appendAssistantDelta(data.text || data.delta || "");
       }

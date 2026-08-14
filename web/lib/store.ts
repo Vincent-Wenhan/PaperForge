@@ -1,6 +1,7 @@
 "use client";
 
 import { create } from "zustand";
+import type { ConnectionState } from "./api";
 import type { PreviewState, Task } from "./contracts";
 
 export interface Message {
@@ -134,6 +135,7 @@ interface AppState {
   workbenchPinnedClosed: boolean;
   lastSeq: number;
   composerPrefill: string;
+  connection: ConnectionState;
 
   setCurrentRun: (run: Run | null) => void;
   updateCurrentRun: (patch: Partial<Run>) => void;
@@ -148,7 +150,7 @@ interface AppState {
   addMessage: (msg: Message) => void;
   upsertMessage: (msg: Message) => void;
   appendAssistantDelta: (text: string) => void;
-  appendMessageDelta: (messageId: string, delta: string) => void;
+  appendMessageDelta: (messageId: string, delta: string, taskId?: string) => void;
   completeMessage: (messageId: string, content: string) => void;
   failMessage: (messageId: string, error: string) => void;
   finalizeStreamingAssistant: () => void;
@@ -173,6 +175,9 @@ interface AppState {
   clearAttachments: () => void;
   setLastSeq: (seq: number) => void;
   setComposerPrefill: (text: string) => void;
+  setConnection: (state: ConnectionState) => void;
+  reconcileMessage: (patch: Partial<Message> & Pick<Message, "id">) => void;
+  removeMessageById: (id: string) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -195,6 +200,7 @@ export const useAppStore = create<AppState>((set) => ({
   workbenchPinnedClosed: false,
   lastSeq: 0,
   composerPrefill: "",
+  connection: "connecting",
 
   setCurrentRun: (run) =>
     set({
@@ -234,18 +240,17 @@ export const useAppStore = create<AppState>((set) => ({
   addMessage: (msg) => set((s) => ({ messages: [...s.messages, msg] })),
   upsertMessage: (msg) =>
     set((s) => {
-      if (msg.id) {
-        const idx = s.messages.findIndex((m) => m.id === msg.id);
-        if (idx >= 0) {
-          const copy = [...s.messages];
-          copy[idx] = { ...copy[idx], ...msg };
-          return { messages: copy };
-        }
+      const idx = s.messages.findIndex((m) =>
+        m.id === msg.id || (msg.public_id && m.public_id === msg.public_id),
+      );
+      if (idx >= 0) {
+        const copy = [...s.messages];
+        copy[idx] = { ...copy[idx], ...msg };
+        return { messages: copy };
       }
       return { messages: [...s.messages, msg] };
     }),
-  appendAssistantDelta: (text) =>
-    set((s) => {
+  appendAssistantDelta: (text) =>    set((s) => {
       const last = s.messages[s.messages.length - 1];
       if (last && last.role === "assistant" && last.streaming) {
         const updated = { ...last, content: last.content + text };
@@ -258,7 +263,7 @@ export const useAppStore = create<AppState>((set) => ({
         ],
       };
     }),
-  appendMessageDelta: (messageId, delta) =>
+  appendMessageDelta: (messageId, delta, taskId) =>
     set((s) => {
       const idx = s.messages.findIndex((m) => m.id === messageId);
       if (idx < 0) {
@@ -268,6 +273,8 @@ export const useAppStore = create<AppState>((set) => ({
             ...s.messages,
             {
               id: messageId,
+              run_id: s.currentRun?.id,
+              task_id: taskId,
               role: "assistant",
               content: delta,
               streaming: true,
@@ -403,4 +410,32 @@ export const useAppStore = create<AppState>((set) => ({
   clearAttachments: () => set({ attachments: [] }),
   setLastSeq: (seq) => set((s) => ({ lastSeq: Math.max(s.lastSeq, seq) })),
   setComposerPrefill: (text) => set({ composerPrefill: text }),
+  setConnection: (state) => set({ connection: state }),
+  reconcileMessage: (patch) =>
+    set((s) => {
+      // Reconcile an optimistic message with the server's authoritative row.
+      // Match on either the optimistic id or the public_id server returned.
+      const idx = s.messages.findIndex(
+        (m) =>
+          m.id === patch.id ||
+          m.public_id === patch.id ||
+          m.id === patch.public_id,
+      );
+      if (idx < 0) return s;
+      const copy = [...s.messages];
+      copy[idx] = {
+        ...copy[idx],
+        ...patch,
+        // The optimistic id is synthesized; the authoritative id wins.
+        id: patch.id || copy[idx].id,
+        public_id: patch.public_id || patch.id || copy[idx].public_id,
+      };
+      return { messages: copy };
+    }),
+  removeMessageById: (id) =>
+    set((s) => ({
+      messages: s.messages.filter(
+        (m) => m.id !== id && m.public_id !== id,
+      ),
+    })),
 }));

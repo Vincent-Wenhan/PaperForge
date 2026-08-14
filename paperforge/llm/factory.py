@@ -3,8 +3,34 @@
 from __future__ import annotations
 
 from paperforge.config import get_config
-from paperforge.llm.base import LLMClient
+from paperforge.llm.base import ChatResponse, LLMClient, Message
 from paperforge.llm.mock_provider import MockLLMClient
+
+
+class LocalTestLLM(MockLLMClient):
+    """Scripted local test provider used by the no-mock Playwright E2E.
+
+    Replies with a recognizable marker to the sent message so the browser
+    test can assert the reply streamed in without a page refresh. This is a
+    real backend (real SQLite + SSE), not a mocked /state route.
+    """
+
+    async def chat(self, model, messages, tools=None, response_format=None,
+                   temperature=0.7, max_tokens=None) -> ChatResponse:
+        self.calls.append({"model": model, "messages": messages, "tools": tools})
+        last = ""
+        for m in reversed(messages):
+            if m.role == "user" and m.content:
+                last = m.content
+                break
+        if "stream-test" in last:
+            return ChatResponse(
+                content="stream-test-response for: " + last,
+                finish_reason="stop",
+            )
+        return await super().chat(
+            model, messages, tools, response_format, temperature, max_tokens
+        )
 
 
 def get_llm_client() -> LLMClient:
@@ -14,6 +40,9 @@ def get_llm_client() -> LLMClient:
 
     if provider == "mock":
         return MockLLMClient()
+
+    if provider == "local_test":
+        return LocalTestLLM()
 
     if provider == "openai":
         from paperforge.llm.openai_provider import OpenAIProvider

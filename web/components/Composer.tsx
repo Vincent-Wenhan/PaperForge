@@ -24,7 +24,10 @@ export function Composer() {
   const isRunning = useAppStore((s) => s.isRunning);
   const attachments = useAppStore((s) => s.attachments);
   const addMessage = useAppStore((s) => s.addMessage);
-  const removeMessage = useAppStore((s) => s.removeMessage);
+  const reconcileMessage = useAppStore((s) => s.reconcileMessage);
+  const upsertTask = useAppStore((s) => s.upsertTask);
+  const setLastSeq = useAppStore((s) => s.setLastSeq);
+  const removeMessageById = useAppStore((s) => s.removeMessageById);
   const clearAttachments = useAppStore((s) => s.clearAttachments);
   const setIsRunning = useAppStore((s) => s.setIsRunning);
   const addAttachment = useAppStore((s) => s.addAttachment);
@@ -107,12 +110,41 @@ export function Composer() {
 
     try {
       const paperIds = await resolvePaperIds();
-      await api.sendMessage(currentRun.id, content, paperIds, optimisticId, mode);
+      const result = await api.sendMessage(currentRun.id, content, paperIds, optimisticId, mode);
+      // Reconcile the optimistic user message with the server's authoritative
+      // row so its id/public_id/task match, and adopt the returned Task +
+      // SSE cursor so the reply streams in without a page refresh.
+      if (result?.message?.id) {
+        reconcileMessage({
+          id: result.message.id,
+          public_id: result.message.public_id || result.message.id,
+          task_id: result.task_id || result.message.task_id,
+          content: result.message.content ?? content,
+          status: result.message.status || "completed",
+        });
+      }
+      if (result?.task) {
+        upsertTask({
+          id: result.task.id ?? result.task.task_id,
+          task_id: result.task.task_id ?? result.task.id,
+          run_id: result.task.run_id ?? currentRun.id,
+          title: result.task.title ?? null,
+          goal: result.task.goal ?? null,
+          status: result.task.status ?? "queued",
+          phase: result.task.phase,
+          created_at: result.task.created_at,
+          updated_at: result.task.updated_at,
+          completed_at: result.task.completed_at ?? null,
+        });
+      }
+      if (typeof result?.event_cursor === "number" && result.event_cursor > 0) {
+        setLastSeq(result.event_cursor);
+      }
       clearAttachments();
       setInput("");
       setIsRunning(true);
     } catch (error) {
-      removeMessage(optimisticId);
+      removeMessageById(optimisticId);
       setInput(content);
       toast({
         title: "Message was not sent",

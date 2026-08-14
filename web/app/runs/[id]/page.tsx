@@ -31,6 +31,7 @@ export default function RunWorkspacePage() {
   const workbenchMode = useAppStore((s) => s.workbenchMode);
   const setWorkbenchMode = useAppStore((s) => s.setWorkbenchMode);
   const setWorkbenchPinnedClosed = useAppStore((s) => s.setWorkbenchPinnedClosed);
+  const connection = useAppStore((s) => s.connection);
 
   useEffect(() => {
     Promise.all([api.listRuns(), api.listLibrary()])
@@ -84,7 +85,7 @@ export default function RunWorkspacePage() {
            <GlobalHeader
              onToggleCommandPalette={() => setPaletteOpen(true)}
              currentRun={currentRun}
-             connectionStatus={session.error ? "error" : "connecting"}
+             connectionStatus={session.error ? "error" : connection}
            />
           <div className="flex flex-1 overflow-hidden">
             <SidebarSkeleton />
@@ -108,7 +109,7 @@ export default function RunWorkspacePage() {
          <GlobalHeader
            onToggleCommandPalette={() => setPaletteOpen(true)}
            currentRun={currentRun}
-           connectionStatus={session.error ? "error" : session.loading ? "connecting" : "connected"}
+           connectionStatus={session.error ? "error" : connection}
          />
         <div className="flex flex-1 overflow-hidden">
           {isMobile && mobileSidebarOpen ? (
