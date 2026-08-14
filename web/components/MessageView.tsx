@@ -8,7 +8,9 @@ interface MessageViewProps {
   role: "user" | "assistant" | "tool";
   content: string;
   streaming?: boolean;
-  toolCalls?: any[];
+  failed?: boolean;
+  error?: string;
+  toolCalls?: unknown[];
   toolCallId?: string;
 }
 
@@ -21,14 +23,24 @@ function StreamingCaret() {
   );
 }
 
-function MessageViewImpl({ role, content, streaming, toolCalls }: MessageViewProps) {
+function MessageViewImpl({ role, content, streaming, failed, error, toolCalls }: MessageViewProps) {
   const isUser = role === "user";
 
   if (isUser) {
     return (
       <div className="flex justify-end" role="article" aria-label="User message">
-        <div className="max-w-[80%] px-3 py-2 rounded-lg bg-primary text-primary-foreground text-sm whitespace-pre-wrap">
+        <div
+          className={`max-w-[80%] px-3 py-2 rounded-lg text-sm whitespace-pre-wrap ${
+            failed
+              ? "bg-destructive/15 text-destructive border border-destructive/30"
+              : "bg-primary text-primary-foreground"
+          }`}
+          data-testid={failed ? "user-message-failed" : "user-message"}
+        >
           {content}
+          {failed && error && (
+            <div className="mt-1 text-[11px] opacity-90">Not sent: {error}</div>
+          )}
         </div>
       </div>
     );
@@ -52,7 +64,7 @@ function MessageViewImpl({ role, content, streaming, toolCalls }: MessageViewPro
                 key={i}
                 className="text-xs bg-muted rounded p-1.5 border border-border"
               >
-                <span className="font-mono text-muted-foreground">→ {tc.name}</span>
+                <span className="font-mono text-muted-foreground">→ {String((tc as { name?: unknown })?.name ?? tc)}</span>
               </div>
             ))}
           </div>

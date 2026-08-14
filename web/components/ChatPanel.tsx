@@ -90,6 +90,12 @@ export function ChatPanel() {
             data-task-id={turn.id}
             className="space-y-3 py-2 border-b border-border/60 last:border-0"
           >
+            {turn.task && (
+              <div className="text-xs text-muted-foreground flex items-center gap-2">
+                <span data-testid="task-status">{turn.status}</span>
+                {turn.task.title && <span className="font-medium">{turn.task.title}</span>}
+              </div>
+            )}
             {turn.userMessage && (
               <MessageView
                 key={turn.userMessage.public_id ?? turn.userMessage.id ?? "user"}
@@ -97,6 +103,8 @@ export function ChatPanel() {
                 role="user"
                 content={turn.userMessage.content}
                 streaming={false}
+                failed={turn.userMessage.status === "failed"}
+                error={turn.userMessage.error ?? turn.userMessage.content}
                 toolCalls={turn.userMessage.tool_calls}
                 toolCallId={turn.userMessage.tool_call_id}
               />

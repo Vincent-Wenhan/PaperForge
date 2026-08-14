@@ -47,6 +47,9 @@ export function useRunSession(runId: string | null | undefined) {
     // Clear the previous run's workspace immediately. Hydration will replace
     // it with the new snapshot once the request completes.
     useAppStore.getState().setCurrentRun(null);
+    // New runs (no app/sandbox) still surface the Preview panel as an available
+    // destination — the workbench is closable but not hidden by default.
+    useAppStore.getState().setWorkbenchMode("open");
 
     const connect = async () => {
       setLoading(true);

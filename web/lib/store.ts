@@ -11,12 +11,13 @@ export interface Message {
   task_id?: string;
   role: "user" | "assistant" | "tool";
   content: string;
-  tool_calls?: any[];
+  tool_calls?: unknown[];
   tool_call_id?: string;
   name?: string;
   created_at?: string;
   streaming?: boolean;
-  status?: "streaming" | "completed" | "failed";
+  status?: "sending" | "streaming" | "completed" | "failed";
+  error?: string;
 }
 
 export interface Run {
@@ -329,7 +330,7 @@ export const useAppStore = create<AppState>((set) => ({
         ...copy[idx],
         streaming: false,
         status: "failed",
-        content: error,
+        error,
       };
       return { messages: copy };
     }),

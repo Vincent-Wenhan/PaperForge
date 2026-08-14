@@ -20,6 +20,7 @@ function isSlashTemplate(text: string): string | null {
 }
 
 export function Composer() {
+  type SendMode = "start" | "queue" | "interrupt";
   const currentRun = useAppStore((s) => s.currentRun);
   const isRunning = useAppStore((s) => s.isRunning);
   const attachments = useAppStore((s) => s.attachments);
@@ -27,7 +28,7 @@ export function Composer() {
   const reconcileMessage = useAppStore((s) => s.reconcileMessage);
   const upsertTask = useAppStore((s) => s.upsertTask);
   const setLastSeq = useAppStore((s) => s.setLastSeq);
-  const removeMessageById = useAppStore((s) => s.removeMessageById);
+  const failMessage = useAppStore((s) => s.failMessage);
   const clearAttachments = useAppStore((s) => s.clearAttachments);
   const setIsRunning = useAppStore((s) => s.setIsRunning);
   const addAttachment = useAppStore((s) => s.addAttachment);
@@ -39,6 +40,12 @@ export function Composer() {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [failedSend, setFailedSend] = useState<{
+    optimisticId: string;
+    content: string;
+    paperIds: string[];
+    mode: SendMode;
+  } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const submitLock = useRef(false);
@@ -61,8 +68,6 @@ export function Composer() {
   }, [input]);
 
   if (!currentRun) return null;
-
-  type SendMode = "start" | "queue" | "interrupt";
 
   const resolvePaperIds = async (): Promise<string[]> => {
     const ids: string[] = [];
@@ -87,29 +92,39 @@ export function Composer() {
     return ids;
   };
 
-  const submitMessage = async (mode: SendMode) => {
-    const raw = input.trim();
+  const send = async (
+    mode: SendMode,
+    opts: { content: string; paperIds?: string[]; optimisticId: string; preserveAttachments?: boolean },
+  ) => {
+    const raw = opts.content.trim();
     if (!raw || sending || submitLock.current) return;
     const content = isSlashTemplate(raw) ?? raw;
     submitLock.current = true;
     setSending(true);
 
-    const optimisticId =
-      typeof crypto !== "undefined" && "randomUUID" in crypto
-        ? crypto.randomUUID()
-        : `msg_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+    const optimisticId = opts.optimisticId;
+    const sendPaperIds = opts.paperIds ?? [];
 
-    addMessage({
-      id: optimisticId,
-      public_id: optimisticId,
-      role: "user",
-      content,
-      streaming: false,
-      status: "completed",
-    });
+    // Retry reuses the original optimistic id so the idempotency key (public_id)
+    // is stable and the same user message is not duplicated server-side. Only
+    // synth-add the message if it isn't already present (e.g. a prior failed
+    // attempt left it in the store with the same id).
+    const alreadyAdded = useAppStore
+      .getState()
+      .messages.some((m) => m.id === optimisticId || m.public_id === optimisticId);
+    if (!alreadyAdded) {
+      addMessage({
+        id: optimisticId,
+        public_id: optimisticId,
+        role: "user",
+        content,
+        streaming: false,
+        status: "sending",
+      });
+    }
 
     try {
-      const paperIds = await resolvePaperIds();
+      const paperIds = sendPaperIds.length > 0 ? sendPaperIds : await resolvePaperIds();
       const result = await api.sendMessage(currentRun.id, content, paperIds, optimisticId, mode);
       // Reconcile the optimistic user message with the server's authoritative
       // row so its id/public_id/task match, and adopt the returned Task +
@@ -144,12 +159,16 @@ export function Composer() {
       if (typeof result?.event_cursor === "number" && result.event_cursor > 0) {
         setLastSeq(result.event_cursor);
       }
+      setFailedSend(null);
       clearAttachments();
       setInput("");
       setIsRunning(true);
     } catch (error) {
-      removeMessageById(optimisticId);
-      setInput(content);
+      // Keep the user message (as failed) and remember everything needed for
+      // a same-key retry. Attachments are preserved in the store.
+      failMessage(optimisticId, error instanceof Error ? error.message : String(error));
+      setFailedSend({ optimisticId, content, paperIds: sendPaperIds, mode });
+      if (!opts.preserveAttachments) setInput(content);
       toast({
         title: "Message was not sent",
         description: error instanceof Error ? error.message : String(error),
@@ -159,6 +178,28 @@ export function Composer() {
       submitLock.current = false;
       setSending(false);
     }
+  };
+
+  const submitMessage = (mode: SendMode) => {
+    const raw = input.trim();
+    if (!raw || sending || submitLock.current) return;
+    const optimisticId =
+      typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? crypto.randomUUID()
+        : `msg_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+    setInput("");
+    void send(mode, { content: raw, optimisticId });
+  };
+
+  const retryFailed = () => {
+    if (!failedSend) return;
+    const { optimisticId, content, paperIds, mode } = failedSend;
+    void send(mode, {
+      content,
+      paperIds,
+      optimisticId,
+      preserveAttachments: true,
+    });
   };
 
   const handleStop = async () => {
@@ -199,9 +240,30 @@ export function Composer() {
 
   return (
     <div className="border-t border-border p-3 bg-background">
+      {failedSend && (
+        <div
+          className="flex items-center justify-between gap-2 mb-2 px-3 py-2 text-xs bg-destructive/10 border border-destructive/30 rounded"
+          data-testid="send-failed-banner"
+        >
+          <span className="text-destructive">
+            Message failed to send.
+            <span className="block text-muted-foreground text-[11px]">
+              You can retry without losing your message or attachments.
+            </span>
+          </span>
+          <button
+            onClick={retryFailed}
+            disabled={sending}
+            className="px-2 py-1 rounded border border-border bg-background hover:bg-accent text-destructive"
+            data-testid="send-retry"
+          >
+            Retry
+          </button>
+        </div>
+      )}
       {attachments.length > 0 && (
         <div className="flex flex-wrap gap-1 mb-2">
-          {attachments.map((att: any) => (
+          {attachments.map((att) => (
             <span
               key={att.id}
               className="px-2 py-1 text-xs bg-muted rounded flex items-center gap-1"
