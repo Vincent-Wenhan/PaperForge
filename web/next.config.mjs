@@ -6,9 +6,7 @@ const nextConfig = {
   experimental: {
     workerThreads: true,
   },
-  // SSE from the FastAPI backend must reach the browser uncompressed: the
-  // proxy's gzip + buffering starves the EventSource of chunks (realtime E2E,
-  // doc 5.12). Disable response compression so message.delta streams through.
+  // Keep SSE streams uncompressed so the proxy doesn't buffer them.
   compress: false,
   async rewrites() {
     return [

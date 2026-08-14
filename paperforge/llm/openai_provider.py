@@ -40,9 +40,9 @@ class OpenAIProvider(LLMClient):
             raise ImportError(
                 "openai package is required. Install with: pip install openai"
             )
-        # ponytail: trust_env=False to bypass broken SSL_CERT_FILE (e.g. Anaconda's cacert.pem)
-        # When trust_env=True (default), httpx uses SSL_CERT_FILE env var which may be outdated.
-        # Bypassing uses httpx's bundled certifi instead.
+        # trust_env=False to bypass a broken SSL_CERT_FILE (e.g. Anaconda's
+        # cacert.pem); with trust_env=True httpx uses SSL_CERT_FILE which may be
+        # outdated. Bypassing uses httpx's bundled certifi instead.
         http_client = httpx.AsyncClient(trust_env=False) if httpx else None
         self.client = AsyncOpenAI(
             api_key=api_key,
@@ -170,7 +170,6 @@ class OpenAIProvider(LLMClient):
             delta = choice.delta
             finish = choice.finish_reason
 
-            # ponytail: content delta — emit immediately for streaming UX
             content = None
             if hasattr(delta, "content") and delta.content:
                 content = delta.content

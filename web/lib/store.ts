@@ -345,8 +345,8 @@ export const useAppStore = create<AppState>((set) => ({
   replaceMessages: (msgs) => set({ messages: msgs }),
   removeMessage: (messageId) =>
     set((s) => ({ messages: s.messages.filter((m) => m.id !== messageId) })),
-  // ponytail: debug event ring buffer capped at 500 to bound memory; the
-  // debug drawer only needs the tail. Raise MAX_DEBUG_EVENTS if it ever helps.
+  // Debug event ring buffer capped at 500 to bound memory; the debug drawer
+  // only needs the tail. Raise MAX_DEBUG_EVENTS if it ever helps.
   addEvent: (event) =>
     set((s) => {
       const events = [...s.events, event];
@@ -363,8 +363,8 @@ export const useAppStore = create<AppState>((set) => ({
       return { steps };
     }),
   setSteps: (steps) => set({ steps }),
-  // ponytail: cap accumulated sandbox log deltas so memory stays bounded;
-  // superseded by full docker logs in production.
+  // Cap accumulated sandbox log deltas so memory stays bounded; superseded by
+  // full docker logs in production.
   appendSandboxLog: (log) =>
     set((s) => {
       const logs = [...s.sandboxLogs, log];

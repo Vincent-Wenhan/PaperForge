@@ -16,7 +16,7 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <head>
         <script
-          // ponytail: Apply theme before paint to avoid flash.
+          // Apply theme before paint to avoid flash.
           dangerouslySetInnerHTML={{
             __html: `(function(){try{var t=localStorage.getItem('paperforge-theme');var d=t==='dark';if(!t&&window.matchMedia('(prefers-color-scheme: dark)').matches)d=true;document.documentElement.classList.toggle('dark',d);}catch(e){}})();`,
           }}

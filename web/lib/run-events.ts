@@ -5,8 +5,8 @@ import { useAppStore, type AgentStep, type Approval, type Event } from "./store"
 
 export type ApplyRunEventResult = "applied" | "ignored" | "duplicate" | "gap";
 
-// ponytail: workbench stays closed while the user pins it closed; otherwise
-// preview.ready opens it and artifact/file events peek it.
+// Workbench stays closed while the user pins it closed; otherwise preview.ready
+// opens it and artifact/file events peek it.
 export function inferWorkbenchMode(
   eventType: string,
   current: "closed" | "peek" | "open",
@@ -51,9 +51,9 @@ function toTask(task: any, runId: string): Task {
   };
 }
 
-// ponytail: if a task.created/delta references a task we don't know yet, seed a
-// minimal running task so projectTurns always has a home for it. The real
-// task.created fills in the details onto the same id.
+// If a task.created/delta references a task we don't know yet, seed a minimal
+// running task so projectTurns always has a home for it. The real task.created
+// fills in the details onto the same id.
 function ensureSyntheticTask(runId: string, taskId: string | undefined) {
   if (!taskId || taskId === "untracked") return;
   const store = useAppStore.getState();

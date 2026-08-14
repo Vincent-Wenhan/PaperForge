@@ -6,8 +6,8 @@ external monitoring pipeline; this is a lightweight, always-on set of counters
 that can be surfaced via a /metrics endpoint or logged. Per the doc, the p95
 latency *targets* below are next-round goals, not measured benchmarks.
 
-// ponytail: single-process in-memory counters; swap for a real exports/prom
-// backend when PaperForge is ever deployed multi-worker.
+Single-process in-memory counters; swap for a real exports/prom backend
+when PaperForge is ever deployed multi-worker.
 """
 
 from __future__ import annotations
