@@ -139,7 +139,7 @@ class RunQueue:
 
                 try:
                     task_id = await asyncio.wait_for(queue.get(), timeout=0.25)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # Double-check DB and queue before retiring so an enqueue
                     # that landed between `empty()` and the pop here isn't lost.
                     if queue.empty() and not (
@@ -181,8 +181,9 @@ class RunQueue:
         stale running rows."""
         if storage is None:
             return False
-        from paperforge.config import get_config
         from datetime import timedelta
+
+        from paperforge.config import get_config
         from paperforge.orchestrator.loop import Orchestrator
         from paperforge.sandbox.docker_runner import DockerSandboxManager
 
@@ -240,9 +241,9 @@ class RunQueue:
                         run_task.cancel()
                         with contextlib.suppress(asyncio.CancelledError):
                             await run_task
-                    # Leave it queued/marked for reclaim by the scheduler.
+                    # Requeue so the scheduler can reclaim it.
                     if storage is not None and storage.get_task(task_id):
-                        storage.update_task(task_id=task_id, status="queued")
+                        await self._requeue(run_id, task_id, storage)
         except asyncio.CancelledError:
             pass
         except Exception:
@@ -258,12 +259,29 @@ class RunQueue:
                 status = row["status"] if row else "failed"
                 if status == "running":
                     # Still running after the orchestrator returned is an
-                    # anomaly — fail loudly instead of guessing "completed".
-                    storage.update_task(task_id=task_id, status="failed")
-                    logger.error(
-                        "Task %s exited while still marked running", task_id
-                    )
+                    # anomaly — fail loudly via the lifecycle service instead
+                    # of guessing "completed".
+                    await self._fail_anomaly(run_id, task_id, storage)
         return True
+
+    async def _requeue(self, run_id, task_id, storage):
+        """Requeue a task (lost lease) through the lifecycle service."""
+        from paperforge.orchestrator.events import EventEmitter, get_event_manager
+        from paperforge.orchestrator.task_lifecycle import TaskLifecycleService
+
+        emitter = EventEmitter(run_id=run_id, manager=get_event_manager(), task_id=task_id)
+        lifecycle = TaskLifecycleService(storage, emitter)
+        await lifecycle.transition(task_id=task_id, status="queued")
+
+    async def _fail_anomaly(self, run_id, task_id, storage):
+        """Mark a task that exited while still running as failed."""
+        from paperforge.orchestrator.events import EventEmitter, get_event_manager
+        from paperforge.orchestrator.task_lifecycle import TaskLifecycleService
+
+        logger.error("Task %s exited while still marked running", task_id)
+        emitter = EventEmitter(run_id=run_id, manager=get_event_manager(), task_id=task_id)
+        lifecycle = TaskLifecycleService(storage, emitter)
+        await lifecycle.transition(task_id=task_id, status="failed")
 
     async def enqueue_coro(self, run_id: str, task_id: str, coro: Coroutine) -> None:
         """Compatibility shim for the older queue API that accepted a coroutine.

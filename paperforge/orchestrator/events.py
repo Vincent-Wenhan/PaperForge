@@ -7,7 +7,6 @@ is what orchestrator code uses to broadcast events to all subscribers.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import time
 import uuid
 from collections import defaultdict
@@ -182,6 +181,20 @@ class EventEmitter:
     async def task_completed(self, task: dict[str, Any]) -> None:
         await self.emit(
             "task.completed",
+            {"task": task},
+            task_id=task.get("id") or task.get("task_id"),
+        )
+
+    async def task_failed(self, task: dict[str, Any]) -> None:
+        await self.emit(
+            "task.failed",
+            {"task": task},
+            task_id=task.get("id") or task.get("task_id"),
+        )
+
+    async def task_cancelled(self, task: dict[str, Any]) -> None:
+        await self.emit(
+            "task.cancelled",
             {"task": task},
             task_id=task.get("id") or task.get("task_id"),
         )

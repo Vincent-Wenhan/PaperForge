@@ -87,3 +87,78 @@ async def test_lifecycle_broadcasts_updated_then_completed(storage):
     history = mgr.get_history("run_lc")
     htypes = [e.type for e in history]
     assert htypes[-1] == "task.completed"
+
+
+@pytest.mark.asyncio
+async def test_terminal_events_are_distinct(storage):
+    """failed and cancelled must broadcast distinct events, not task.completed."""
+    run = storage.create_run("run_term", "Terminal", status="active")
+
+    def collect():
+        mgr = EventManager(storage=storage)
+        q = mgr.register(run["id"])
+        emitter = EventEmitter(run_id=run["id"], manager=mgr, task_id=None)
+        return mgr, q, emitter
+
+    # failed
+    t_fail = storage.create_task(run_id=run["id"], title="f", goal="g",
+                                 status="running", phase="init")
+    mgr, q, emitter = collect()
+    lifecycle = TaskLifecycleService(storage, emitter)
+    await lifecycle.transition(t_fail["id"], status="failed", phase="init")
+    types_fail = [(await q.get()).type]
+    assert types_fail == ["task.failed"]
+    assert mgr.get_history(run["id"])[-1].type == "task.failed"
+
+    # cancelled
+    t_cancel = storage.create_task(run_id=run["id"], title="c", goal="g",
+                                   status="running", phase="init")
+    mgr, q, emitter = collect()
+    lifecycle = TaskLifecycleService(storage, emitter)
+    await lifecycle.transition(t_cancel["id"], status="cancelled", phase="init")
+    types_cancel = [(await q.get()).type]
+    assert types_cancel == ["task.cancelled"]
+    assert mgr.get_history(run["id"])[-1].type == "task.cancelled"
+
+    # Non-terminal stays task.updated.
+    t_prog = storage.create_task(run_id=run["id"], title="p", goal="g",
+                                 status="queued", phase="init")
+    mgr, q, emitter = collect()
+    lifecycle = TaskLifecycleService(storage, emitter)
+    await lifecycle.transition(t_prog["id"], status="running", phase="init")
+    types_prog = [(await q.get()).type]
+    assert types_prog == ["task.updated"]
+
+    # DB final states are persisted and distinct.
+    assert storage.get_task(t_fail["id"])["status"] == "failed"
+    assert storage.get_task(t_cancel["id"])["status"] == "cancelled"
+    assert storage.get_task(t_prog["id"])["status"] == "running"
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_requeue_and_anomaly_fail_route_through_service(storage):
+    """Queue requeue (lost lease) and anomaly fail go through lifecycle so
+    the event contract (task.updated on requeue, task.failed on anomaly)
+    and DB state stay consistent."""
+    from paperforge.orchestrator.tasks import RunQueue
+
+    run = storage.create_run("run_rr", "Recover", status="active")
+    q_task = storage.create_task(run_id=run["id"], title="q", goal="g",
+                                 status="running", phase="init")
+
+    # requeue path (lost lease): running -> queued, emits task.updated.
+    queue = RunQueue(storage=storage)
+    await queue._requeue(run["id"], q_task["id"], storage)
+    assert storage.get_task(q_task["id"])["status"] == "queued"
+
+    # anomaly path (exited while running): running -> failed, emits task.failed.
+    f_task = storage.create_task(run_id=run["id"], title="f", goal="g",
+                                 status="running", phase="init")
+    await queue._fail_anomaly(run["id"], f_task["id"], storage)
+    assert storage.get_task(f_task["id"])["status"] == "failed"
+
+    # persisted event seq covers both.
+    from paperforge.orchestrator.events import get_event_manager
+    history = get_event_manager().get_history(run["id"])
+    types = {e.type for e in history}
+    assert "task.failed" in types

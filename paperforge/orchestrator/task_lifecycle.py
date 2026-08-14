@@ -15,9 +15,6 @@ from typing import Any
 from paperforge.orchestrator.events import EventEmitter
 from paperforge.storage.db import Storage
 
-# Task statuses that are terminal states of the lifecycle.
-TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
-
 
 class TaskLifecycleService:
     def __init__(self, storage: Storage, emitter: EventEmitter) -> None:
@@ -41,8 +38,14 @@ class TaskLifecycleService:
         if task is None:
             raise LookupError(f"Task not found: {task_id}")
 
-        if status in TERMINAL_STATUSES or task.get("status") in TERMINAL_STATUSES:
+        task_status = task.get("status")
+        if task_status == "completed":
             await self.emitter.task_completed(task)
+        elif task_status == "failed":
+            await self.emitter.task_failed(task)
+        elif task_status == "cancelled":
+            await self.emitter.task_cancelled(task)
         else:
             await self.emitter.task_updated(task)
         return task
+

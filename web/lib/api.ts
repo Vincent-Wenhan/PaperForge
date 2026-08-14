@@ -443,6 +443,8 @@ export type KnownRunEvent =
   | RunEventBase<"task.created", TaskEventPayload>
   | RunEventBase<"task.updated", TaskEventPayload>
   | RunEventBase<"task.completed", TaskEventPayload>
+  | RunEventBase<"task.failed", TaskEventPayload>
+  | RunEventBase<"task.cancelled", TaskEventPayload>
   | RunEventBase<"step.started", StepStartedPayload>
   | RunEventBase<"step.progress", StepProgressPayload>
   | RunEventBase<"step.completed", StepCompletedPayload>

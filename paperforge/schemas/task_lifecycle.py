@@ -45,26 +45,3 @@ ALLOWED_TRANSITIONS: Final[dict[TaskStatus, set[TaskStatus]]] = {
 def validate_task_transition(current: TaskStatus, next_: TaskStatus) -> bool:
     """Return True if ``current`` may transition to ``next_``."""
     return next_ in ALLOWED_TRANSITIONS.get(current, set())
-
-
-def task_transform(
-    storage,
-    *,
-    task_id: str,
-    to: TaskStatus,
-    phase: str | None = None,
-) -> bool:
-    """Transition a task to ``to``, refusing invalid moves.
-
-    Reconcile-from-running (stale lease) is allowed beyond the strict edges.
-    """
-    row = storage.get_task(task_id)
-    if not row:
-        return False
-    current = TaskStatus(row.get("status") or TaskStatus.QUEUED.value)
-    if to == TaskStatus.COMPLETED and current == TaskStatus.RUNNING:
-        pass
-    elif not validate_task_transition(current, to):
-        return False
-    storage.update_task(task_id=task_id, status=to.value, phase=phase)
-    return True

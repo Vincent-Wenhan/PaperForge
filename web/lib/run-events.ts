@@ -98,6 +98,8 @@ export function applyRunEvent(
       store.upsertTask(toTask(data.task, runId));
       return "applied";
     case "task.completed":
+    case "task.failed":
+    case "task.cancelled":
       ensureSyntheticTask(runId, taskId);
       store.upsertTask(toTask(data.task, runId));
       return "applied";
