@@ -126,12 +126,10 @@ class Orchestrator:
         if run_row.get("archived_at"):
             return
 
-        # Persist run status as running
         self.storage.update_run_status(run_id, "running")
         if prev_status != "running":
             await emit.run_status_changed("running", prev_status)
 
-        # Restore phase from storage (default to INIT if missing)
         stored_phase = self.storage.get_run_phase(run_id) or "init"
         try:
             self.phase = RunPhase(stored_phase)
@@ -152,15 +150,11 @@ class Orchestrator:
 
         await emit.run_started()
 
-        # Load orchestrator system prompt
         system_prompt = load_prompt("orchestrator")
 
         # API layer saves the user message; orchestrator must not duplicate it.
-
-        # Load history from storage
         history = self.storage.list_messages(run_id)
 
-        # Build message list with system prompt first
         messages: list[Message] = [Message(role="system", content=system_prompt)]
 
         for h in history:
@@ -243,13 +237,11 @@ class Orchestrator:
 
                     stop_loop = False
                     stopped_result: ToolResult | None = None
-                    # Execute each tool call
                     for call in response.tool_calls:
                         await emit.tool_call(call)
 
                         result_str = await self._execute_tool_call(call, ctx, emit, run_id)
 
-                        # Save tool result message
                         self.storage.add_message(
                             run_id=run_id,
                             role="tool",
@@ -456,7 +448,6 @@ class Orchestrator:
                     retryable=False,
                 ).model_dump_json()
 
-        # Dispatch tool
         return await dispatch_tool(call.name, call.args, ctx)
 
     async def _call_llm_with_retry(
@@ -567,10 +558,8 @@ class Orchestrator:
             await emit.message_failed(message_id, str(e))
             raise
 
-        # flush remaining buffer, complete the durable message, emit completed.
         final_content = await writer.finish(tool_calls)
 
-        # Build a ChatResponse-like return so the main loop can handle uniformly.
         from paperforge.llm.base import ChatResponse
         return ChatResponse(
             content=final_content or None,
@@ -645,10 +634,8 @@ class Orchestrator:
             await emit.message_failed(message_id, str(e))
             raise
 
-        # flush remaining buffer, complete the durable message, emit completed.
         final_content = await writer.finish(tool_calls)
 
-        # Build a ChatResponse-like return so the main loop can handle uniformly.
         from paperforge.llm.base import ChatResponse
         return ChatResponse(
             content=final_content or None,

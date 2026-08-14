@@ -343,12 +343,9 @@ async def generate_nextjs_app_v3(
 
             os.replace(temp_dir, final_dir)
         except Exception:
-            # Restore the previous app if promotion to the new path failed.
             if backup is not None and backup.exists() and not final_dir.exists():
                 os.replace(backup, final_dir)
             raise
-
-    plan.dependencies = plan.dependencies  # keep plan deps for the manifest
 
     return {
         "app_id": app_id,
