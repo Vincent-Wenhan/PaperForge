@@ -463,31 +463,47 @@ export type KnownRunEvent =
 
 export type RunEvent = KnownRunEvent;
 
-export type ConnectionState = "connecting" | "connected" | "error";
+export type ConnectionState =
+  | "connecting"
+  | "connected"
+  | "reconnecting"
+  | "offline"
+  | "error";
 
 export class SSEClient {
   private es: EventSource | null = null;
   private handler: ((event: RunEvent) => void) | null = null;
   private stateHandler: ((state: ConnectionState) => void) | null = null;
   private seenSeqs = new Set<number>();
+  private errorCount = 0;
 
   connect(runId: string, afterSeq = 0) {
     this.disconnect();
     this.seenSeqs.clear();
+    this.errorCount = 0;
     this.setState("connecting");
     const query = afterSeq > 0 ? `?after_seq=${afterSeq}` : "";
     this.es = new EventSource(buildUrl(`/api/runs/${runId}/events${query}`));
 
     this.es.onopen = () => {
+      this.errorCount = 0;
       this.setState("connected");
     };
 
     this.es.onerror = () => {
       // onerror fires both on transient failures (browser auto-reconnects)
-      // and on the terminal closed state. EventSource has no clean
-      // "disconnected" signal, so we report error and let the next onopen
-      // flip it back to connected.
-      this.setState("error");
+      // and on the terminal closed state. The browser retries by itself, so we
+      // report a reconnecting state on the first failure and only fall through
+      // to offline once repeated retries suggest the transport is gone. A
+      // subsequent onopen flips it back to connected.
+      this.errorCount += 1;
+      if (this.es && this.es.readyState === EventSource.CLOSED) {
+        this.setState("error");
+      } else if (this.errorCount >= 3) {
+        this.setState("offline");
+      } else {
+        this.setState("reconnecting");
+      }
     };
 
     // Single onmessage: the semantic type lives in the JSON envelope, so we

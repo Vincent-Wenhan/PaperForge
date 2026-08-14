@@ -9,7 +9,27 @@ interface GlobalHeaderProps {
   onToggleCommandPalette?: () => void;
   onToggleSidebar?: () => void;
   currentRun?: Run | null;
-  connectionStatus?: "connected" | "connecting" | "error";
+  connectionStatus?: "connected" | "connecting" | "reconnecting" | "offline" | "error";
+}
+
+const CONNECTION_LABEL: Record<NonNullable<GlobalHeaderProps["connectionStatus"]>, string> = {
+  connected: "Connected",
+  connecting: "Connecting",
+  reconnecting: "Reconnecting",
+  offline: "Offline",
+  error: "Connection issue",
+};
+
+function connectionDotClass(status: NonNullable<GlobalHeaderProps["connectionStatus"]>) {
+  switch (status) {
+    case "connected":
+      return "bg-emerald-500";
+    case "connecting":
+    case "reconnecting":
+      return "bg-amber-500";
+    default:
+      return "bg-destructive";
+  }
 }
 
 export function GlobalHeader({
@@ -78,8 +98,8 @@ export function GlobalHeader({
       </div>
       <div className="flex items-center gap-1">
         <span className={`hidden sm:inline-flex items-center gap-1 px-2 py-1 text-[11px] ${connectionStatus === "error" ? "text-destructive" : "text-muted-foreground"}`}>
-          <span className={`h-1.5 w-1.5 rounded-full ${connectionStatus === "connected" ? "bg-emerald-500" : connectionStatus === "connecting" ? "bg-amber-500" : "bg-destructive"}`} />
-          {connectionStatus === "connected" ? "Connected" : connectionStatus === "connecting" ? "Connecting" : "Connection issue"}
+          <span className={`h-1.5 w-1.5 rounded-full ${connectionDotClass(connectionStatus)}`} />
+          {CONNECTION_LABEL[connectionStatus]}
         </span>
         <button
           onClick={toggleTheme}

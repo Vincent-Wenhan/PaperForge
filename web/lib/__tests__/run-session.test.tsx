@@ -69,4 +69,26 @@ describe("run session", () => {
     await act(async () => {});
     expect(getRunState).toHaveBeenCalledTimes(1);
   });
+
+  it("signals offline on unmount and reconnects via EventSource resume", async () => {
+    const { unmount } = renderHook(({ runId }) => useRunSession(runId), {
+      initialProps: { runId: "run_1" },
+    });
+    await waitFor(() => expect(getRunState).toHaveBeenCalledTimes(1));
+    expect(instances).toHaveLength(1);
+
+    const sse = instances[0];
+    // The hook registers the real connection-state callback once.
+    const stateHandler = vi.mocked(sse.onConnectionState).mock.calls[0][0];
+    expect(typeof stateHandler).toBe("function");
+
+    // Report a transient reconnect without any manual timer.
+    stateHandler("reconnecting");
+    expect(useAppStore.getState().connection).toBe("reconnecting");
+
+    // Leaving the run tears down the stream and marks the header offline.
+    unmount();
+    expect(useAppStore.getState().connection).toBe("offline");
+    expect(sse.disconnect).toHaveBeenCalled();
+  });
 });

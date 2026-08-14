@@ -38,6 +38,7 @@ export function useRunSession(runId: string | null | undefined) {
     if (!runId) {
       setLoading(false);
       setError(null);
+      useAppStore.getState().setConnection("offline");
       return;
     }
 
@@ -58,7 +59,9 @@ export function useRunSession(runId: string | null | undefined) {
       try {
         const cursor = await hydrate();
         if (!active) return;
-        // Real SSE connection state feeds the header indicator.
+        // Real SSE connection state feeds the header indicator. EventSource
+        // auto-reconnects and re-requests from after_seq on retry, so a
+        // transient drop resumes from the last durable cursor without resync.
         sse.onConnectionState((state) => {
           useAppStore.getState().setConnection(state);
         });
@@ -95,6 +98,7 @@ export function useRunSession(runId: string | null | undefined) {
     return () => {
       active = false;
       sse.disconnect();
+      useAppStore.getState().setConnection("offline");
     };
   }, [runId, hydrate, reloadKey]);
 
