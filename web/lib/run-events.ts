@@ -1,4 +1,4 @@
-import type { RunEvent } from "./api";
+import type { ApiTask, RunEvent } from "./api";
 import type { PreviewState, Task } from "./contracts";
 import { enqueueMessageDelta, flushMessageDeltas } from "./realtime/stream-buffer";
 import { useAppStore, type AgentStep, type Approval, type Event } from "./store";
@@ -20,11 +20,16 @@ export function inferWorkbenchMode(
   return current;
 }
 
+// The SSE envelope historically carried a top-level `data`; the v2 format
+// puts it in `payload`. Prefer payload, fall back to the legacy field so a
+// freshly-deployed client can read replay from either shape.
 function eventData(event: RunEvent): any {
-  return event.payload ?? (event as { data?: any }).data ?? {};
+  const payload = (event as { payload?: unknown }).payload;
+  if (payload !== undefined) return payload;
+  return (event as { data?: unknown }).data ?? {};
 }
 
-function toStoreEvent(event: RunEvent, data: any): Event {
+function toStoreEvent(event: RunEvent, data: unknown): Event {
   return {
     id: event.id,
     type: event.type,
@@ -35,7 +40,7 @@ function toStoreEvent(event: RunEvent, data: any): Event {
   };
 }
 
-function toTask(task: any, runId: string): Task {
+function toTask(task: ApiTask | undefined, runId: string): Task {
   const id = task?.id ?? task?.task_id ?? "untracked";
   return {
     id,
@@ -77,7 +82,7 @@ export function applyRunEvent(
   if (event.seq <= store.lastSeq) return "duplicate";
   if (store.lastSeq > 0 && event.seq > store.lastSeq + 1) return "gap";
 
-  const data = eventData(event);
+  const data = eventData(event) as Record<string, any>;
   const taskId = data.task_id ?? data.taskId ?? (event as { task_id?: string }).task_id ?? undefined;
   store.setLastSeq(event.seq);
   store.addEvent(toStoreEvent(event, data));

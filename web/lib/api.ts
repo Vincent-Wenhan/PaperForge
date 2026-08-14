@@ -1,5 +1,6 @@
-import type { ApiApproval, ApiArtifact, ApiMessage, ApiPaper, ApiRun, ApiSandbox } from "./api/types";
+import type { ApiApproval, ApiArtifact, ApiMessage, ApiPaper, ApiRun, ApiSandbox, ApiTask } from "./api/types";
 import type { RunSession, Task } from "./contracts";
+export type { ApiTask } from "./api/types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "";
 
@@ -426,14 +427,22 @@ export interface SandboxLogDeltaPayload {
 export interface SendMessageResult {
   status: string;
   run_id: string;
-  message: any;
-  task: any;
+  message: {
+    id: string;
+    public_id?: string;
+    task_id?: string;
+    role?: string;
+    content?: string;
+    status?: string;
+    created_at?: string;
+  };
+  task: ApiTask;
   task_id: string;
   event_cursor: number;
 }
 
 export interface TaskEventPayload {
-  task: any;
+  task: ApiTask;
 }
 
 export type KnownRunEvent =

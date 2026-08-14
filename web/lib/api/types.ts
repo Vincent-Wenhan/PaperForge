@@ -13,9 +13,22 @@ type Components = RawComponents["schemas"];
 export type ApiRun = Components["Run"];
 export type ApiRunCreate = Components["RunCreate"];
 export type ApiRunUpdate = Components["RunUpdate"];
-export type ApiTask = Components["TaskCreate"];
 export type ApiTaskCreate = Components["TaskCreate"];
 export type ApiTaskUpdate = Components["TaskUpdate"];
+export type ApiTask = {
+  id: string;
+  task_id?: string;
+  run_id?: string;
+  title?: string | null;
+  goal?: string | null;
+  status: string;
+  phase?: string;
+  user_message_id?: string | null;
+  priority?: number;
+  created_at?: string;
+  updated_at?: string;
+  completed_at?: string | null;
+};
 export type ApiMessage = Components["MessageCreate"];
 export type ApiMessageCreate = Components["MessageCreate"];
 export type ApiSandbox = {

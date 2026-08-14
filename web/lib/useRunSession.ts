@@ -30,7 +30,7 @@ export function useRunSession(runId: string | null | undefined) {
       isRunning: state.run.status === "running",
       preview: state.preview || null,
       sessionError: null,
-    } as any);
+    });
     return state.event_cursor;
   }, [runId]);
 

@@ -120,7 +120,11 @@ export function Composer() {
           public_id: result.message.public_id || result.message.id,
           task_id: result.task_id || result.message.task_id,
           content: result.message.content ?? content,
-          status: result.message.status || "completed",
+          status: result.message.status === "failed"
+            ? "failed"
+            : result.message.status === "streaming"
+              ? "streaming"
+              : "completed",
         });
       }
       if (result?.task) {
