@@ -1,0 +1,76 @@
+# PaperForge CI — backend tests, frontend unit tests, build, and e2e.
+#
+# Backend and frontend unit tests are fast and always run. The Playwright e2e
+# suite needs Docker + real sandboxing, so it runs in a separate job that only
+# requires it when triggered from a PR (draft PRs skip it).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    name: Backend (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements-dev.txt
+        name: Install backend deps
+      - run: python -m pytest -q
+        name: Run backend tests
+
+  frontend:
+    name: Frontend (unit + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+        name: Install frontend deps
+      - run: npm test -- --run
+        name: Run frontend unit tests
+      - run: npm run build
+        name: Build Next.js app
+
+  e2e:
+    name: E2E (Playwright)
+    if: github.event.pull_request.draft != true
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ matrix.browser }}
+      - run: npm ci
+        name: Install frontend deps
+      - run: pip install -r requirements-dev.txt
+        name: Install backend deps
+      - run: npx playwright install --with-deps chromium
+        name: Install Playwright browsers
+      - run: npm run test:e2e
+        name: Run Playwright e2e
