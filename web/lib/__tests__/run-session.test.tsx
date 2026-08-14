@@ -3,17 +3,27 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { getRunState, instances } = vi.hoisted(() => ({
   getRunState: vi.fn(),
-  instances: [] as Array<{ connect: ReturnType<typeof vi.fn>; disconnect: ReturnType<typeof vi.fn> }>,
+  instances: [] as Array<{
+    connect: ReturnType<typeof vi.fn>;
+    disconnect: ReturnType<typeof vi.fn>;
+    onConnectionState: ReturnType<typeof vi.fn>;
+    onMessage: ReturnType<typeof vi.fn>;
+  }>,
 }));
 
 vi.mock("../api", () => ({
   api: {
     getRunState,
   },
+  ApiError: class ApiError extends Error {
+    status = 0;
+    userMessage = "";
+  },
   SSEClient: class {
     connect = vi.fn();
     disconnect = vi.fn();
     onMessage = vi.fn();
+    onConnectionState = vi.fn();
     constructor() {
       instances.push(this);
     }

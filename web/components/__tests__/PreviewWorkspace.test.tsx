@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/api", () => ({
@@ -47,7 +47,9 @@ beforeEach(() => {
 describe("app artifact workspace", () => {
   it("browses app files without requiring a running sandbox", async () => {
     render(<PreviewPanel />);
-    fireEvent.click(screen.getByRole("tab", { name: "Code" }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("tab", { name: "Code" }));
+    });
 
     await waitFor(() => expect(api.listAppTree).toHaveBeenCalledWith("app_1", "run_1"));
     expect(screen.getByText("page.tsx")).toBeInTheDocument();

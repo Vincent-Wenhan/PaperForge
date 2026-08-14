@@ -126,7 +126,9 @@ describe("run event reducer", () => {
       ts: Date.now(),
       payload: {},
     });
-    expect(result).toBe("unknown");
+    // Unknown future events collapse to the same "ignored" verdict as the
+    // reducer's default branch, so the seq still advances without rehydration.
+    expect(result).toBe("ignored");
     expect(useAppStore.getState().lastSeq).toBe(11);
   });
 
@@ -142,6 +144,73 @@ describe("run event reducer", () => {
       payload: { message_id: "msg_1", delta: "x" },
     });
     expect(result).toBe("gap");
+  });
+
+  it("handles task.created before message deltas (SSE ordering race)", () => {
+    applyRunEvent({
+      version: 2,
+      id: "e1",
+      seq: 1,
+      run_id: "run_1",
+      type: "task.created",
+      ts: "now",
+      payload: { task: { id: "task_alpha", run_id: "run_1", title: "Alpha", status: "queued", phase: "init" } },
+    });
+    // A delta references the task; the placeholder message must carry task_id.
+    applyRunEvent({
+      version: 2,
+      id: "e2",
+      seq: 2,
+      run_id: "run_1",
+      type: "message.delta",
+      ts: "now",
+      payload: { message_id: "msg_a", delta: "hi", task_id: "task_alpha" },
+    });
+    flushMessageDeltas();
+
+    const tasks = useAppStore.getState().tasks;
+    expect(tasks.some((t) => t.id === "task_alpha")).toBe(true);
+    const msg = useAppStore.getState().messages.find((m) => m.id === "msg_a");
+    expect(msg?.task_id).toBe("task_alpha");
+  });
+
+  it("creates a synthetic task for deltas referencing an unknown task", () => {
+    applyRunEvent({
+      version: 2,
+      id: "e1",
+      seq: 1,
+      run_id: "run_1",
+      type: "message.delta",
+      ts: "now",
+      payload: { message_id: "msg_b", delta: "hello", task_id: "task_beta" },
+    });
+    flushMessageDeltas();
+    const tasks = useAppStore.getState().tasks;
+    expect(tasks.some((t) => t.id === "task_beta")).toBe(true);
+  });
+
+  it("routes task.updated and task.completed into the task list", () => {
+    applyRunEvent({
+      version: 2,
+      id: "e1",
+      seq: 1,
+      run_id: "run_1",
+      type: "task.updated",
+      ts: "now",
+      payload: { task: { id: "task_g", run_id: "run_1", status: "running", phase: "init" } },
+    });
+    applyRunEvent({
+      version: 2,
+      id: "e2",
+      seq: 2,
+      run_id: "run_1",
+      type: "task.completed",
+      ts: "now",
+      payload: { task: { id: "task_g", run_id: "run_1", status: "completed" } },
+    });
+
+    const task = useAppStore.getState().tasks.find((t) => t.id === "task_g");
+    expect(task?.status).toBe("completed");
   });
 
   it("streams build log deltas onto the step detail (doc 19.3)", () => {

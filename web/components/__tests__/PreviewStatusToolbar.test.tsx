@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 
 vi.mock("@/lib/api", () => ({
   api: {
@@ -42,38 +42,50 @@ beforeEach(() => {
 });
 
 describe("Preview status toolbar", () => {
-  it("renders toolbar with Refresh, Restart, Open, Stop buttons when sandbox is running", () => {
-    render(<PreviewPanel />);
+  it("renders toolbar with Refresh, Restart, Open, Stop buttons when sandbox is running", async () => {
+    await act(async () => {
+      render(<PreviewPanel />);
+    });
     expect(screen.getByTitle("Refresh")).toBeInTheDocument();
     expect(screen.getByTitle("Restart sandbox")).toBeInTheDocument();
     expect(screen.getByTitle("Open in new tab")).toBeInTheDocument();
     expect(screen.getByTitle("Stop sandbox")).toBeInTheDocument();
   });
 
-  it("clicking Restart calls api.restartSandbox", () => {
-    render(<PreviewPanel />);
-    fireEvent.click(screen.getByTitle("Restart sandbox"));
-    expect(api.restartSandbox).toHaveBeenCalledWith("sb_1");
+  it("clicking Restart calls api.restartSandbox", async () => {
+    await act(async () => {
+      render(<PreviewPanel />);
+    });
+    act(() => fireEvent.click(screen.getByTitle("Restart sandbox")));
+    await waitFor(() =>
+      expect(api.restartSandbox).toHaveBeenCalledWith("sb_1"),
+    );
   });
 
-  it("clicking Stop calls api.stopSandbox", () => {
-    render(<PreviewPanel />);
-    fireEvent.click(screen.getByTitle("Stop sandbox"));
-    expect(api.stopSandbox).toHaveBeenCalledWith("sb_1");
+  it("clicking Stop calls api.stopSandbox", async () => {
+    await act(async () => {
+      render(<PreviewPanel />);
+    });
+    act(() => fireEvent.click(screen.getByTitle("Stop sandbox")));
+    await waitFor(() => expect(api.stopSandbox).toHaveBeenCalledWith("sb_1"));
   });
 
-  it("displays sandbox status in toolbar", () => {
-    render(<PreviewPanel />);
+  it("displays sandbox status in toolbar", async () => {
+    await act(async () => {
+      render(<PreviewPanel />);
+    });
     expect(screen.getByText(/Sandbox: running/)).toBeInTheDocument();
   });
 
-  it("viewport buttons toggle desktop/tablet/mobile", () => {
-    render(<PreviewPanel />);
+  it("viewport buttons toggle desktop/tablet/mobile", async () => {
+    await act(async () => {
+      render(<PreviewPanel />);
+    });
     const desktop = screen.getByTitle("desktop");
     const tablet = screen.getByTitle("tablet");
-    fireEvent.click(tablet);
+    act(() => fireEvent.click(tablet));
     expect(tablet).toHaveAttribute("aria-pressed", "true");
-    fireEvent.click(desktop);
+    act(() => fireEvent.click(desktop));
     expect(desktop).toHaveAttribute("aria-pressed", "true");
   });
 });

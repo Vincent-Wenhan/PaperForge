@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { act, render, screen, fireEvent } from "@testing-library/react";
 import type { Sandbox } from "@/lib/store";
 
 const sandbox: Sandbox = {
@@ -43,15 +43,19 @@ beforeEach(() => {
 });
 
 describe("File rename/delete confirmation", () => {
-  it("renders preview tab with toolbar when sandbox exists", () => {
-    render(<PreviewPanel />);
+  it("renders preview tab with toolbar when sandbox exists", async () => {
+    await act(async () => {
+      render(<PreviewPanel />);
+    });
     // Toolbar buttons should be present when sandbox is running
     expect(useAppStore.getState().sandbox?.status).toBe("running");
   });
 
   it("rename flow: prompt returns new name → api.renameEntry called", async () => {
     const promptSpy = vi.spyOn(window, "prompt").mockReturnValue("renamed.ts");
-    render(<PreviewPanel />);
+    await act(async () => {
+      render(<PreviewPanel />);
+    });
     // Call api.renameEntry directly to verify mock wiring
     await api.renameEntry("sb_1", "old.ts", "renamed.ts");
     expect(api.renameEntry).toHaveBeenCalledWith("sb_1", "old.ts", "renamed.ts");
@@ -61,14 +65,18 @@ describe("File rename/delete confirmation", () => {
 
   it("delete flow: confirm returns true → api.deleteEntry called", async () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
-    render(<PreviewPanel />);
+    await act(async () => {
+      render(<PreviewPanel />);
+    });
     await api.deleteEntry("sb_1", "file.ts");
     expect(api.deleteEntry).toHaveBeenCalledWith("sb_1", "file.ts");
   });
 
   it("delete flow: confirm returns false → api.deleteEntry not called by user action", async () => {
     vi.spyOn(window, "confirm").mockReturnValue(false);
-    render(<PreviewPanel />);
+    await act(async () => {
+      render(<PreviewPanel />);
+    });
     // Confirm we can verify the negative case
     expect(window.confirm).not.toHaveBeenCalled();
   });

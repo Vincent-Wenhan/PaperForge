@@ -51,4 +51,18 @@ describe("projectTurns", () => {
     expect(turns[0].id).toBe("untracked");
     expect(turns[0].steps).toHaveLength(1);
   });
+
+  it("does not drop a message whose task row has not surfaced yet (doc 24.6)", () => {
+    // SSE race: a message.delta for task_x arrives before task.created.
+    // projectTurns must still render a turn instead of silently discarding it.
+    const messages: Message[] = [
+      msg("m1", "user", "task_x"),
+      msg("m2", "assistant", "task_x"),
+    ];
+    const turns = projectTurns([], messages, [], [], []);
+    expect(turns.some((t) => t.id === "task_x")).toBe(true);
+    const turn = turns.find((t) => t.id === "task_x")!;
+    expect(turn.assistantMessages).toHaveLength(1);
+    expect(turn.task).toMatchObject({ id: "task_x", status: "queued" });
+  });
 });
