@@ -165,6 +165,27 @@ class EventEmitter:
             {"sandbox_id": sandbox_id, "preview_url": preview_url},
         )
 
+    async def task_created(self, task: dict[str, Any]) -> None:
+        await self.emit(
+            "task.created",
+            {"task": task},
+            task_id=task.get("id") or task.get("task_id"),
+        )
+
+    async def task_updated(self, task: dict[str, Any]) -> None:
+        await self.emit(
+            "task.updated",
+            {"task": task},
+            task_id=task.get("id") or task.get("task_id"),
+        )
+
+    async def task_completed(self, task: dict[str, Any]) -> None:
+        await self.emit(
+            "task.completed",
+            {"task": task},
+            task_id=task.get("id") or task.get("task_id"),
+        )
+
     async def task_phase_changed(
         self,
         phase: str,

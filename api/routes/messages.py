@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import uuid as _uuid
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException
@@ -26,6 +25,31 @@ class MessageCreate(BaseModel):
     mode: Literal["start", "queue", "interrupt"] = "start"
 
 
+class MessageCreateResult(BaseModel):
+    status: str
+    run_id: str
+    message: dict
+    task: dict
+    task_id: str
+    event_cursor: int
+
+
+def _task(task: dict) -> dict:
+    result = dict(task)
+    result["task_id"] = result.get("task_id", result.get("id"))
+    return result
+
+
+def _message(row: dict) -> dict:
+    message = dict(row)
+    public_id = message.get("public_id") or f"msg_{message.get('id')}"
+    message["public_id"] = public_id
+    message["id"] = public_id
+    message["content"] = message.get("content") or ""
+    message["status"] = message.get("status") or "completed"
+    return message
+
+
 def _derive_title(content: str, max_len: int = 50) -> str:
     """Ponytail: derive a short title from the user's first message.
 
@@ -40,12 +64,17 @@ def _derive_title(content: str, max_len: int = 50) -> str:
     return line[: max_len - 1].rstrip() + "…"
 
 
-@router.post("/{run_id}/messages")
-async def send_message(run_id: str, req: MessageCreate) -> dict:
+@router.post("/{run_id}/messages", response_model=MessageCreateResult)
+async def send_message(run_id: str, req: MessageCreate) -> MessageCreateResult:
     """Send a user message to the run. Triggers the orchestrator asynchronously.
 
     `paper_ids` attach library papers as explicit context so the LLM never
     has to guess server file paths.
+
+    Returns the full created ``message`` and ``task`` (not just ``task_id``)
+    so the client can reconcile its optimistic user message and upsert the new
+    Task without a second round-trip. ``event_cursor`` is the run-level max seq
+    so the client can resume SSE from that point.
     """
     storage = get_storage()
     run = storage.get_run(run_id)
@@ -68,29 +97,21 @@ async def send_message(run_id: str, req: MessageCreate) -> dict:
     # Run = persistent thread. A completed run keeps its workspace; the
     # new message is just the next task in the same thread. Phase is a UI
     # display concern, not a reset trigger.
-
-    # Generate task_id first so the user message can carry its task affiliation.
-    # Save user message, then the task references it via
-    # user_message_id and priority for interrupt.
-    task_id = f"task_{_uuid.uuid4().hex}"
-    message = storage.add_message(
+    current_phase = storage.get_run_phase(run_id)
+    created = storage.create_user_task(
         run_id=run_id,
-        role="user",
         content=req.content,
         public_id=req.public_id,
-        task_id=task_id,
-    )
-
-    task = storage.create_task(
-        run_id=run_id,
-        task_id=task_id,
-        title=req.content.strip()[:120] or "Productization task",
-        goal=req.content,
-        status="queued",
-        phase=storage.get_run_phase(run_id),
+        phase=current_phase,
         priority=100 if req.mode == "interrupt" else 0,
-        user_message_id=message["id"],
     )
+    message = created.message
+    task = created.task
+
+    # Persist+broadcast task.created so a live client sees the Task before any
+    # message.started arrives (projectTurns must never drop an unknown task_id).
+    task_emitter = EventEmitter(run_id=run_id, manager=get_event_manager(), task_id=task["id"])
+    await task_emitter.task_created(_task(task))
 
     # Auto-generate run title from the first user message.
     # Only update if the title is still the default placeholder so we
@@ -113,12 +134,14 @@ async def send_message(run_id: str, req: MessageCreate) -> dict:
         run_id,
         task["id"],
     )
-    return {
-        "status": "queued",
-        "run_id": run_id,
-        "task_id": task["id"],
-        "message": message,
-    }
+    return MessageCreateResult(
+        status="queued",
+        run_id=run_id,
+        message=_message(message),
+        task=_task(task),
+        task_id=task["id"],
+        event_cursor=storage.get_max_event_seq(run_id),
+    )
 
 
 @router.get("/{run_id}/messages")

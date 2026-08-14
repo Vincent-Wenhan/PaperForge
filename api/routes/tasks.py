@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from paperforge.orchestrator.events import EventEmitter, get_event_manager
+from paperforge.orchestrator.task_lifecycle import TaskLifecycleService
 from paperforge.orchestrator.tasks import get_run_queue
 from paperforge.storage.db import get_storage
 
@@ -83,12 +84,12 @@ async def update_task(run_id: str, task_id: str, req: TaskUpdate) -> dict:
         raise HTTPException(status_code=404, detail="Task not found")
     if task.get("run_id") != run_id:
         raise HTTPException(status_code=404, detail="Task not found")
-    return storage.update_task(
+    emitter = EventEmitter(run_id=run_id, manager=get_event_manager(), task_id=task_id)
+    lifecycle = TaskLifecycleService(storage, emitter)
+    return await lifecycle.transition(
         task_id=task_id,
-        title=req.title,
         status=req.status,
         phase=req.phase,
-        goal=req.goal,
     )
 
 
@@ -120,13 +121,14 @@ async def cancel_task(run_id: str, task_id: str) -> dict:
     if task["status"] == "running":
         await queue.cancel_and_wait(run_id)
 
-    storage.update_task(task_id=task_id, status="cancelled")
+    emitter = EventEmitter(run_id=run_id, manager=get_event_manager(), task_id=task_id)
+    lifecycle = TaskLifecycleService(storage, emitter)
+    await lifecycle.transition(task_id=task_id, status="cancelled")
 
     run = storage.get_run(run_id)
     previous = run.get("status") if run else "running"
     storage.update_run_status(run_id, "active")
 
-    emitter = EventEmitter(run_id=run_id, manager=get_event_manager(), task_id=task_id)
     await emitter.run_status_changed("active", previous)
     await emitter.run_updated(status="active")
 

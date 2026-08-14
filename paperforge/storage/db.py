@@ -8,11 +8,18 @@ import threading
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from paperforge.config import get_config
+
+
+@dataclass(frozen=True)
+class CreatedUserTask:
+    message: dict[str, Any]
+    task: dict[str, Any]
 
 SCHEMA_SQL_TABLES = """
 CREATE TABLE IF NOT EXISTS runs (
@@ -752,8 +759,88 @@ class Storage:
         with self._lock, self._conn() as conn:
             conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
 
+    def create_user_task(
+        self,
+        *,
+        run_id: str,
+        content: str,
+        public_id: str | None,
+        phase: str,
+        priority: int,
+    ) -> "CreatedUserTask":
+        """Atomically insert a user message and its task, OR return the existing
+        pair when ``public_id`` was already used (client retry idempotency).
 
-    # ===== Steps =====
+        Message + Task must commit or fail together: a partial relationship
+        (message without task, or vice versa) would orphan conversation state.
+        """
+        now = datetime.utcnow().isoformat()
+        task_id = f"task_{uuid.uuid4().hex}"
+
+        with self._lock, self._conn() as conn:
+            # Retry idempotency: a client that retries with the same public_id must
+            # not create a duplicate message+task. Read the existing row first.
+            existing_id: int | None = None
+            if public_id:
+                row = conn.execute(
+                    "SELECT id FROM messages WHERE public_id = ?",
+                    (public_id,),
+                ).fetchone()
+                if row:
+                    existing_id = int(row["id"])
+
+            if existing_id is not None:
+                message_row = conn.execute(
+                    "SELECT * FROM messages WHERE id = ?", (existing_id,)
+                ).fetchone()
+                message = dict(message_row) if message_row else None
+                task_id = (message or {}).get("task_id") or task_id
+            else:
+                conn.execute("BEGIN IMMEDIATE")
+                try:
+                    cur = conn.execute(
+                        """INSERT INTO messages
+                           (public_id, run_id, role, content, status, task_id, created_at)
+                           VALUES (?, ?, 'user', ?, 'completed', ?, ?)""",
+                        (public_id, run_id, content, task_id, now),
+                    )
+                    message_id = int(cur.lastrowid)
+                    conn.execute(
+                        """INSERT INTO tasks
+                           (id, run_id, title, goal, status, phase,
+                            priority, user_message_id, created_at, updated_at)
+                           VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?)""",
+                        (
+                            task_id,
+                            run_id,
+                            content.strip()[:120] or "Productization task",
+                            content,
+                            phase,
+                            priority,
+                            message_id,
+                            now,
+                            now,
+                        ),
+                    )
+                    conn.execute(
+                        "UPDATE runs SET last_message_at = ?, updated_at = ? WHERE id = ?",
+                        (now, now, run_id),
+                    )
+                    conn.execute("COMMIT")
+                except Exception:
+                    conn.execute("ROLLBACK")
+                    raise
+                message = self.get_message(message_id)
+
+        task = self.get_task(task_id)
+        return CreatedUserTask(message=message or {}, task=task or {})
+
+    def get_message(self, message_id: int) -> dict[str, Any] | None:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM messages WHERE id = ?", (message_id,)
+            ).fetchone()
+            return dict(row) if row else None
 
     def create_step(
         self,

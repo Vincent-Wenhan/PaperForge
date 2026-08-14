@@ -25,6 +25,7 @@ from paperforge.orchestrator.approvals import (
 )
 from paperforge.orchestrator.events import EventEmitter, get_event_manager
 from paperforge.orchestrator.stream_writer import StreamWriter
+from paperforge.orchestrator.task_lifecycle import TaskLifecycleService
 from paperforge.orchestrator.tools import TOOL_DEFINITIONS, ToolContext, dispatch_tool
 from paperforge.orchestrator.workspace import (
     available_resources,
@@ -99,14 +100,6 @@ class Orchestrator:
         self.phase: RunPhase = RunPhase.INIT
         self.task_id: str | None = None
 
-    def _update_task(self, *, status: str | None = None, phase: str | None = None) -> None:
-        if self.task_id:
-            self.storage.update_task(
-                task_id=self.task_id,
-                status=status,
-                phase=phase,
-            )
-
     async def run(
         self,
         run_id: str,
@@ -118,6 +111,7 @@ class Orchestrator:
         event_manager = get_event_manager()
         self.task_id = task_id
         emit = EventEmitter(run_id=run_id, manager=event_manager, task_id=self.task_id)
+        lifecycle = TaskLifecycleService(self.storage, emit)
 
         # Cancel is a task-level terminal: the Run is a persistent thread and
         # stays usable. The only thread-level terminal is archive.
@@ -146,7 +140,9 @@ class Orchestrator:
             )
             self.task_id = task["id"]
         else:
-            self._update_task(status="running", phase=self.phase.value)
+            await lifecycle.transition(
+                task_id=self.task_id, status="running", phase=self.phase.value
+            )
 
         await emit.run_started()
 
@@ -200,11 +196,12 @@ class Orchestrator:
                     run_id=run_id,
                 )
                 if response is None:
-                    # LLM failed; mark run as error so it doesn't stay "running".
                     self.phase = RunPhase.ERROR
                     self.storage.update_run_phase(run_id, self.phase.value)
                     self.storage.update_run_status(run_id, "error")
-                    self._update_task(status="failed", phase=self.phase.value)
+                    await lifecycle.transition(
+                        task_id=self.task_id, status="failed", phase=self.phase.value
+                    )
                     return  # error already emitted
 
                 if response.tool_calls:
@@ -278,7 +275,9 @@ class Orchestrator:
                             old_phase = self.phase
                             self.phase = new_phase
                             self.storage.update_run_phase(run_id, self.phase.value)
-                            self._update_task(phase=self.phase.value)
+                            await lifecycle.transition(
+                                task_id=self.task_id, phase=self.phase.value
+                            )
                             await emit.task_phase_changed(
                                 phase=self.phase.value,
                                 previous_phase=old_phase.value,
@@ -310,7 +309,8 @@ class Orchestrator:
                         )
                         previous = self.storage.get_run_status(run_id) or "running"
                         self.storage.update_run_status(run_id, terminal_status)
-                        self._update_task(
+                        await lifecycle.transition(
+                            task_id=self.task_id,
                             status=task_terminal,
                             phase=self.phase.value,
                         )
@@ -336,7 +336,9 @@ class Orchestrator:
                         task_id=self.task_id,
                     )
                 self.storage.update_run_status(run_id, "active")
-                self._update_task(status="completed", phase=self.phase.value)
+                await lifecycle.transition(
+                    task_id=self.task_id, status="completed", phase=self.phase.value
+                )
                 await emit.run_updated(status="active", phase=self.phase.value)
                 await emit.run_finished()
                 return
@@ -347,13 +349,17 @@ class Orchestrator:
             self.phase = RunPhase.ERROR
             self.storage.update_run_phase(run_id, self.phase.value)
             self.storage.update_run_status(run_id, "error")
-            self._update_task(status="failed", phase=self.phase.value)
+            await lifecycle.transition(
+                task_id=self.task_id, status="failed", phase=self.phase.value
+            )
             await emit.run_updated(status="error", phase=self.phase.value)
 
         except asyncio.CancelledError:
             previous = self.storage.get_run_status(run_id) or "running"
             # Current task stopped; persistent thread stays usable.
-            self._update_task(status="cancelled", phase=self.phase.value)
+            await lifecycle.transition(
+                task_id=self.task_id, status="cancelled", phase=self.phase.value
+            )
             self.storage.update_run_status(run_id, "active")
             with contextlib.suppress(Exception):
                 await emit.run_status_changed("active", previous)
@@ -365,7 +371,9 @@ class Orchestrator:
             self.phase = RunPhase.ERROR
             self.storage.update_run_phase(run_id, self.phase.value)
             self.storage.update_run_status(run_id, "error")
-            self._update_task(status="failed", phase=self.phase.value)
+            await lifecycle.transition(
+                task_id=self.task_id, status="failed", phase=self.phase.value
+            )
             await emit.run_updated(status="error", phase=self.phase.value)
 
     async def _execute_tool_call(
