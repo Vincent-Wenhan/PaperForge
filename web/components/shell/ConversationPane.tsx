@@ -4,9 +4,10 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useAppStore } from "@/lib/store";
 import { MessageView } from "../MessageView";
 import { ApprovalCard } from "../ApprovalCard";
-import { StepList } from "../StepList";
 import { Composer } from "../Composer";
 import { EmptyState } from "../Skeleton";
+import { ActivityTimeline, type ActivityItem } from "../ActivityTimeline";
+import { projectToolActivities } from "@/lib/project-tools";
 import { projectTurns } from "@/lib/project-turns";
 import { taskStatusLabel } from "@/lib/presentation";
 
@@ -128,7 +129,14 @@ export function ConversationPane() {
 
               {(turn.steps.length > 0 || turn.assistantMessages.length > 0) && (
                 <div className="pl-2">
-                  <StepList steps={turn.steps} />
+                  {(() => {
+                    const activities: ActivityItem[] = [
+                      ...projectToolActivities(turn.assistantMessages).map((a) => ({ type: "tool" as const, activity: a })),
+                      ...turn.steps.map((s) => ({ type: "step" as const, step: s })),
+                      ...turn.approvals.map((ap) => ({ type: "approval" as const, approval: ap })),
+                    ];
+                    return <ActivityTimeline items={activities} />;
+                  })()}
                   {turn.approvals.map((approval) => (
                     <ApprovalCard
                       key={approval.approval_id ?? approval.id}

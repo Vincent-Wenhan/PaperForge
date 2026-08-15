@@ -1,7 +1,7 @@
 "use client";
 
 import { memo } from "react";
-import ReactMarkdown from "react-markdown";
+import { Markdown } from "./Markdown";
 
 interface MessageViewProps {
   id?: string;
@@ -54,7 +54,7 @@ function MessageViewImpl({ role, content, streaming, failed, error, toolCalls }:
         data-streaming={streaming ? "true" : "false"}
       >
         <div className="text-sm prose prose-sm max-w-none">
-          <ReactMarkdown>{content || ""}</ReactMarkdown>
+          <Markdown content={content || ""} />
           {streaming && <StreamingCaret />}
         </div>
         {toolCalls && toolCalls.length > 0 && (
