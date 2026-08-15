@@ -32,7 +32,7 @@ test("new assistant reply appears without reload", async ({ page, request }) => 
   // Resolve unhandled peer connections: EventSource URLs are cryptographically
   // signed, so the WebSocket/EventSource handshake target won't match the
   // page URL. Ignore the resulting certificate errors.
-  page.on("serviceworker", () => {});
+  page.context().on("serviceworker", () => {});
   page.context().on("weberror", (err) => {
     // eslint-disable-next-line no-console
     console.log("[weberror]", err.error()?.message);

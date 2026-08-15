@@ -24,6 +24,10 @@
     --text-primary: 240 10% 10%;
     --text-secondary: 240 4% 46%;
     --danger: 0 72% 50%;
+    --header-height: 40px;
+    --sidebar-width: 272px;
+    --conversation-max-width: 900px;
+    --composer-max-width: 820px;
   }
 
   .dark {
@@ -54,6 +58,7 @@
     height: 100%;
     margin: 0;
     padding: 0;
+    overflow: hidden;
   }
 
   body {
@@ -170,4 +175,13 @@
 
 .animate-slide-in {
   animation: slide-in 0.2s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

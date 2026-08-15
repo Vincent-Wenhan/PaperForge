@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useTheme } from "@/lib/useTheme";
 import { useToast } from "@/lib/toast";
+import { runStatusLabel } from "@/lib/presentation";
 import type { Run } from "@/lib/store";
 
 interface GlobalHeaderProps {
@@ -91,7 +92,7 @@ export function GlobalHeader({
         {currentRun && (
           <div className="hidden lg:flex items-center gap-2 text-xs" aria-label="Current run status">
             <span className="max-w-48 truncate font-medium" title={currentRun.title}>{currentRun.title}</span>
-            <span className="text-muted-foreground">{currentRun.status}</span>
+            <span className="text-muted-foreground">{runStatusLabel(currentRun.status)}</span>
             {currentRun.phase && <span className="text-muted-foreground">· {currentRun.phase}</span>}
           </div>
         )}

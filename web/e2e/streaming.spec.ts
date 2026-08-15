@@ -80,9 +80,9 @@ test("assistant text is visible before the task finishes (doc 40.10)", async ({ 
   });
   await page.goto("/runs/run_stream_e2e");
 
-  // The partial assistant text is already present, and the task is running.
+  // The partial assistant text is already present, and the task is working.
   await expect(page.getByTestId("assistant-message-current")).toContainText("partial");
-  await expect(page.getByTestId("task-status").filter({ hasText: "running" })).toBeVisible();
+  await expect(page.getByTestId("task-status").filter({ hasText: "Working" })).toBeVisible();
 });
 
 test("reload resumes a stream without duplicate content (doc 40.11)", async ({ page }) => {

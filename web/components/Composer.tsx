@@ -239,10 +239,10 @@ export function Composer() {
   };
 
   return (
-    <div className="border-t border-border p-3 bg-background">
+    <div className="shrink-0 border-t border-border bg-background/95 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3 backdrop-blur">
       {failedSend && (
         <div
-          className="flex items-center justify-between gap-2 mb-2 px-3 py-2 text-xs bg-destructive/10 border border-destructive/30 rounded"
+          className="flex items-center justify-between gap-2 mb-2 mx-auto max-w-[var(--composer-max-width,820px)] px-3 py-2 text-xs bg-destructive/10 border border-destructive/30 rounded"
           data-testid="send-failed-banner"
         >
           <span className="text-destructive">
@@ -261,88 +261,90 @@ export function Composer() {
           </button>
         </div>
       )}
-      {attachments.length > 0 && (
-        <div className="flex flex-wrap gap-1 mb-2">
-          {attachments.map((att) => (
-            <span
-              key={att.id}
-              className="px-2 py-1 text-xs bg-muted rounded flex items-center gap-1"
-            >
-              {att.name}
-              <button
-                onClick={() => removeAttachment(att.id)}
-                className="hover:text-destructive"
-                aria-label={`Remove ${att.name}`}
+      <div className="mx-auto max-w-[var(--composer-max-width,820px)] rounded-2xl border border-border bg-background shadow-sm">
+        {attachments.length > 0 && (
+          <div className="flex flex-wrap gap-1 px-3 pt-2">
+            {attachments.map((att) => (
+              <span
+                key={att.id}
+                className="px-2 py-1 text-xs bg-muted rounded flex items-center gap-1"
               >
-                ×
-              </button>
-            </span>
-          ))}
-        </div>
-      )}
-      <div className="flex items-end gap-2">
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          disabled={sending || uploading}
-          className="p-2 hover:bg-accent rounded text-sm disabled:opacity-50"
-          title="Attach PDF"
-          aria-label="Attach PDF"
-        >
-          +
-        </button>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="application/pdf"
-          className="hidden"
-          onChange={handleAttach}
-        />
-        <textarea
-          ref={textareaRef}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder={
-            isRunning
-              ? "Add a follow-up... (queued after the current task)"
-              : "Ask PaperForge to build or change something..."
-          }
-          rows={2}
-          className="flex-1 px-3 py-2 border border-border rounded resize-none focus:outline-none focus:ring-1 focus:ring-primary text-sm disabled:opacity-50"
-          disabled={sending || uploading}
-        />
-        <div className="flex gap-2">
-          {isRunning && (
-            <>
-              <button
-                onClick={handleStop}
-                className="px-3 py-2 bg-secondary text-secondary-foreground rounded text-sm"
-                title="Stop the current task"
-              >
-                ■
-              </button>
-              {input.trim() && (
+                {att.name}
                 <button
-                  onClick={() => submitMessage("interrupt")}
-                  className="px-3 py-2 bg-destructive text-destructive-foreground rounded text-sm"
-                  title="Interrupt the current task and send this message"
+                  onClick={() => removeAttachment(att.id)}
+                  className="hover:text-destructive"
+                  aria-label={`Remove ${att.name}`}
                 >
-                  ↻ Interrupt
+                  ×
                 </button>
-              )}
-            </>
-          )}
+              </span>
+            ))}
+          </div>
+        )}
+        <div className="flex items-end gap-2 p-2">
           <button
-            onClick={() => submitMessage(isRunning ? "queue" : "start")}
-            disabled={sending || uploading || !input.trim()}
-            className="px-4 py-2 bg-primary text-primary-foreground rounded disabled:opacity-50 text-sm"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={sending || uploading}
+            className="p-2 hover:bg-accent rounded text-sm disabled:opacity-50"
+            title="Attach PDF"
+            aria-label="Attach PDF"
           >
-            {uploading
-              ? "Uploading…"
-              : isRunning
-                ? "Queue ↑"
-                : "Send"}
+            +
           </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="application/pdf"
+            className="hidden"
+            onChange={handleAttach}
+          />
+          <textarea
+            ref={textareaRef}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder={
+              isRunning
+                ? "Add a follow-up... (queued after the current task)"
+                : "Ask PaperForge to build or change something..."
+            }
+            rows={2}
+            className="flex-1 px-3 py-2 bg-transparent border border-border rounded resize-none focus:outline-none focus:ring-1 focus:ring-primary text-sm disabled:opacity-50"
+            disabled={sending || uploading}
+          />
+          <div className="flex gap-2">
+            {isRunning && (
+              <>
+                <button
+                  onClick={handleStop}
+                  className="px-3 py-2 bg-secondary text-secondary-foreground rounded text-sm"
+                  title="Stop the current task"
+                >
+                  ■
+                </button>
+                {input.trim() && (
+                  <button
+                    onClick={() => submitMessage("interrupt")}
+                    className="px-3 py-2 bg-destructive text-destructive-foreground rounded text-sm"
+                    title="Interrupt the current task and send this message"
+                  >
+                    ↻ Interrupt
+                  </button>
+                )}
+              </>
+            )}
+            <button
+              onClick={() => submitMessage(isRunning ? "queue" : "start")}
+              disabled={sending || uploading || !input.trim()}
+              className="px-4 py-2 bg-primary text-primary-foreground rounded disabled:opacity-50 text-sm"
+            >
+              {uploading
+                ? "Uploading…"
+                : isRunning
+                  ? "Queue ↑"
+                  : "Send"}
+            </button>
+          </div>
         </div>
       </div>
     </div>

@@ -5,33 +5,28 @@ import { useParams, useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 import { useRunSession } from "@/lib/useRunSession";
-import { useIsMobile, useIsTablet } from "@/lib/useMediaQuery";
 import { Sidebar } from "@/components/Sidebar";
-import { ChatPanel } from "@/components/ChatPanel";
-import { PreviewPanel } from "@/components/PreviewPanel";
-import { WorkbenchRail } from "@/components/WorkbenchRail";
 import { GlobalHeader } from "@/components/shell/GlobalHeader";
+import { AppShell } from "@/components/shell/AppShell";
+import { ConversationPane } from "@/components/shell/ConversationPane";
+import { WorkbenchPane } from "@/components/shell/WorkbenchPane";
 import { CommandPalette } from "@/components/dialogs/CommandPalette";
 import { SkeletonMessage, SidebarSkeleton } from "@/components/Skeleton";
 
 export default function RunWorkspacePage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
-  const isMobile = useIsMobile();
-  const isTablet = useIsTablet();
   const [runs, setRuns] = useState<any[]>([]);
   const [library, setLibrary] = useState<any[]>([]);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [activePanel, setActivePanel] = useState<"chat" | "preview">("chat");
   const session = useRunSession(params.id);
   const currentRun = useAppStore((s) => s.currentRun);
   const currentRunId = useAppStore((s) => s.currentRun?.id);
   const workbenchMode = useAppStore((s) => s.workbenchMode);
-  const setWorkbenchMode = useAppStore((s) => s.setWorkbenchMode);
-  const setWorkbenchPinnedClosed = useAppStore((s) => s.setWorkbenchPinnedClosed);
   const connection = useAppStore((s) => s.connection);
+  const isRunning = useAppStore((s) => s.isRunning);
 
   useEffect(() => {
     Promise.all([api.listRuns(), api.listLibrary()])
@@ -67,6 +62,10 @@ export default function RunWorkspacePage() {
     return () => window.removeEventListener("keydown", handleKey);
   }, []);
 
+  useEffect(() => {
+    if (isRunning) setMobileSidebarOpen(false);
+  }, [isRunning]);
+
   const handleNewRun = async () => {
     const run = await api.createRun("New Run");
     setRuns((prev) => [run, ...prev]);
@@ -78,16 +77,41 @@ export default function RunWorkspacePage() {
     setMobileSidebarOpen(false);
   };
 
+  const attachPaper = (paper: any) => {
+    const store = useAppStore.getState();
+    store.addAttachment({
+      id: `paper-${paper.paper_id}`,
+      type: "paper",
+      name: paper.title,
+      paperId: paper.paper_id,
+    });
+  };
+
+  const sidebar = (
+    <Sidebar
+      runs={runs}
+      library={library}
+      onNewRun={handleNewRun}
+      onSelectRun={handleSelectRun}
+      currentRunId={currentRunId}
+      collapsed={sidebarCollapsed}
+      onToggleCollapse={() => setSidebarCollapsed((v) => !v)}
+      onCloseMobile={() => setMobileSidebarOpen(false)}
+      onOpenPaper={(paperId) => router.push(`/library/${paperId}`)}
+      onAttachPaper={attachPaper}
+    />
+  );
+
   if (loading) {
     return (
       <>
-        <div className="flex h-screen w-screen flex-col overflow-hidden">
-           <GlobalHeader
-             onToggleCommandPalette={() => setPaletteOpen(true)}
-             currentRun={currentRun}
-             connectionStatus={session.error ? "error" : connection}
-           />
-          <div className="flex flex-1 overflow-hidden">
+        <div className="flex h-dvh min-h-0 flex-col overflow-hidden">
+          <GlobalHeader
+            onToggleCommandPalette={() => setPaletteOpen(true)}
+            currentRun={currentRun}
+            connectionStatus={session.error ? "error" : connection}
+          />
+          <div className="flex flex-1 min-h-0 overflow-hidden">
             <SidebarSkeleton />
             <div className="flex-1 p-4 space-y-4">
               <SkeletonMessage />
@@ -95,153 +119,58 @@ export default function RunWorkspacePage() {
             </div>
           </div>
         </div>
+        {error && (
+          <div className="flex items-center justify-between gap-3 border-b border-destructive/30 bg-destructive/10 px-3 py-2 text-xs" role="alert">
+            <span className="text-destructive">{error}</span>
+            <div className="flex gap-2">
+              <button onClick={session.retry} className="underline">Retry</button>
+              <button onClick={() => router.push("/")} className="underline">Back home</button>
+            </div>
+          </div>
+        )}
         <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
       </>
     );
   }
 
-  // On tablet/mobile, only show one panel at a time with a toggle.
-  const showSinglePanel = isMobile || isTablet;
-
   return (
     <>
-      <div className="flex h-screen w-screen flex-col overflow-hidden">
-         <GlobalHeader
-           onToggleCommandPalette={() => setPaletteOpen(true)}
-           currentRun={currentRun}
-           connectionStatus={session.error ? "error" : connection}
-         />
-        <div className="flex flex-1 overflow-hidden">
-          {isMobile && mobileSidebarOpen ? (
-            <Sidebar
-              runs={runs}
-              library={library}
-              onNewRun={handleNewRun}
-              onSelectRun={handleSelectRun}
-              currentRunId={currentRunId}
-              onCloseMobile={() => setMobileSidebarOpen(false)}
-              onOpenPaper={(paperId) => router.push(`/library/${paperId}`)}
-              onAttachPaper={(paper) => {
-                const store = useAppStore.getState();
-                store.addAttachment({
-                  id: `paper-${paper.paper_id}`,
-                  type: "paper",
-                  name: paper.title,
-                  paperId: paper.paper_id,
-                });
-              }}
-            />
-          ) : (
-            <Sidebar
-              runs={runs}
-              library={library}
-              onNewRun={handleNewRun}
-              onSelectRun={handleSelectRun}
-              currentRunId={currentRunId}
-              collapsed={sidebarCollapsed}
-              onToggleCollapse={() =>
-                setSidebarCollapsed((v) => !v)
-              }
-              onOpenPaper={(paperId) =>
-                router.push(`/library/${paperId}`)
-              }
-              onAttachPaper={(paper) => {
-                const store = useAppStore.getState();
-                store.addAttachment({
-                  id: `paper-${paper.paper_id}`,
-                  type: "paper",
-                  name: paper.title,
-                  paperId: paper.paper_id,
-                });
-              }}
-            />
-          )}
-
-          {showSinglePanel ? (
-            <div className="flex-1 flex flex-col overflow-hidden">
-              {error && (
-                <div className="flex items-center justify-between gap-3 border-b border-destructive/30 bg-destructive/10 px-3 py-2 text-xs" role="alert">
-                  <span className="text-destructive">{error}</span>
-                  <div className="flex gap-2">
-                    <button onClick={session.retry} className="underline">Retry</button>
-                    <button onClick={() => router.push("/")} className="underline">Back home</button>
-                  </div>
-                </div>
-              )}
-              <div className="flex border-b border-border bg-muted/30" role="tablist">
-                <button
-                  role="tab"
-                  aria-selected={activePanel === "chat"}
-                  onClick={() => setActivePanel("chat")}
-                  className={`flex-1 px-4 py-2 text-sm border-b-2 ${
-                    activePanel === "chat"
-                      ? "border-primary font-medium bg-background"
-                      : "border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/50"
-                  }`}
-                >
-                  Chat
-                </button>
-                <button
-                  role="tab"
-                  aria-selected={activePanel === "preview"}
-                  onClick={() => setActivePanel("preview")}
-                  className={`flex-1 px-4 py-2 text-sm border-b-2 ${
-                    activePanel === "preview"
-                      ? "border-primary font-medium bg-background"
-                      : "border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/50"
-                  }`}
-                >
-                  Workbench
-                </button>
-              </div>
-              <div className="flex-1 overflow-hidden">
-                {activePanel === "chat" ? <ChatPanel /> : <PreviewPanel />}
-              </div>
+      <div className="flex h-dvh min-h-0 flex-col overflow-hidden bg-background text-foreground">
+        <GlobalHeader
+          onToggleCommandPalette={() => setPaletteOpen(true)}
+          onToggleSidebar={() => setSidebarCollapsed((v) => !v)}
+          currentRun={currentRun}
+          connectionStatus={session.error ? "error" : connection}
+        />
+        {error && (
+          <div
+            className="flex items-center justify-between gap-3 border-b border-destructive/30 bg-destructive/10 px-3 py-2 text-xs"
+            role="alert"
+          >
+            <span className="text-destructive">{error}</span>
+            <div className="flex gap-2">
+              <button onClick={session.retry} className="underline">Retry</button>
+              <button onClick={() => router.push("/")} className="underline">Back home</button>
             </div>
-          ) : (
-            <>
-              {error && (
-                <div
-                  className="flex items-center justify-between gap-3 border-b border-destructive/30 bg-destructive/10 px-3 py-2 text-xs"
-                  role="alert"
-                >
-                  <span className="text-destructive">{error}</span>
-                  <div className="flex gap-2">
-                    <button onClick={session.retry} className="underline">Retry</button>
-                    <button onClick={() => router.push("/")} className="underline">Back home</button>
-                  </div>
-                </div>
-              )}
-              <div className="flex-1 min-w-0 flex">
-                <div className="flex-1 min-w-0">
-                  <ChatPanel />
-                </div>
-                {workbenchMode !== "closed" && (
-                  <>
-                    <WorkbenchRail
-                      onClose={() => {
-                        setWorkbenchPinnedClosed(true);
-                        setWorkbenchMode("closed");
-                      }}
-                    />
-                    <div
-                      className="min-w-0 transition-[width] duration-200"
-                      style={{
-                        width:
-                          workbenchMode === "peek"
-                            ? 360
-                            : "min(56vw, 1040px)",
-                      }}
-                    >
-                      <PreviewPanel />
-                    </div>
-                  </>
-                )}
-              </div>
-            </>
-          )}
+          </div>
+        )}
+        <div className="flex flex-1 min-h-0 overflow-hidden">
+          <AppShell
+            sidebar={sidebar}
+            conversation={<ConversationPane />}
+            workbench={<WorkbenchPane />}
+          />
         </div>
       </div>
+
+      {mobileSidebarOpen && (
+        <button
+          className="fixed inset-0 z-40 bg-black/40"
+          onClick={() => setMobileSidebarOpen(false)}
+          aria-label="Close sidebar"
+        />
+      )}
+
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
     </>
   );
