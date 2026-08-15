@@ -394,6 +394,54 @@ export interface MessageDeltaPayload {
   text?: string;
 }
 
+export interface MessageStartedPayload {
+  message_id: string;
+}
+
+export interface MessageCompletedPayload {
+  message_id: string;
+  content?: string;
+}
+
+export interface ArtifactCreatedPayload {
+  artifact_id: string;
+  type?: string;
+  path?: string;
+  task_id?: string;
+}
+
+export interface ArtifactUpdatedPayload {
+  artifact_id: string;
+  data?: unknown;
+  task_id?: string;
+}
+
+export interface ApprovalPayload {
+  approval_id: string;
+  tool?: string;
+  tool_name?: string;
+  args?: Record<string, unknown>;
+  approved?: boolean;
+  task_id?: string;
+}
+
+export interface PreviewReadyPayload {
+  sandbox_id?: string;
+  preview_url?: string | null;
+}
+
+export interface FileChangedPayload {
+  path: string;
+  task_id?: string;
+  kind?: string;
+}
+
+export interface VerificationCompletedPayload {
+  report_id?: string;
+  passed?: boolean;
+  task_id?: string;
+}
+
 export interface StepStartedPayload {
   step_id: string;
   task_id?: string;
@@ -447,8 +495,8 @@ export interface TaskEventPayload {
 
 export type KnownRunEvent =
   | RunEventBase<"message.delta", MessageDeltaPayload>
-  | RunEventBase<"message.started", { message_id: string }>
-  | RunEventBase<"message.completed", { message_id: string; content?: string }>
+  | RunEventBase<"message.started", MessageStartedPayload>
+  | RunEventBase<"message.completed", MessageCompletedPayload>
   | RunEventBase<"task.created", TaskEventPayload>
   | RunEventBase<"task.updated", TaskEventPayload>
   | RunEventBase<"task.completed", TaskEventPayload>
@@ -458,10 +506,72 @@ export type KnownRunEvent =
   | RunEventBase<"step.progress", StepProgressPayload>
   | RunEventBase<"step.completed", StepCompletedPayload>
   | RunEventBase<"step.failed", StepFailedPayload>
+  | RunEventBase<"approval.requested", ApprovalPayload>
+  | RunEventBase<"approval.resolved", ApprovalPayload>
+  | RunEventBase<"artifact.created", ArtifactCreatedPayload>
+  | RunEventBase<"artifact.updated", ArtifactUpdatedPayload>
+  | RunEventBase<"preview.ready", PreviewReadyPayload>
+  | RunEventBase<"file.changed", FileChangedPayload>
+  | RunEventBase<"verification.completed", VerificationCompletedPayload>
   | RunEventBase<"sandbox.log.delta", SandboxLogDeltaPayload>
-  | RunEventBase<string>;
+  | RunEventBase<"sandbox.started", { sandbox_id: string; container_id?: string; preview_port?: number; preview_url?: string | null; environment?: string }>
+  | RunEventBase<"sandbox.error", { sandbox_id?: string; error?: string }>
+  | RunEventBase<"build.log.delta", { step_id?: string; text?: string }>
+  | RunEventBase<"stream.gap", { message?: string }>
+  | RunEventBase<"message.failed", { message_id: string; error?: string }>
+  | RunEventBase<"tool.call", { name?: string; args?: unknown }>
+  | RunEventBase<"tool.result", { name?: string; result?: unknown }>
+  | RunEventBase<"run.started", { run_id?: string }>
+  | RunEventBase<"run.finished", { run_id?: string }>
+  | RunEventBase<"run.error", { error?: string }>
+  | RunEventBase<"run.updated", { title?: string; status?: string; phase?: string; pinned?: boolean; archived_at?: string | null; updated_at?: string }>
+  | RunEventBase<"run.status.changed", { status?: string }>
+  | RunEventBase<"task.phase.changed", { task_id?: string; phase?: string }>;
 
-export type RunEvent = KnownRunEvent;
+export type UnknownRunEvent = RunEventBase<string, unknown>;
+
+export type RunEvent = KnownRunEvent | UnknownRunEvent;
+
+/** Narrow a raw event to the known union; unknown events yield undefined. */
+export function isKnownRunEvent(event: RunEvent): event is KnownRunEvent {
+  return KNOWN_EVENT_TYPES.has(event.type as KnownRunEvent["type"]);
+}
+
+const KNOWN_EVENT_TYPES = new Set<KnownRunEvent["type"]>([
+  "message.delta",
+  "message.started",
+  "message.completed",
+  "message.failed",
+  "task.created",
+  "task.updated",
+  "task.completed",
+  "task.failed",
+  "task.cancelled",
+  "task.phase.changed",
+  "step.started",
+  "step.progress",
+  "step.completed",
+  "step.failed",
+  "approval.requested",
+  "approval.resolved",
+  "artifact.created",
+  "artifact.updated",
+  "preview.ready",
+  "file.changed",
+  "verification.completed",
+  "tool.call",
+  "tool.result",
+  "run.started",
+  "run.finished",
+  "run.error",
+  "run.updated",
+  "run.status.changed",
+  "sandbox.log.delta",
+  "sandbox.started",
+  "sandbox.error",
+  "build.log.delta",
+  "stream.gap",
+]);
 
 export type ConnectionState =
   | "connecting"

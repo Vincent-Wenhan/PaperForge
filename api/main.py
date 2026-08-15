@@ -26,8 +26,10 @@ async def lifespan(app: FastAPI):
     app.state.event_manager = get_event_manager()
 
     # Requeue tasks whose leases expired while the process was down, so the
-    # UI doesn't stay stuck on "running" with no worker.
-    storage.reconcile_stale_tasks()
+    # UI doesn't stay stuck on "running" with no worker. This is pre-
+    # subscription startup reconciliation: it emits no task.updated events;
+    # a connected client gets the recovered queued state via /state.
+    storage.recover_stale_running_tasks()
 
     # Restart recovery: re-enqueue any tasks that were still queued when the
     # process shut down. The queue stores only task ids (never coroutines), so

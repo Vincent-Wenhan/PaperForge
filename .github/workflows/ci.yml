@@ -65,7 +65,7 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ matrix.browser }}
+          key: playwright-${{ runner.os }}-chromium
       - run: npm ci
         name: Install frontend deps
       - run: pip install -r requirements-dev.txt

@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-import pytest
-
 from paperforge.storage.db import Storage
 
 
@@ -38,14 +36,16 @@ def test_renew_task_lease_only_by_owner(storage: Storage):
     assert storage.renew_task_lease(task["id"], "worker-2", _lease_until(600)) is False
 
 
-def test_reconcile_stale_tasks_requeues_expired_lease(storage: Storage):
+def test_recover_stale_running_requeues_expired_lease(storage: Storage):
     run = storage.create_run("run_l3", "Lease", status="active")
     task = storage.create_task(run_id=run["id"], title="t", status="queued")
     # Claim with an already-expired lease.
     storage.claim_next_task("worker-1", _lease_until(-60))
 
-    n = storage.reconcile_stale_tasks()
-    assert n == 1
+    recovered = storage.recover_stale_running_tasks()
+    assert len(recovered) == 1
+    assert recovered[0]["id"] == task["id"]
+    assert recovered[0]["status"] == "queued"
     stored = storage.get_task(task["id"])
     assert stored["status"] == "queued"
     assert stored["lease_owner"] is None

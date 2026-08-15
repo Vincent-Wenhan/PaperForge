@@ -3,6 +3,7 @@ import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { flushMessageDeltas } from "../realtime/stream-buffer";
 import { applyRunEvent, inferWorkbenchMode } from "../run-events";
 import { useAppStore } from "../store";
+import { isKnownRunEvent } from "../api";
 
 beforeEach(() => {
   useAppStore.setState({
@@ -245,5 +246,35 @@ describe("run event reducer", () => {
     const step = useAppStore.getState().steps.find((s) => s.id === "step_b");
     expect(step?.detail).toBe("Compiled successfully.next build");
     expect(step?.status).toBe("running");
+  });
+
+  it("narrows known versus unknown events via the type guard", () => {
+    expect(isKnownRunEvent({ type: "message.delta" } as any)).toBe(true);
+    expect(isKnownRunEvent({ type: "task.created" } as any)).toBe(true);
+    expect(isKnownRunEvent({ type: "future.event" } as any)).toBe(false);
+    expect(isKnownRunEvent({ type: "approval.requested" } as any)).toBe(true);
+    expect(isKnownRunEvent({ type: "totally.unknown" } as any)).toBe(false);
+  });
+
+  it("routes unknown events only into the debug buffer, never main state", () => {
+    useAppStore.setState({ tasks: [], steps: [], messages: [], lastSeq: 5 });
+    const result = applyRunEvent({
+      version: 2,
+      id: "evt_unknown",
+      seq: 6,
+      run_id: "run_1",
+      type: "brand.new.event",
+      ts: Date.now(),
+      payload: { some: "payload", task_id: "task_ghost" },
+    });
+
+    // Cursor advances and a debug event is buffered, but no task/message/step
+    // and no workbench change happen for an event the client doesn't know.
+    expect(result).toBe("ignored");
+    expect(useAppStore.getState().lastSeq).toBe(6);
+    expect(useAppStore.getState().events.some((e) => e.type === "brand.new.event")).toBe(true);
+    expect(useAppStore.getState().tasks.some((t) => t.id === "task_ghost")).toBe(false);
+    expect(useAppStore.getState().messages.length).toBe(0);
+    expect(useAppStore.getState().steps.length).toBe(0);
   });
 });

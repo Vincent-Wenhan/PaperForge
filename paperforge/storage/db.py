@@ -1024,13 +1024,26 @@ class Storage:
             ).fetchall()
         return [dict(r) for r in rows]
 
-    def reconcile_stale_tasks(self) -> int:
-        """Requeue running tasks with expired leases so they can be retried."""
+    def recover_stale_running_tasks(self) -> list[dict[str, Any]]:
+        """PRE-SUBSCRIPTION startup reconciliation only.
+
+        Requeue running tasks whose leases expired while the process was down,
+        so the UI doesn't stay stuck on "running" with no worker. This must be
+        called before any SSE subscribers attach (app lifespan), because it
+        emits NO task.updated events — the connected client already receives
+        the recovered ``queued`` state via its initial ``/state`` snapshot.
+
+        Runtime paths (queue requeue / anomaly fail) must route through
+        TaskLifecycleService so events and DB state stay consistent. Returns
+        the recovered tasks so callers can observe/log them, not just a count.
+        """
         stale = self.list_expired_leases()
+        recovered: list[dict[str, Any]] = []
         for task in stale:
             self.update_task(task_id=task["id"], status="queued")
             self._clear_lease(task["id"])
-        return len(stale)
+            recovered.append(self.get_task(task["id"]) or task)
+        return recovered
 
     def _clear_lease(self, task_id: str) -> None:
         with self._lock, self._conn() as conn:

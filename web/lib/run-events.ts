@@ -1,4 +1,5 @@
-import type { ApiTask, RunEvent } from "./api";
+import type { ApiTask, KnownRunEvent, RunEvent } from "./api";
+import { isKnownRunEvent } from "./api";
 import type { PreviewState, Task } from "./contracts";
 import { enqueueMessageDelta, flushMessageDeltas } from "./realtime/stream-buffer";
 import { useAppStore, type AgentStep, type Approval, type Event } from "./store";
@@ -23,13 +24,25 @@ export function inferWorkbenchMode(
 // The SSE envelope historically carried a top-level `data`; the v2 format
 // puts it in `payload`. Prefer payload, fall back to the legacy field so a
 // freshly-deployed client can read replay from either shape.
-function eventData(event: RunEvent): any {
-  const payload = (event as { payload?: unknown }).payload;
-  if (payload !== undefined) return payload;
-  return (event as { data?: unknown }).data ?? {};
+function eventData(event: KnownRunEvent): Record<string, any> {
+  const payload = event.payload;
+  if (payload !== undefined && typeof payload === "object" && payload !== null) {
+    return payload as Record<string, any>;
+  }
+  const data = (event as { data?: unknown }).data;
+  return (data ?? {}) as Record<string, any>;
 }
 
-function toStoreEvent(event: RunEvent, data: unknown): Event {
+// Unknown events have opaque payloads; only the debug buffer consumes them.
+function eventDataUnknown(event: RunEvent): Record<string, any> {
+  const { payload, ...rest } = event as { payload?: unknown } & Record<string, any>;
+  if (payload !== undefined && typeof payload === "object" && payload !== null) {
+    return payload as Record<string, any>;
+  }
+  return rest.data ?? rest.payload ?? {};
+}
+
+function toStoreEvent(event: KnownRunEvent, data: Record<string, any>): Event {
   return {
     id: event.id,
     type: event.type,
@@ -40,8 +53,7 @@ function toStoreEvent(event: RunEvent, data: unknown): Event {
   };
 }
 
-function toTask(task: ApiTask | undefined, runId: string): Task {
-  const id = task?.id ?? task?.task_id ?? "untracked";
+function toTask(task: ApiTask | undefined, runId: string): Task {  const id = task?.id ?? task?.task_id ?? "untracked";
   return {
     id,
     task_id: id,
@@ -82,8 +94,23 @@ export function applyRunEvent(
   if (event.seq <= store.lastSeq) return "duplicate";
   if (store.lastSeq > 0 && event.seq > store.lastSeq + 1) return "gap";
 
-  const data = eventData(event) as Record<string, any>;
-  const taskId = data.task_id ?? data.taskId ?? (event as { task_id?: string }).task_id ?? undefined;
+  // Unknown events advance the cursor but never reach the main state updates
+  // (tasks, messages, workbench). They only land in the debug event buffer.
+  if (!isKnownRunEvent(event)) {
+    store.setLastSeq(event.seq);
+    store.addEvent({
+      id: event.id,
+      type: event.type,
+      data: eventDataUnknown(event),
+      run_id: event.run_id,
+      ts: event.ts,
+      seq: event.seq,
+    });
+    return "ignored";
+  }
+
+  const data = eventData(event);
+  const taskId = data.task_id ?? data.taskId ?? event.task_id ?? undefined;
   store.setLastSeq(event.seq);
   store.addEvent(toStoreEvent(event, data));
   const nextMode = inferWorkbenchMode(
